@@ -496,3 +496,16 @@ ON CONFLICT DO NOTHING;
 -- UNION ALL SELECT 'migration', count(*) FROM cohen_mcleod.migration
 -- UNION ALL SELECT 'plan', count(*) FROM cohen_mcleod.plan
 -- UNION ALL SELECT 'privacy_controls', count(*) FROM cohen_mcleod.privacy_controls;
+
+-- ============================================================================
+-- STREAM D: Model registry seed (idempotent)
+-- ============================================================================
+INSERT INTO cohen_mcleod.model_registry
+  (model_id, display_name, provider, api_model_name, max_output_tokens,
+   supports_streaming, supports_tools, data_residency, max_classification, is_active)
+VALUES
+  ('claude-opus-4-7','Claude Opus 4.7 (Vertex AI)','vertex_ai','claude-opus-4-7',16384,true,true,'canada','protected_b',true),
+  ('claude-sonnet-4-6','Claude Sonnet 4.6 (Vertex AI)','vertex_ai','claude-sonnet-4-6',16384,true,true,'canada','protected_b',true),
+  ('claude-haiku-4-5','Claude Haiku 4.5 (Vertex AI)','vertex_ai','claude-haiku-4-5-20251001',8192,true,true,'canada','protected_a',true),
+  ('gemini-2.5-flash','Gemini 2.5 Flash','google','gemini-2.5-flash-preview-05-20',8192,true,true,'us','unclassified',true)
+ON CONFLICT (model_id) DO NOTHING;

@@ -243,8 +243,11 @@ export async function getActiveModels(): Promise<ModelRegistryEntry[]> {
     logger.error("Failed to fetch model registry", err as Error);
     // Return cached data if available, even if stale
     if (registryCache) return registryCache;
-    // Fallback: return default models for development
-    return getDefaultModels();
+    // Hardcoded fallback only in test mode — production/dev must seed model_registry.
+    if (env.NODE_ENV === "test") return getDefaultModels();
+    throw new Error(
+      "Model registry is empty or unreachable. Run docs/02_database_migrations.sql to seed cohen_mcleod.model_registry."
+    );
   }
 }
 

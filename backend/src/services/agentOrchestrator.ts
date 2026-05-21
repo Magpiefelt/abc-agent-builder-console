@@ -488,6 +488,18 @@ async function executeIteration(
       ministryCode: session.ministryCode,
       iteration: session.currentIteration,
       memory: { blackboard: session.blackboard, scratchpad: session.scratchpad, attributes: session.attributes },
+      onArtifactCreated: (artifact) => {
+        sendSSE(res, {
+          type: "artifact_created",
+          iteration: artifact.iteration,
+          artifactId: artifact.id,
+          artifactType: artifact.type,
+          title: artifact.title,
+          mimeType: artifact.mimeType,
+          sizeBytes: artifact.sizeBytes,
+          createdAt: artifact.createdAt,
+        });
+      },
     });
 
     toolResults = dispatchResult.results;

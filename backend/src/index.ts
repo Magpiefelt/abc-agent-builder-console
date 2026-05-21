@@ -17,6 +17,8 @@ import { installProcessMonitor } from "./services/processMonitor.js";
 import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
 import { registerAllTools } from "./tools/register.js";
+import { validateConnectionAllowlist } from "./tools/database.js";
+import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
 
@@ -33,6 +35,8 @@ installProcessMonitor(async () => {
 // TOOL REGISTRATION (must happen before any agent session starts)
 // ============================================================================
 
+validateConnectionAllowlist();
+validateEmailAllowlist();
 registerAllTools();
 
 // ============================================================================

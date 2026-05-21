@@ -12,8 +12,10 @@
  * - Logs all external API calls for audit
  */
 
+import { env } from "../config/env.js";
 import { logger } from "../services/logger.js";
 import { auditSecurityEvent, AuditAction } from "../services/auditLogger.js";
+import { isPrivateOrReservedHost, validatePublicHttpUrl } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -29,53 +31,37 @@ const MAX_RESPONSE_SIZE = 1 * 1024 * 1024; // 1MB
 // ============================================================================
 
 /**
- * Check if a hostname resolves to a private/internal IP range.
+ * Check `hostname` against API_PROXY_ALLOWLIST (comma-separated; `*.example.com`
+ * means any subdomain of example.com). Returns true if no allowlist is set
+ * (allowlist is optional / opt-in).
  */
-function isPrivateHost(hostname: string): boolean {
-  const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"];
-  if (blockedHosts.includes(hostname.toLowerCase())) return true;
-
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 0) return true;
-  }
-
-  const blockedTLDs = [".local", ".internal", ".corp", ".lan"];
-  if (blockedTLDs.some((tld) => hostname.toLowerCase().endsWith(tld))) return true;
-
-  return false;
+function isHostnameAllowlisted(hostname: string): boolean {
+  if (!env.API_PROXY_ALLOWLIST) return true;
+  const lower = hostname.toLowerCase();
+  const patterns = env.API_PROXY_ALLOWLIST.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  return patterns.some((entry) =>
+    entry.startsWith("*.") ? lower.endsWith(entry.slice(1)) : lower === entry
+  );
 }
 
 /**
- * Validate and sanitize a URL for external API calls.
+ * Validate and sanitize a URL for external API calls. Combines SSRF blocking
+ * with the optional API_PROXY_ALLOWLIST check.
  */
-function validateUrl(url: string): { valid: boolean; parsed?: URL; error?: string } {
-  if (!url || typeof url !== "string" || url.trim().length === 0) {
-    return { valid: false, error: "URL parameter is required." };
+function validateUrl(url: string, toolName: string): { valid: boolean; parsed?: URL; error?: string } {
+  const base = validatePublicHttpUrl(url);
+  if (!base.valid) return base;
+
+  if (!isHostnameAllowlisted(base.parsed!.hostname)) {
+    auditSecurityEvent(AuditAction.SECURITY_INVALID_REQUEST, "system", {
+      tool: toolName,
+      url,
+      reason: "host not in API_PROXY_ALLOWLIST",
+    });
+    return { valid: false, error: `Host '${base.parsed!.hostname}' is not in API_PROXY_ALLOWLIST.` };
   }
 
-  let parsed: URL;
-  try {
-    parsed = new URL(url.trim());
-  } catch {
-    return { valid: false, error: `Invalid URL format: "${url}"` };
-  }
-
-  if (!["http:", "https:"].includes(parsed.protocol)) {
-    return { valid: false, error: `Unsupported protocol: "${parsed.protocol}". Only HTTP/HTTPS allowed.` };
-  }
-
-  if (isPrivateHost(parsed.hostname)) {
-    return { valid: false, error: "Cannot access private or internal network addresses." };
-  }
-
-  return { valid: true, parsed };
+  return base;
 }
 
 // ============================================================================
@@ -103,10 +89,10 @@ export async function getCallApi(params: Record<string, unknown>): Promise<ApiPr
   const url = params.url as string;
   const customHeaders = (params.headers as Record<string, string>) || {};
 
-  const validation = validateUrl(url);
+  const validation = validateUrl(url, "get_call_api");
   if (!validation.valid) {
     try {
-      if (url && isPrivateHost(new URL(url).hostname)) {
+      if (url && isPrivateOrReservedHost(new URL(url).hostname)) {
         auditSecurityEvent(AuditAction.SECURITY_PRIVATE_IP_BLOCKED, "system", {
           tool: "get_call_api",
           url,
@@ -202,11 +188,11 @@ export async function postCallApi(params: Record<string, unknown>): Promise<ApiP
   const customHeaders = (params.headers as Record<string, string>) || {};
   const requestBody = params.body as Record<string, unknown> | undefined;
 
-  const validation = validateUrl(url);
+  const validation = validateUrl(url, "post_call_api");
   if (!validation.valid) {
     if (url) {
       try {
-        if (isPrivateHost(new URL(url).hostname)) {
+        if (isPrivateOrReservedHost(new URL(url).hostname)) {
           auditSecurityEvent(AuditAction.SECURITY_PRIVATE_IP_BLOCKED, "system", {
             tool: "post_call_api",
             url,

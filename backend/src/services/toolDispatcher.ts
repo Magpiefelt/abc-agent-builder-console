@@ -44,12 +44,24 @@ export interface SessionMemory {
   attributes: Record<string, unknown>;
 }
 
+export interface ArtifactCreatedEvent {
+  id: string;
+  type: string;
+  title: string;
+  mimeType?: string;
+  sizeBytes: number;
+  iteration: number;
+  createdAt: string;
+}
+
 export interface ToolContext {
   sessionId: string;
   userId: string;
   ministryCode: string | null;
   iteration: number;
   memory: SessionMemory;
+  /** Optional callback invoked after an artifact is persisted. Orchestrator wires this to SSE. */
+  onArtifactCreated?: (event: ArtifactCreatedEvent) => void;
 }
 
 // ============================================================================
@@ -68,9 +80,13 @@ const TOOL_TIMEOUT_MS = 30_000; // 30 seconds per tool call
 /**
  * Tool handler function signature.
  * Each Phase 3 tool file exports functions matching this signature.
+ *
+ * `context` is optional — single-arg handlers (e.g. web_scrape) ignore it.
+ * Tools that need to persist artifacts, look up ministry scope, or apply
+ * per-user rate limits accept it as a second parameter.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type EdgeToolHandler = (params: Record<string, unknown>) => Promise<any>;
+type EdgeToolHandler = (params: Record<string, unknown>, context?: ToolContext) => Promise<any>;
 
 /**
  * Registry of edge tool handlers.
@@ -275,7 +291,8 @@ function handleMemoryTool(
         return failResult(toolCall.tool, `Invalid type "${type}". Must be one of: ${validTypes.join(", ")}`, startTime);
       }
 
-      // Store artifact in database (fire and forget)
+      // Persist artifact (fire and forget — surfaces errors via logger). Emits artifact_created
+      // SSE event via context.onArtifactCreated when wired by the orchestrator.
       storeArtifact(context, { title, type, content, mimeType, description }).catch((err) => {
         logger.error("Failed to store artifact", err as Error, { sessionId: context.sessionId, title });
       });
@@ -323,9 +340,9 @@ async function handleEdgeTool(
   const handler = edgeToolHandlers.get(toolCall.tool);
   if (handler) {
     try {
-      // Execute with timeout
+      // Execute with timeout (pass context so tools that need it can use it)
       const handlerResult = await withTimeout(
-        handler(toolCall.params),
+        handler(toolCall.params, context),
         TOOL_TIMEOUT_MS,
         `Tool "${toolCall.tool}" timed out after ${TOOL_TIMEOUT_MS / 1000}s`
       );
@@ -420,13 +437,29 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
-async function storeArtifact(
+const MAX_ARTIFACT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB
+
+/**
+ * Persist an artifact to the database and fire the optional SSE callback on
+ * the context. Returns the inserted row id and created_at.
+ * Exposed so tool handlers (e.g. image_generation, elevenlabs_tts) can persist
+ * artifacts they generate.
+ */
+export async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
-): Promise<void> {
-  await query(
+): Promise<{ id: string; createdAt: string; sizeBytes: number }> {
+  const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
+  if (sizeBytes > MAX_ARTIFACT_CONTENT_BYTES) {
+    throw new Error(
+      `Artifact content exceeds ${MAX_ARTIFACT_CONTENT_BYTES / (1024 * 1024)}MB limit (got ${Math.round(sizeBytes / (1024 * 1024))}MB).`
+    );
+  }
+
+  const result = await query<{ id: string; created_at: string }>(
     `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING id, created_at`,
     [
       context.sessionId,
       context.userId,
@@ -435,10 +468,29 @@ async function storeArtifact(
       artifact.content,
       artifact.description || null,
       artifact.mimeType || null,
-      Buffer.byteLength(artifact.content, "utf-8"),
+      sizeBytes,
       context.iteration,
     ]
   );
+
+  const row = result.rows[0];
+  if (context.onArtifactCreated) {
+    try {
+      context.onArtifactCreated({
+        id: row.id,
+        type: artifact.type,
+        title: artifact.title,
+        mimeType: artifact.mimeType,
+        sizeBytes,
+        iteration: context.iteration,
+        createdAt: row.created_at,
+      });
+    } catch (err) {
+      logger.error("onArtifactCreated callback threw", err as Error, { artifactId: row.id });
+    }
+  }
+
+  return { id: row.id, createdAt: row.created_at, sizeBytes };
 }
 
 // ============================================================================
