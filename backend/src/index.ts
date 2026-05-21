@@ -17,7 +17,7 @@ import { installProcessMonitor } from "./services/processMonitor.js";
 import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
 import { registerAllTools } from "./tools/register.js";
-import { validateConnectionAllowlist } from "./tools/database.js";
+import { validateConnectionAllowlist, closeDatabaseToolPools } from "./tools/database.js";
 import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
@@ -27,7 +27,8 @@ import agentRoutes from "./routes/agent.js";
 // ============================================================================
 
 installProcessMonitor(async () => {
-  // Graceful shutdown: close database pool
+  // Graceful shutdown: close all DB pools (host + per-connection SQL tool pools)
+  await closeDatabaseToolPools();
   await closePool();
 });
 

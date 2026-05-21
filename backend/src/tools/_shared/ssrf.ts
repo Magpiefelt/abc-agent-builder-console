@@ -8,14 +8,17 @@
 
 /**
  * Check whether a hostname resolves to a private, reserved, or internal-only
- * IP range. Blocks loopback, RFC 1918, link-local, 0.0.0.0/8, and common
- * internal TLDs (.local, .internal, .corp, .lan).
+ * IP range. Blocks loopback, RFC 1918 IPv4, IPv6 unique-local/link-local/
+ * loopback/multicast, link-local IPv4, 0.0.0.0/8, and common internal TLDs
+ * (.local, .internal, .corp, .lan).
+ *
+ * Hostnames are accepted bare (`fc00::1`) or wrapped in URL brackets (`[fc00::1]`).
  */
 export function isPrivateOrReservedHost(hostname: string): boolean {
   const lower = hostname.toLowerCase();
 
   // Block obvious private hostnames
-  const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"];
+  const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]", "::"];
   if (blockedHosts.includes(lower)) return true;
 
   // IPv4 ranges
@@ -28,6 +31,22 @@ export function isPrivateOrReservedHost(hostname: string): boolean {
     if (a === 127) return true; // 127.0.0.0/8
     if (a === 169 && b === 254) return true; // 169.254.0.0/16 link-local
     if (a === 0) return true; // 0.0.0.0/8
+  }
+
+  // IPv6 ranges. Hostname may arrive as `[fc00::1]` (URL form) or `fc00::1`.
+  const ipv6 = lower.startsWith("[") && lower.endsWith("]") ? lower.slice(1, -1) : lower;
+  if (ipv6.includes(":")) {
+    // Loopback `::1` and unspecified `::`
+    if (ipv6 === "::1" || ipv6 === "::") return true;
+    // IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check the embedded IPv4
+    const mapped = ipv6.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
+    if (mapped) return isPrivateOrReservedHost(mapped[1]);
+    // fc00::/7 unique-local (fc.. or fd..)
+    if (/^f[cd][0-9a-f]{2}:/i.test(ipv6) || ipv6.startsWith("fc") || ipv6.startsWith("fd")) return true;
+    // fe80::/10 link-local — match fe8x/fe9x/feax/febx
+    if (/^fe[89ab][0-9a-f]?:/i.test(ipv6)) return true;
+    // ff00::/8 multicast
+    if (/^ff[0-9a-f]{2}:/i.test(ipv6)) return true;
   }
 
   // Internal TLDs

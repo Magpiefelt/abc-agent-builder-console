@@ -72,6 +72,7 @@ const SCRATCHPAD_MAX_SIZE = 50 * 1024; // 50KB
 const BLACKBOARD_ENTRY_MAX_SIZE = 10 * 1024; // 10KB per entry
 const BLACKBOARD_MAX_ENTRIES = 200;
 const TOOL_TIMEOUT_MS = 30_000; // 30 seconds per tool call
+const MAX_ARTIFACT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB per artifact
 
 // ============================================================================
 // EDGE TOOL HANDLER REGISTRY
@@ -291,6 +292,13 @@ function handleMemoryTool(
         return failResult(toolCall.tool, `Invalid type "${type}". Must be one of: ${validTypes.join(", ")}`, startTime);
       }
 
+      // Pre-check the 10MB cap so the agent gets a clear error synchronously
+      // rather than a silent fire-and-forget failure.
+      const contentSize = Buffer.byteLength(content, "utf-8");
+      if (contentSize > MAX_ARTIFACT_CONTENT_BYTES) {
+        return failResult(toolCall.tool, `Artifact content exceeds ${MAX_ARTIFACT_CONTENT_BYTES / (1024 * 1024)}MB limit (got ${Math.round(contentSize / (1024 * 1024))}MB).`, startTime);
+      }
+
       // Persist artifact (fire and forget — surfaces errors via logger). Emits artifact_created
       // SSE event via context.onArtifactCreated when wired by the orchestrator.
       storeArtifact(context, { title, type, content, mimeType, description }).catch((err) => {
@@ -436,8 +444,6 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
     clearTimeout(timer!);
   }
 }
-
-const MAX_ARTIFACT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB
 
 /**
  * Persist an artifact to the database and fire the optional SSE callback on

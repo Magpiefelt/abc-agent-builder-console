@@ -84,7 +84,8 @@ export async function entBraveSearch(
   opts: { count?: number } = {}
 ): Promise<{ results: EntSearchResult[] }> {
   const count = Math.min(opts.count || 10, 20);
-  const response = await entFetch(`/v1/brave/search?q=${encodeURIComponent(query)}&count=${count}`, {
+  const path = `${env.ENT_TOOLS_BRAVE_PATH}?q=${encodeURIComponent(query)}&count=${count}`;
+  const response = await entFetch(path, {
     method: "GET",
     headers: { Accept: "application/json" },
   });
@@ -129,7 +130,7 @@ export async function entImageGeneration(
   prompt: string,
   opts: { size?: string; model?: string } = {}
 ): Promise<EntImageResult> {
-  const response = await entFetch(`/v1/images/generations`, {
+  const response = await entFetch(env.ENT_TOOLS_IMAGE_PATH, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",

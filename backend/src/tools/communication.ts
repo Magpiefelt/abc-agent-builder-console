@@ -11,7 +11,7 @@ import { env } from "../config/env.js";
 import { logger } from "../services/logger.js";
 import { auditSecurityEvent, AuditAction } from "../services/auditLogger.js";
 import type { ToolContext } from "../services/toolDispatcher.js";
-import emailAllowlist from "../data/emailAllowlist.json" assert { type: "json" };
+import emailAllowlist from "../data/emailAllowlist.json" with { type: "json" };
 
 interface EmailAllowlist {
   domains: string[];
@@ -79,14 +79,19 @@ function checkAndRecordRateLimit(userId: string): { allowed: boolean; resetMs?: 
   return { allowed: true };
 }
 
-setInterval(() => {
-  const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
-  for (const [userId, timestamps] of sendEmailRateLimits) {
-    const fresh = timestamps.filter((ts) => ts > cutoff);
-    if (fresh.length === 0) sendEmailRateLimits.delete(userId);
-    else if (fresh.length !== timestamps.length) sendEmailRateLimits.set(userId, fresh);
-  }
-}, 5 * 60 * 1000).unref();
+let cleanupInterval: ReturnType<typeof setInterval> | null = null;
+function ensureRateLimitCleanup(): void {
+  if (cleanupInterval) return;
+  cleanupInterval = setInterval(() => {
+    const cutoff = Date.now() - RATE_LIMIT_WINDOW_MS;
+    for (const [userId, timestamps] of sendEmailRateLimits) {
+      const fresh = timestamps.filter((ts) => ts > cutoff);
+      if (fresh.length === 0) sendEmailRateLimits.delete(userId);
+      else if (fresh.length !== timestamps.length) sendEmailRateLimits.set(userId, fresh);
+    }
+  }, 5 * 60 * 1000);
+  cleanupInterval.unref();
+}
 
 // ============================================================================
 // TRANSPORTER (lazy)
@@ -147,6 +152,7 @@ export async function sendEmail(
     return { success: false, error: "send_email requires an authenticated user context." };
   }
 
+  ensureRateLimitCleanup();
   const rate = checkAndRecordRateLimit(context.userId);
   if (!rate.allowed) {
     auditSecurityEvent(AuditAction.SECURITY_RATE_LIMITED, context.userId, {

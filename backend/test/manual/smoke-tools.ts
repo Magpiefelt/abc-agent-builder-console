@@ -88,6 +88,7 @@ async function main() {
   // OCR — use a tiny PNG that contains the word "Hello"
   results.push(await runCase("ocr_image", { url: "https://tesseract.projectnaptha.com/img/eng_bw.png", language: "eng" }));
   // Small public ZIP for smoke-only (under 50MB cap).
+  // Note: octocat/Hello-World contains a single file `Hello-World-master/README` (no extension).
   const TEST_ZIP_URL = "https://github.com/octocat/Hello-World/archive/refs/heads/master.zip";
   results.push(await runCase("read_zip_contents", { url: TEST_ZIP_URL }));
   results.push(await runCase("read_zip_file", { url: TEST_ZIP_URL, filePath: "Hello-World-master/README" }));
@@ -95,8 +96,16 @@ async function main() {
   results.push(await runCase("get_call_api", { url: "https://httpbin.org/get" }));
   results.push(await runCase("post_call_api", { url: "https://httpbin.org/post", body: { hello: "world" } }));
   results.push(await runCase("execute_sql", { connection: "primary", sql: "SELECT 1 AS one" }));
-  // SSRF refusal — must be rejected
+  // SSRF refusal — IPv4 loopback must be rejected
   results.push(await runCase("get_call_api", { url: "http://127.0.0.1/" }, {
+    expectFail: (e) => /private|internal/i.test(e),
+  }));
+  // SSRF refusal — IPv6 unique-local (fc00::/7) must be rejected
+  results.push(await runCase("get_call_api", { url: "http://[fc00::1]/" }, {
+    expectFail: (e) => /private|internal/i.test(e),
+  }));
+  // SSRF refusal — IPv6 link-local (fe80::/10) must be rejected
+  results.push(await runCase("get_call_api", { url: "http://[fe80::1]/" }, {
     expectFail: (e) => /private|internal/i.test(e),
   }));
   results.push(await runCase("read_database_schemas", { connection: "primary" }));

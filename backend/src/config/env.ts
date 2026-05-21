@@ -69,6 +69,9 @@ const envSchema = z.object({
   // ============================================================================
   ENT_TOOLS_API_KEY: z.string().optional(),
   ENT_TOOLS_BASE_URL: z.string().url().default("https://ent-tools.sandbox.aim.int.gov.ab.ca"),
+  /** Overridable Ent Tools endpoint paths (in case the proxy spec differs). */
+  ENT_TOOLS_BRAVE_PATH: z.string().default("/v1/brave/search"),
+  ENT_TOOLS_IMAGE_PATH: z.string().default("/v1/images/generations"),
 
   // ============================================================================
   // EMAIL (SMTP)

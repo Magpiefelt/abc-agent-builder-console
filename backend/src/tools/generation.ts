@@ -17,6 +17,8 @@ import { storeArtifact, type ToolContext } from "../services/toolDispatcher.js";
 
 const USER_AGENT = "GoA-ABC-Bot/1.0 (+https://gov.ab.ca)";
 const FETCH_TIMEOUT_MS = 30_000;
+const MAX_PROMPT_LENGTH = 2000;
+const MAX_TTS_TEXT_LENGTH = 5000;
 
 export interface ImageGenerationResult {
   success: boolean;
@@ -50,6 +52,9 @@ export async function imageGeneration(
 
   if (!prompt) {
     return { success: false, error: "Parameter 'prompt' is required." };
+  }
+  if (prompt.length > MAX_PROMPT_LENGTH) {
+    return { success: false, error: `Prompt exceeds ${MAX_PROMPT_LENGTH} character limit.` };
   }
   if (!context) {
     return { success: false, error: "image_generation requires a ToolContext (session info)." };
@@ -165,8 +170,8 @@ export async function elevenlabsTts(
   if (!context) {
     return { success: false, error: "elevenlabs_tts requires a ToolContext (session info)." };
   }
-  if (text.length > 5000) {
-    return { success: false, error: "Text exceeds 5000 character cap for elevenlabs_tts." };
+  if (text.length > MAX_TTS_TEXT_LENGTH) {
+    return { success: false, error: `Text exceeds ${MAX_TTS_TEXT_LENGTH} character cap for elevenlabs_tts.` };
   }
 
   const controller = new AbortController();

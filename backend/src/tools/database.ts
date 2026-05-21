@@ -19,7 +19,7 @@
 import pg from "pg";
 import { logger } from "../services/logger.js";
 import type { ToolContext } from "../services/toolDispatcher.js";
-import allowlist from "../data/connectionAllowlist.json" assert { type: "json" };
+import allowlist from "../data/connectionAllowlist.json" with { type: "json" };
 import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
 
 const { Pool } = pg;
@@ -62,6 +62,22 @@ const STATEMENT_TIMEOUT_MS = 10_000;
 // ============================================================================
 
 const poolCache: Map<string, pg.Pool> = new Map();
+
+/**
+ * Close every cached connection pool. Wired into the process monitor shutdown
+ * hook so SQL tool connections don't outlive the server.
+ */
+export async function closeDatabaseToolPools(): Promise<void> {
+  for (const [name, pool] of poolCache) {
+    try {
+      await pool.end();
+      logger.info("sql tool pool closed", { connection: name });
+    } catch (err) {
+      logger.warn("sql tool pool close failed", { connection: name, error: (err as Error).message });
+    }
+  }
+  poolCache.clear();
+}
 
 function getPoolForEntry(entry: ConnectionAllowlistEntry): pg.Pool {
   let pool = poolCache.get(entry.name);
@@ -165,12 +181,25 @@ export async function executeSql(
   if (!Array.isArray(sqlParams)) {
     return { success: false, error: "Parameter 'params' must be an array if provided." };
   }
+  // Sanity-check placeholders so the caller gets a clear error instead of a
+  // pg "parameter $N does not exist" deep in the driver.
+  const placeholders = (sql.match(/\$(\d+)/g) || []).map((m) => parseInt(m.slice(1), 10));
+  if (placeholders.length > 0) {
+    const maxPh = Math.max(...placeholders);
+    if (maxPh > sqlParams.length) {
+      return { success: false, error: `SQL references $${maxPh} but only ${sqlParams.length} params provided.` };
+    }
+  }
 
   const resolved = resolveAllowedConnection(connection, context?.ministryCode ?? null);
   if ("error" in resolved) return { success: false, error: resolved.error };
   const { entry } = resolved;
 
-  const effectiveReadOnly = entry.readOnly !== false && !isWrite;
+  // Refuse writes against connections explicitly marked read-only.
+  if (entry.readOnly === true && isWrite) {
+    return { success: false, error: `Connection '${connection}' is marked read-only; writes are not permitted.` };
+  }
+  const effectiveReadOnly = entry.readOnly === true || !isWrite;
 
   let pool: pg.Pool;
   try {

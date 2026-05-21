@@ -375,6 +375,15 @@ export interface OcrResult {
   error?: string;
 }
 
+interface TesseractWorker {
+  recognize(image: Buffer): Promise<{ data: { text: string; confidence: number } }>;
+  terminate(): Promise<unknown>;
+}
+
+interface TesseractModule {
+  createWorker(language: string): Promise<TesseractWorker>;
+}
+
 /**
  * Extract text from an image using Tesseract.js. Spawns a fresh worker per
  * call and terminates it in a `finally` block — predictable lifecycle inside
@@ -396,32 +405,37 @@ export async function ocrImage(params: Record<string, unknown>): Promise<OcrResu
     return { success: false, error: fetchResult.error };
   }
 
-  let worker: { recognize: (i: Buffer) => Promise<{ data: { text: string; confidence: number } }>; terminate: () => Promise<unknown> } | null = null;
+  let tesseract: TesseractModule;
   try {
-    const tesseract = await import("tesseract.js").then((m) => m.default || m).catch(() => null);
-    if (!tesseract || typeof (tesseract as { createWorker?: unknown }).createWorker !== "function") {
-      return { success: false, error: "tesseract.js package is not installed. Run: npm install tesseract.js" };
+    const imported = await import("tesseract.js");
+    const mod = (imported as { default?: unknown }).default ?? imported;
+    if (typeof (mod as { createWorker?: unknown }).createWorker !== "function") {
+      return { success: false, error: "tesseract.js package does not expose createWorker." };
     }
+    tesseract = mod as TesseractModule;
+  } catch (err) {
+    return { success: false, error: `tesseract.js failed to load: ${(err as Error).message}` };
+  }
 
-    worker = await (tesseract as { createWorker: (lang: string) => Promise<typeof worker> }).createWorker(language);
-    const { data } = await worker!.recognize(fetchResult.buffer);
+  let worker: TesseractWorker | null = null;
+  try {
+    worker = await tesseract.createWorker(language);
+  } catch (err) {
+    logger.error("Tesseract worker init failed", err, { language });
+    return { success: false, error: `Tesseract worker init failed: ${(err as Error).message}` };
+  }
 
-    return {
-      success: true,
-      text: data.text,
-      confidence: data.confidence,
-      language,
-    };
+  try {
+    const { data } = await worker.recognize(fetchResult.buffer);
+    return { success: true, text: data.text, confidence: data.confidence, language };
   } catch (err) {
     logger.error("OCR failed", err, { url, language });
     return { success: false, error: `OCR failed: ${(err as Error).message}` };
   } finally {
-    if (worker) {
-      try {
-        await worker.terminate();
-      } catch (err) {
-        logger.warn("Tesseract worker terminate failed", { error: (err as Error).message });
-      }
+    try {
+      await worker.terminate();
+    } catch (err) {
+      logger.warn("Tesseract worker terminate failed", { error: (err as Error).message });
     }
   }
 }
