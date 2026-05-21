@@ -363,3 +363,91 @@ describe('useWorkflowStore — restoreVersion clears preview', () => {
     expect(store.versionPreview).toBeNull()
   })
 })
+
+describe('useWorkflowStore — exportToFile / importFromFile', () => {
+  it('exports the loaded workflow as a JSON file with schemaVersion=1', () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({
+      name: 'My Workflow',
+      description: 'A test',
+      classification: 'protected_a',
+      canvas_data: {
+        nodes: [
+          {
+            id: 'a',
+            type: 'agent',
+            position: { x: 0, y: 0 },
+            data: { kind: 'agent', label: 'A', modelId: 'm', classification: 'unclassified', tools: [] },
+          },
+        ],
+        edges: [],
+        version: 1,
+      },
+    })
+
+    const createObjectURL = vi.fn(() => 'blob:fake')
+    const revokeObjectURL = vi.fn()
+    Object.defineProperty(URL, 'createObjectURL', { value: createObjectURL, configurable: true })
+    Object.defineProperty(URL, 'revokeObjectURL', { value: revokeObjectURL, configurable: true })
+
+    const click = vi.fn()
+    const anchor = document.createElement('a')
+    anchor.click = click
+    const createElementSpy = vi.spyOn(document, 'createElement').mockReturnValue(anchor)
+
+    store.exportToFile()
+
+    expect(createObjectURL).toHaveBeenCalledTimes(1)
+    const blob = createObjectURL.mock.calls[0][0] as Blob
+    expect(blob.type).toBe('application/json')
+    expect(click).toHaveBeenCalledTimes(1)
+    expect(anchor.download).toMatch(/\.workflow\.json$/)
+    expect(revokeObjectURL).toHaveBeenCalledWith('blob:fake')
+
+    createElementSpy.mockRestore()
+  })
+
+  it('rejects an import with an unsupported schema version', async () => {
+    const store = useWorkflowStore()
+    const file = fileWithText(JSON.stringify({ schemaVersion: 99, name: 'x' }))
+    await expect(store.importFromFile(file)).rejects.toThrow(/schema/i)
+  })
+
+  it('rejects an import with malformed JSON', async () => {
+    const store = useWorkflowStore()
+    const file = fileWithText('{ not json')
+    await expect(store.importFromFile(file)).rejects.toThrow(/valid JSON/i)
+  })
+
+  it('creates a new workflow from a valid import bundle', async () => {
+    const store = useWorkflowStore()
+    const created = makeWorkflow({ id: 'new-id', name: 'Imported' })
+    apiFetchMock.mockResolvedValueOnce(created)
+
+    const bundle = {
+      schemaVersion: 1,
+      exportedAt: '2026-05-21T00:00:00Z',
+      name: 'Imported',
+      description: null,
+      classification: 'unclassified',
+      canvas_data: { nodes: [], edges: [], version: 1 },
+    }
+    const file = fileWithText(JSON.stringify(bundle))
+
+    const wf = await store.importFromFile(file)
+    expect(wf.id).toBe('new-id')
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/workflows',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    const body = JSON.parse(apiFetchMock.mock.calls[0][1].body as string)
+    expect(body.name).toBe('Imported')
+    expect(body.classification).toBe('unclassified')
+  })
+})
+
+// jsdom's File doesn't implement .text(), so we wrap a stub that mimics it
+// closely enough for the importer.
+function fileWithText(content: string): File {
+  return { text: () => Promise.resolve(content) } as unknown as File
+}

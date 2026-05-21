@@ -273,6 +273,43 @@ describe("orchestrator — LLM failure handling", () => {
   });
 });
 
+describe("orchestrator — inbound PII scan on LLM response", () => {
+  it("redacts blocked PII in user_message and emits a pii_warning event", async () => {
+    // Anthropic key pattern is a "blocked" detection — it should be redacted
+    // out of the user_message before it streams to the client.
+    const leakedSecret = "sk-ant-api03-" + "a".repeat(95);
+    registerMockResponses("sess-test-1", [
+      {
+        thinking: "responding",
+        blackboardUpdates: [{ category: "leak", title: "API key", content: `key=${leakedSecret}` }],
+        status: "completed",
+        userMessage: `Here is the key: ${leakedSecret}`,
+      },
+    ]);
+
+    const res = new FakeRes();
+    const session = freshSession({ id: "sess-test-1" });
+
+    await runOrchestrator(session, res as unknown as Response);
+
+    const events = res.events();
+    const types = events.map((e) => e.type);
+
+    // The pii_warning event for inbound content must be present.
+    const piiWarnings = events.filter((e) => e.type === "pii_warning");
+    expect(piiWarnings.length).toBeGreaterThan(0);
+    expect(piiWarnings.some((e) => typeof e.message === "string" && (e.message as string).includes("model response"))).toBe(true);
+
+    expect(types).toContain("session_complete");
+
+    // Final report (synthesized from user_message) must NOT contain the raw secret.
+    expect(session.finalReport ?? "").not.toContain(leakedSecret);
+    // Blackboard entries must NOT contain the raw secret either.
+    const blackboardJoined = session.blackboard.map((b) => `${b.title}\n${b.content}`).join("\n");
+    expect(blackboardJoined).not.toContain(leakedSecret);
+  });
+});
+
 describe("orchestrator — session lifecycle", () => {
   it("createSession persists a new session and returns the loaded state", async () => {
     queryMock.mockResolvedValueOnce({

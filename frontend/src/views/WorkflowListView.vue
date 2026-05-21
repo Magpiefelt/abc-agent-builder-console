@@ -26,6 +26,31 @@ const createError = ref<string | null>(null)
 const deleteTarget = ref<{ id: string; name: string } | null>(null)
 const deleting = ref(false)
 
+const importInput = ref<HTMLInputElement | null>(null)
+const importing = ref(false)
+
+function triggerImport(): void {
+  importInput.value?.click()
+}
+
+async function onImportFileChosen(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // Reset the input so the same filename can be re-selected if needed.
+  input.value = ''
+  if (!file) return
+  importing.value = true
+  try {
+    const wf = await store.importFromFile(file)
+    toast.push({ kind: 'success', message: `Imported "${wf.name}".` })
+    router.push(`/workflows/${wf.id}`)
+  } catch (e) {
+    toast.push({ kind: 'error', message: `Couldn't import: ${(e as Error).message}` })
+  } finally {
+    importing.value = false
+  }
+}
+
 onMounted(() => {
   store.loadList()
 })
@@ -161,6 +186,21 @@ function formatDate(iso: string): string {
           <goa-dropdown-item value="mine" label="My ministry"></goa-dropdown-item>
           <goa-dropdown-item value="ministry" label="All accessible"></goa-dropdown-item>
         </goa-dropdown>
+        <goa-button
+          type="tertiary"
+          leadingicon="cloud-upload"
+          :disabled="importing || undefined"
+          @_click="triggerImport"
+        >
+          {{ importing ? 'Importing…' : 'Import JSON' }}
+        </goa-button>
+        <input
+          ref="importInput"
+          type="file"
+          accept="application/json,.json"
+          class="sr-only"
+          @change="onImportFileChosen"
+        />
         <goa-button type="primary" leadingicon="add" @_click="toggleCreate">
           New workflow
         </goa-button>

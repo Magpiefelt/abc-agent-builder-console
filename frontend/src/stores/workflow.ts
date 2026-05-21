@@ -200,6 +200,99 @@ export const useWorkflowStore = defineStore('workflow', () => {
   }
 
   // ============================================================================
+  // PORTABLE JSON EXPORT / IMPORT
+  // ============================================================================
+  //
+  // Workflows can be exported as a portable .json bundle and imported back to
+  // create a new workflow. The export contains only the fields that are part
+  // of the canvas contract — never database identifiers, ministry scoping, or
+  // audit metadata. Import never overwrites an existing workflow; it always
+  // creates a fresh one so audit/ministry attribution stays correct.
+
+  interface WorkflowExport {
+    schemaVersion: 1
+    exportedAt: string
+    name: string
+    description: string | null
+    classification: Classification
+    canvas_data: CanvasData
+  }
+
+  function buildExport(): WorkflowExport | null {
+    if (!current.value) return null
+    return {
+      schemaVersion: 1,
+      exportedAt: new Date().toISOString(),
+      name: current.value.name,
+      description: current.value.description ?? null,
+      classification: current.value.classification,
+      canvas_data: current.value.canvas_data,
+    }
+  }
+
+  function safeFilename(name: string): string {
+    const trimmed = name.trim() || 'workflow'
+    return trimmed.replace(/[^a-z0-9-_]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '').toLowerCase()
+  }
+
+  function exportToFile(): void {
+    const bundle = buildExport()
+    if (!bundle) return
+    const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${safeFilename(bundle.name)}.workflow.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+  }
+
+  function parseImport(raw: string): WorkflowExport {
+    let parsed: unknown
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      throw new Error('Not a valid JSON file.')
+    }
+    if (!parsed || typeof parsed !== 'object') throw new Error('Workflow file is empty or malformed.')
+    const obj = parsed as Record<string, unknown>
+    if (obj.schemaVersion !== 1) {
+      throw new Error(`Unsupported export schema (expected version 1, got ${String(obj.schemaVersion)}).`)
+    }
+    if (typeof obj.name !== 'string' || !obj.name.trim()) {
+      throw new Error('Workflow file is missing a name.')
+    }
+    const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
+    if (!classifications.includes(obj.classification as Classification)) {
+      throw new Error('Workflow file has an invalid classification.')
+    }
+    const canvas = obj.canvas_data as Record<string, unknown> | undefined
+    if (!canvas || !Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) {
+      throw new Error('Workflow file is missing canvas_data.nodes or canvas_data.edges.')
+    }
+    return {
+      schemaVersion: 1,
+      exportedAt: typeof obj.exportedAt === 'string' ? obj.exportedAt : new Date().toISOString(),
+      name: obj.name,
+      description: typeof obj.description === 'string' ? obj.description : null,
+      classification: obj.classification as Classification,
+      canvas_data: {
+        nodes: canvas.nodes as CanvasNode[],
+        edges: canvas.edges as CanvasEdge[],
+        version: 1,
+      },
+    }
+  }
+
+  async function importFromFile(file: File): Promise<Workflow> {
+    const text = await file.text()
+    const bundle = parseImport(text)
+    return create(bundle.name, bundle.classification, bundle.canvas_data)
+  }
+
+  // ============================================================================
   // CANVAS MUTATIONS
   // ============================================================================
 
@@ -482,6 +575,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     duplicate,
     save,
     remove,
+    exportToFile,
+    importFromFile,
     setNodes,
     setEdges,
     addNode,
