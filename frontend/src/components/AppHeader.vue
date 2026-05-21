@@ -37,6 +37,14 @@ async function handleLogout(): Promise<void> {
         >
           Workflows
         </RouterLink>
+        <RouterLink
+          v-if="auth.isAdmin"
+          to="/admin"
+          class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors"
+          active-class="bg-white/20"
+        >
+          Admin
+        </RouterLink>
       </nav>
     </div>
 

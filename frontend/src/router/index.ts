@@ -39,6 +39,12 @@ const router = createRouter({
       path: '/workflow',
       redirect: '/workflows',
     },
+    {
+      path: '/admin',
+      name: 'admin',
+      component: () => import('@/views/AdminView.vue'),
+      meta: { requiresAuth: true, requiresAdmin: true },
+    },
   ],
 })
 

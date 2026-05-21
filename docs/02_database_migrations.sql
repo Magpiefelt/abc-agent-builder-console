@@ -489,6 +489,7 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- ============================================================================
+-- ============================================================================
 -- STREAM A — User Memory (Identity, SSO & per-user persistence)
 -- Idempotent and additive. Safe to re-run.
 -- ============================================================================
@@ -598,6 +599,59 @@ END $$;
 CREATE INDEX IF NOT EXISTS idx_artifacts_workflow_execution ON cohen_mcleod.artifacts(workflow_execution_id);
 
 -- ============================================================================
+-- STREAM F: COMPLIANCE, PRIVACY HARDENING & DEPLOYMENT
+-- ============================================================================
+-- Adds:
+--   - pgcrypto extension (symmetric encryption for user secrets)
+--   - cohen_mcleod.user_secrets (per-user encrypted secret store)
+--   - cohen_mcleod.retention_policy (classification-aware retention schedule)
+-- All blocks are idempotent.
+-- ============================================================================
+
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+-- Per-user encrypted secret store.
+-- Encrypted client-side in backend/src/services/secretsVault.ts using
+-- pgp_sym_encrypt with SECRETS_VAULT_KEY (env). Plaintext never written.
+CREATE TABLE IF NOT EXISTS cohen_mcleod.user_secrets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES cohen_mcleod.users(id) ON DELETE CASCADE,
+    label TEXT NOT NULL,
+    encrypted_value BYTEA NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (user_id, label)
+);
+
+CREATE INDEX IF NOT EXISTS idx_user_secrets_user ON cohen_mcleod.user_secrets(user_id);
+
+DROP TRIGGER IF EXISTS trg_user_secrets_updated ON cohen_mcleod.user_secrets;
+CREATE TRIGGER trg_user_secrets_updated BEFORE UPDATE ON cohen_mcleod.user_secrets
+    FOR EACH ROW EXECUTE FUNCTION cohen_mcleod.update_timestamp();
+
+-- Classification-aware retention schedule.
+-- Consumed by backend/src/services/retentionJob.ts.
+-- sessions_days, artifacts_days are hard-delete windows.
+-- audit_log_days is the anonymization window (rows kept for compliance counts).
+CREATE TABLE IF NOT EXISTS cohen_mcleod.retention_policy (
+    classification TEXT PRIMARY KEY,
+    sessions_days INTEGER NOT NULL,
+    artifacts_days INTEGER NOT NULL,
+    audit_log_days INTEGER NOT NULL,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+INSERT INTO cohen_mcleod.retention_policy (classification, sessions_days, artifacts_days, audit_log_days) VALUES
+  ('unclassified', 90,   90,   365),
+  ('protected_a',  365,  365,  1095),
+  ('protected_b',  1095, 1095, 2555)
+ON CONFLICT (classification) DO NOTHING;
+
+DROP TRIGGER IF EXISTS trg_retention_policy_updated ON cohen_mcleod.retention_policy;
+CREATE TRIGGER trg_retention_policy_updated BEFORE UPDATE ON cohen_mcleod.retention_policy
+    FOR EACH ROW EXECUTE FUNCTION cohen_mcleod.update_timestamp();
+
+-- ============================================================================
 -- VERIFICATION
 -- ============================================================================
 -- SELECT 'features' as tbl, count(*) FROM cohen_mcleod.features
@@ -607,7 +661,9 @@ CREATE INDEX IF NOT EXISTS idx_artifacts_workflow_execution ON cohen_mcleod.arti
 -- UNION ALL SELECT 'privacy_controls', count(*) FROM cohen_mcleod.privacy_controls
 -- UNION ALL SELECT 'user_preferences', count(*) FROM cohen_mcleod.user_preferences
 -- UNION ALL SELECT 'saved_prompts', count(*) FROM cohen_mcleod.saved_prompts
--- UNION ALL SELECT 'workflow_favorites', count(*) FROM cohen_mcleod.workflow_favorites;
+-- UNION ALL SELECT 'workflow_favorites', count(*) FROM cohen_mcleod.workflow_favorites
+-- UNION ALL SELECT 'user_secrets', count(*) FROM cohen_mcleod.user_secrets
+-- UNION ALL SELECT 'retention_policy', count(*) FROM cohen_mcleod.retention_policy;
 
 -- ============================================================================
 -- STREAM D: Model registry seed (idempotent)

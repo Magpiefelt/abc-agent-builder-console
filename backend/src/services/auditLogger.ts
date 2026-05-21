@@ -62,6 +62,16 @@ export enum AuditAction {
   ADMIN_ACCESS = "admin.access",
   ADMIN_MODEL_UPDATED = "admin.model.updated",
   ADMIN_CONFIG_CHANGED = "admin.config.changed",
+  ADMIN_RETENTION_RUN = "admin.retention.run",
+  ADMIN_PII_VIEWED = "admin.pii.viewed",
+  ADMIN_SESSION_VIEWED = "admin.session.viewed",
+
+  // Secrets Vault
+  SECRET_CREATED = "secret.created",
+  SECRET_UPDATED = "secret.updated",
+  SECRET_ACCESSED = "secret.accessed",
+  SECRET_DELETED = "secret.deleted",
+  SECRET_ROTATED = "secret.rotated",
 
   // Security
   SECURITY_RATE_LIMITED = "security.rate_limited",

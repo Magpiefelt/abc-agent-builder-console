@@ -9,6 +9,7 @@ export const useAuthStore = defineStore('auth', () => {
   const fetched = ref(false)
 
   const isAuthenticated = computed(() => user.value !== null)
+  const isAdmin = computed(() => user.value?.role === 'admin')
   const initials = computed(() => {
     if (!user.value?.displayName) return ''
     return user.value.displayName
@@ -81,6 +82,7 @@ export const useAuthStore = defineStore('auth', () => {
     error,
     fetched,
     isAuthenticated,
+    isAdmin,
     initials,
     fetchMe,
     login,

@@ -1,0 +1,158 @@
+name: deploy
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        required: true
+        default: staging
+        type: choice
+        options:
+          - staging
+          - production
+  push:
+    branches:
+      - main
+
+# Stream F owns this workflow. Stream E owns ci.yml. Artifact names must match
+# between them: frontend-dist.tar.gz and backend-dist.tar.gz.
+
+permissions:
+  contents: read
+  actions: read
+
+env:
+  NODE_VERSION: '22'
+  PNPM_VERSION: '10'
+
+jobs:
+  build:
+    name: Build and package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact-frontend: frontend-dist.tar.gz
+      artifact-backend: backend-dist.tar.gz
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check (backend)
+        working-directory: backend
+        run: npx tsc --noEmit
+
+      - name: Type-check (frontend)
+        working-directory: frontend
+        run: pnpm type-check
+
+      - name: Build backend
+        working-directory: backend
+        run: npx tsc
+
+      - name: Build frontend
+        working-directory: frontend
+        run: pnpm run build-only
+
+      - name: Package frontend
+        run: tar -czf frontend-dist.tar.gz -C frontend dist
+
+      - name: Package backend
+        # Ship the compiled output, the manifest, and the lockfile. The Nexus
+        # target runs `pnpm install --prod --frozen-lockfile` before starting,
+        # so production deps are resolved at deploy time, not bundled.
+        run: |
+          mkdir backend-bundle
+          cp -r backend/dist backend-bundle/dist
+          cp backend/package.json backend-bundle/package.json
+          cp pnpm-lock.yaml backend-bundle/pnpm-lock.yaml
+          tar -czf backend-dist.tar.gz -C backend-bundle .
+
+      - name: Upload frontend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-dist
+          path: frontend-dist.tar.gz
+          retention-days: 14
+
+      - name: Upload backend artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-dist
+          path: backend-dist.tar.gz
+          retention-days: 14
+
+  publish:
+    name: Publish to Nexus
+    needs: build
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'push' || github.event.inputs.environment == 'production' }}
+    timeout-minutes: 10
+    environment: ${{ github.event.inputs.environment || 'staging' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download frontend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: frontend-dist
+
+      - name: Download backend artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: backend-dist
+
+      - name: Publish to Nexus
+        env:
+          NEXUS_API_TOKEN: ${{ secrets.NEXUS_API_TOKEN }}
+          NEXUS_API_URL: ${{ secrets.NEXUS_API_URL }}
+        run: |
+          set -euo pipefail
+          if [ -z "${NEXUS_API_TOKEN:-}" ] || [ -z "${NEXUS_API_URL:-}" ]; then
+            echo "::warning::NEXUS_API_TOKEN or NEXUS_API_URL not configured."
+            echo "::warning::Skipping Nexus publish. Artifacts remain in the Actions run for manual upload."
+            exit 0
+          fi
+          for f in frontend-dist.tar.gz backend-dist.tar.gz; do
+            echo "Uploading $f to Nexus..."
+            curl -fsS --fail-with-body \
+              -H "Authorization: Bearer $NEXUS_API_TOKEN" \
+              -F "manifest=@nexus/manifest.yaml" \
+              -F "artifact=@$f" \
+              "$NEXUS_API_URL/api/v1/deploy"
+          done
+
+  smoke:
+    name: Post-deploy smoke
+    needs: publish
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.environment == 'production' || github.event_name == 'push' }}
+    timeout-minutes: 5
+    steps:
+      - name: Health check
+        env:
+          BASE_URL: ${{ secrets.DEPLOY_BASE_URL }}
+        run: |
+          if [ -z "${BASE_URL:-}" ]; then
+            echo "::warning::DEPLOY_BASE_URL not set — skipping smoke check"
+            exit 0
+          fi
+          echo "Checking $BASE_URL/api/health"
+          status=$(curl -s -o /tmp/health.json -w '%{http_code}' "$BASE_URL/api/health")
+          cat /tmp/health.json
+          test "$status" = "200" || (echo "Health check failed with status $status"; exit 1)

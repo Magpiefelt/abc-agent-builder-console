@@ -18,7 +18,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const envSchema = z.object({
+const envSchema = z
+  .object({
   // ============================================================================
   // SERVER
   // ============================================================================
@@ -109,7 +110,39 @@ const envSchema = z.object({
   TOOL_TIMEOUT_MS: z.coerce.number().default(30000), // 30 seconds
   /** Maximum concurrent agent sessions per user */
   MAX_CONCURRENT_SESSIONS: z.coerce.number().default(3),
-});
+
+  // ============================================================================
+  // COMPLIANCE & RETENTION (Stream F)
+  // ============================================================================
+  /**
+   * Symmetric key for pgcrypto-encrypted user secrets (services/secretsVault.ts).
+   * Minimum 32 bytes (256 bits). Optional in dev (vault refuses to operate without it),
+   * required in production. Rotate via secretsVault.rotateKey() during a maintenance window.
+   */
+  SECRETS_VAULT_KEY: z.string().min(32).optional(),
+  /** Whether the daily retention job runs automatically. Default OFF in dev. */
+  RETENTION_JOB_ENABLED: z.coerce.boolean().default(false),
+  /** Local hour-of-day (0-23) for the daily retention pass. Default 02:00. */
+  RETENTION_JOB_HOUR: z.coerce.number().min(0).max(23).default(2),
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production") {
+      if (!env.SECRETS_VAULT_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SECRETS_VAULT_KEY"],
+          message: "SECRETS_VAULT_KEY (>= 32 bytes) is required when NODE_ENV=production.",
+        });
+      }
+      if (env.SESSION_SECRET === "dev-secret-change-in-production") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SESSION_SECRET"],
+          message: "SESSION_SECRET must be set (not the dev default) when NODE_ENV=production.",
+        });
+      }
+    }
+  });
 
 const parsed = envSchema.safeParse(process.env);
 
