@@ -13,10 +13,20 @@
  *   POST   /api/users/me/favorite-workflows/:workflowId
  *   DELETE /api/users/me/favorite-workflows/:workflowId
  *   GET    /api/users/me/recent-sessions
+ *   GET    /api/users/me/recent-workflow-executions
+ *   GET    /api/users/me/secrets                       list labels (no values)
+ *   PUT    /api/users/me/secrets/:label                upsert encrypted secret
+ *   DELETE /api/users/me/secrets/:label                delete
  */
 import { Router, type Request, type Response } from "express";
 import { query } from "../config/database.js";
 import { logger } from "../services/logger.js";
+import {
+  setSecret,
+  listLabels,
+  deleteSecret,
+  VaultNotConfigured,
+} from "../services/secretsVault.js";
 
 const router = Router();
 
@@ -345,6 +355,104 @@ router.get("/me/recent-workflow-executions", async (req: Request, res: Response)
   } catch (err) {
     logger.error("Failed to load recent workflow executions", err as Error);
     res.json({ executions: [] });
+  }
+});
+
+// ============================================================================
+// SECRETS VAULT (per-user encrypted credentials for tools)
+//
+// The vault stores e.g. a personal GitHub token, an ElevenLabs API key, or a
+// custom API credential. Plaintext is encrypted with SECRETS_VAULT_KEY before
+// it ever hits the DB (see services/secretsVault.ts). These endpoints never
+// return ciphertext or plaintext — only the labels — because the values are
+// consumed exclusively by server-side tool dispatchers.
+// ============================================================================
+
+const SECRET_LABEL_RE = /^[a-zA-Z0-9_-]{1,100}$/;
+function isValidSecretLabel(label: string): boolean {
+  return SECRET_LABEL_RE.test(label);
+}
+
+function vaultUnavailableResponse(res: Response, err: unknown): boolean {
+  if (err instanceof VaultNotConfigured) {
+    res.status(503).json({
+      error: "Secrets vault is not configured on this deployment.",
+      code: "VAULT_NOT_CONFIGURED",
+    });
+    return true;
+  }
+  return false;
+}
+
+router.get("/me/secrets", async (req: Request, res: Response) => {
+  if (!requireUser(req, res)) return;
+  try {
+    const labels = await listLabels(req.user!.id);
+    res.json({ labels });
+  } catch (err) {
+    if (vaultUnavailableResponse(res, err)) return;
+    logger.error("Failed to list user secrets", err as Error, { userId: req.user!.id });
+    res.status(500).json({ error: "Failed to list secrets." });
+  }
+});
+
+router.put("/me/secrets/:label", async (req: Request, res: Response) => {
+  if (!requireUser(req, res)) return;
+  const label = req.params.label as string;
+  if (!isValidSecretLabel(label)) {
+    res.status(400).json({
+      error: "Label must be 1-100 chars, [A-Za-z0-9_-] only.",
+    });
+    return;
+  }
+
+  const { value } = req.body ?? {};
+  if (typeof value !== "string" || value.length === 0) {
+    res.status(400).json({ error: "Body must include a non-empty `value` string." });
+    return;
+  }
+  if (value.length > 10000) {
+    res.status(400).json({ error: "Secret value must be 10,000 chars or fewer." });
+    return;
+  }
+
+  try {
+    await setSecret(req.user!.id, label, value);
+    res.status(204).send();
+  } catch (err) {
+    if (vaultUnavailableResponse(res, err)) return;
+    logger.error("Failed to set user secret", err as Error, {
+      userId: req.user!.id,
+      label,
+    });
+    res.status(500).json({ error: "Failed to store secret." });
+  }
+});
+
+router.delete("/me/secrets/:label", async (req: Request, res: Response) => {
+  if (!requireUser(req, res)) return;
+  const label = req.params.label as string;
+  if (!isValidSecretLabel(label)) {
+    res.status(400).json({
+      error: "Label must be 1-100 chars, [A-Za-z0-9_-] only.",
+    });
+    return;
+  }
+
+  try {
+    const deleted = await deleteSecret(req.user!.id, label);
+    if (!deleted) {
+      res.status(404).json({ error: "Secret not found." });
+      return;
+    }
+    res.status(204).send();
+  } catch (err) {
+    if (vaultUnavailableResponse(res, err)) return;
+    logger.error("Failed to delete user secret", err as Error, {
+      userId: req.user!.id,
+      label,
+    });
+    res.status(500).json({ error: "Failed to delete secret." });
   }
 });
 

@@ -22,9 +22,12 @@ vi.mock("../../services/llmProvider.js", () => ({
   isProviderConfigured: vi.fn(() => true),
 }));
 
+const abortExecutionMock = vi.hoisted(() => vi.fn());
+const isExecutionRunningMock = vi.hoisted(() => vi.fn(() => false));
 vi.mock("../../services/workflowExecutor.js", () => ({
   runWorkflow: vi.fn(),
-  abortExecution: vi.fn(),
+  abortExecution: abortExecutionMock,
+  isExecutionRunning: isExecutionRunningMock,
 }));
 
 vi.mock("../../services/functionRegistry.js", () => ({
@@ -60,6 +63,9 @@ const FOREIGN_USER_ID = "00000000-0000-0000-0000-000000000099";
 beforeEach(() => {
   queryMock.mockReset();
   transactionMock.mockReset();
+  abortExecutionMock.mockReset();
+  isExecutionRunningMock.mockReset();
+  isExecutionRunningMock.mockReturnValue(false);
 });
 
 // ============================================================================
@@ -550,5 +556,177 @@ describe("GET /api/workflows/:id/executions/:executionId/artifacts/:artifactId",
     expect(res.status).toBe(200);
     expect(res.body.artifact.id).toBe(ARTIFACT_ID);
     expect(res.body.artifact.content).toBe("base64payload");
+  });
+});
+
+// ============================================================================
+// TEMPLATES — LIST FILTER
+// ============================================================================
+
+describe("GET /api/workflows?templates=...", () => {
+  it("appends the is_template = true filter when templates=true", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await request(makeApp()).get("/api/workflows?templates=true");
+    const sql = queryMock.mock.calls[0][0] as string;
+    expect(sql).toMatch(/is_template = true/);
+  });
+
+  it("appends the is_template = false filter when templates=false", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await request(makeApp()).get("/api/workflows?templates=false");
+    const sql = queryMock.mock.calls[0][0] as string;
+    expect(sql).toMatch(/is_template = false/);
+  });
+
+  it("omits the filter when templates is not set", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    await request(makeApp()).get("/api/workflows");
+    const sql = queryMock.mock.calls[0][0] as string;
+    expect(sql).not.toMatch(/is_template =/);
+  });
+});
+
+// ============================================================================
+// DUPLICATE
+// ============================================================================
+
+describe("POST /api/workflows/:id/duplicate", () => {
+  it("400s on an invalid workflow id", async () => {
+    const res = await request(makeApp())
+      .post("/api/workflows/not-a-uuid/duplicate")
+      .send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("400s on an empty-string name override", async () => {
+    const res = await request(makeApp())
+      .post(`/api/workflows/${WORKFLOW_ID}/duplicate`)
+      .send({ name: "   " });
+    expect(res.status).toBe(400);
+  });
+
+  it("404s when the workflow is not visible to the caller", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp())
+      .post(`/api/workflows/${WORKFLOW_ID}/duplicate`)
+      .send({});
+    expect(res.status).toBe(404);
+  });
+
+  it("duplicates the workflow into a new row with default name", async () => {
+    const newId = "55555555-5555-5555-5555-555555555555";
+    queryMock
+      // loadWorkflowForRead
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ user_id: OWNER_ID, ministry_code: "INFRA" }],
+      })
+      // SELECT source workflow
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [
+          {
+            name: "Researcher",
+            description: null,
+            classification: "unclassified",
+            canvas_data: { nodes: [], edges: [], version: 1 },
+          },
+        ],
+      })
+      // SELECT refreshed workflow row at the end
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ id: newId, name: "Researcher (copy)", version: 1, is_template: false }],
+      });
+
+    // transaction runs the callback against a mocked client that returns the new id
+    transactionMock.mockImplementationOnce(async (fn: (c: unknown) => unknown) => {
+      const clientMock = {
+        query: vi
+          .fn()
+          // INSERT workflows RETURNING id
+          .mockResolvedValueOnce({ rows: [{ id: newId }] })
+          // INSERT workflow_versions
+          .mockResolvedValueOnce({ rows: [] }),
+      };
+      return await fn(clientMock);
+    });
+
+    const res = await request(makeApp())
+      .post(`/api/workflows/${WORKFLOW_ID}/duplicate`)
+      .send({});
+    expect(res.status).toBe(201);
+    expect(res.body.id).toBe(newId);
+    expect(res.body.name).toBe("Researcher (copy)");
+  });
+});
+
+// ============================================================================
+// STOP EXECUTION
+// ============================================================================
+
+describe("POST /api/workflows/:id/executions/:executionId/stop", () => {
+  it("400s on an invalid workflow id", async () => {
+    const res = await request(makeApp()).post(
+      `/api/workflows/not-a-uuid/executions/${EXECUTION_ID}/stop`,
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it("404s when the workflow is not visible", async () => {
+    queryMock.mockResolvedValueOnce({ rowCount: 0, rows: [] });
+    const res = await request(makeApp()).post(
+      `/api/workflows/${WORKFLOW_ID}/executions/${EXECUTION_ID}/stop`,
+    );
+    expect(res.status).toBe(404);
+    expect(abortExecutionMock).not.toHaveBeenCalled();
+  });
+
+  it("404s when the execution does not belong to the workflow", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ user_id: OWNER_ID, ministry_code: "INFRA" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 0, rows: [] });
+
+    const res = await request(makeApp()).post(
+      `/api/workflows/${WORKFLOW_ID}/executions/${EXECUTION_ID}/stop`,
+    );
+    expect(res.status).toBe(404);
+    expect(abortExecutionMock).not.toHaveBeenCalled();
+  });
+
+  it("404s when the execution is already completed (no longer running)", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ user_id: OWNER_ID, ministry_code: "INFRA" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: EXECUTION_ID }] });
+    isExecutionRunningMock.mockReturnValueOnce(false);
+
+    const res = await request(makeApp()).post(
+      `/api/workflows/${WORKFLOW_ID}/executions/${EXECUTION_ID}/stop`,
+    );
+    expect(res.status).toBe(404);
+    expect(abortExecutionMock).not.toHaveBeenCalled();
+  });
+
+  it("flips the abort flag and returns 200 when the execution is running", async () => {
+    queryMock
+      .mockResolvedValueOnce({
+        rowCount: 1,
+        rows: [{ user_id: OWNER_ID, ministry_code: "INFRA" }],
+      })
+      .mockResolvedValueOnce({ rowCount: 1, rows: [{ id: EXECUTION_ID }] });
+    isExecutionRunningMock.mockReturnValueOnce(true);
+
+    const res = await request(makeApp()).post(
+      `/api/workflows/${WORKFLOW_ID}/executions/${EXECUTION_ID}/stop`,
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.aborted).toBe(true);
+    expect(abortExecutionMock).toHaveBeenCalledWith(EXECUTION_ID);
   });
 });
