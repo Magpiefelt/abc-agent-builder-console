@@ -343,7 +343,7 @@ async function executeAgentStage(
   node: CanvasNode & { data: AgentNodeData },
   parentIds: string[],
   outputs: Map<string, StageOutput>,
-  workflowClassification: Classification
+  _workflowClassification: Classification
 ): Promise<StageOutput> {
   const start = Date.now();
   const systemPrompt = resolveSystemPrompt(node.data);

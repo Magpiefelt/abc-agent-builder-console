@@ -117,18 +117,16 @@ describe("agentRateLimit — dev mode bypass", () => {
 describe("agentRateLimit — buckets", () => {
   it("read endpoints use a more permissive limit than write endpoints", () => {
     const ip = "7.7.7.7";
-    let readLimit: number | undefined;
-    let writeLimit: number | undefined;
 
     const r1 = makeRes();
     agentRateLimit(makeReq("GET", "/sessions/12345678-abcd-abcd-abcd-1234567890ab", ip), r1, vi.fn() as unknown as NextFunction);
-    readLimit = r1._headers["X-RateLimit-Limit"] as number;
+    const readLimit = r1._headers["X-RateLimit-Limit"] as number;
 
     const r2 = makeRes();
     agentRateLimit(makeReq("POST", "/sessions/12345678-abcd-abcd-abcd-1234567890ab/start", ip), r2, vi.fn() as unknown as NextFunction);
-    writeLimit = r2._headers["X-RateLimit-Limit"] as number;
+    const writeLimit = r2._headers["X-RateLimit-Limit"] as number;
 
-    expect(readLimit).toBeGreaterThan(writeLimit as number);
+    expect(readLimit).toBeGreaterThan(writeLimit);
   });
 
   it("shares the bucket across different session IDs (no bypass by minting new UUIDs)", () => {

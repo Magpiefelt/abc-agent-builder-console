@@ -36,7 +36,7 @@ import { buildSystemPrompt, getToolDefinitions } from "./promptBuilder.js";
 import type { BlackboardEntry } from "./promptBuilder.js";
 import { LoopDetector } from "./loopDetector.js";
 import { dispatchToolCalls } from "./toolDispatcher.js";
-import type { ToolCall, ToolResult, SessionMemory } from "./toolDispatcher.js";
+import type { ToolCall, ToolResult } from "./toolDispatcher.js";
 import { scanForPII } from "./piiDetector.js";
 import { logAudit, auditAgentEvent, AuditAction } from "./auditLogger.js";
 import { logger } from "./logger.js";
