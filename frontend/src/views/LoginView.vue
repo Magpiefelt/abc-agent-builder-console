@@ -2,6 +2,9 @@
 import { computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
+
+useDocumentTitle(() => 'Sign in')
 
 const auth = useAuthStore()
 const route = useRoute()

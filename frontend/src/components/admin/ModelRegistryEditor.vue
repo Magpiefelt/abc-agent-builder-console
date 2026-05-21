@@ -1,12 +1,16 @@
 <script setup lang="ts">
-import { ref, onActivated } from 'vue'
+import { computed, ref, onActivated } from 'vue'
 import { api, ApiError } from '@/lib/api'
+import { useToast } from '@/composables/useToast'
 import type { ModelRegistryEntry } from '@/types/admin'
 
 const models = ref<ModelRegistryEntry[]>([])
 const loading = ref(false)
 const error = ref<string | null>(null)
 const updatingId = ref<number | null>(null)
+const toast = useToast()
+
+const activeCount = computed(() => models.value.filter((m) => m.is_active).length)
 
 async function load() {
   loading.value = true
@@ -30,8 +34,14 @@ async function toggle(model: ModelRegistryEntry) {
     if (idx !== -1 && existing) {
       models.value[idx] = { ...existing, is_active: result.model.is_active }
     }
+    toast.push({
+      kind: 'success',
+      message: `${model.display_name} ${result.model.is_active ? 'activated' : 'deactivated'}.`,
+    })
   } catch (err) {
-    error.value = err instanceof ApiError ? err.message : String(err)
+    const message = err instanceof ApiError ? err.message : String(err)
+    error.value = message
+    toast.push({ kind: 'error', message: `Couldn't update ${model.display_name}: ${message}` })
   } finally {
     updatingId.value = null
   }
@@ -59,11 +69,18 @@ onActivated(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <header class="flex items-center justify-between">
+    <header class="flex items-center justify-between gap-4 flex-wrap">
       <div>
         <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Model Registry</h3>
         <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
           Toggle approved LLMs. Inactive models cannot be selected in new sessions.
+        </p>
+        <p
+          v-if="!loading && models.length > 0"
+          class="text-xs text-[var(--goa-color-text-secondary)] mt-1"
+          aria-live="polite"
+        >
+          {{ activeCount }} of {{ models.length }} active
         </p>
       </div>
       <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">

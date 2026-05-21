@@ -37,7 +37,7 @@ import type { BlackboardEntry } from "./promptBuilder.js";
 import { LoopDetector } from "./loopDetector.js";
 import { dispatchToolCalls } from "./toolDispatcher.js";
 import type { ToolCall, ToolResult } from "./toolDispatcher.js";
-import { scanForPII } from "./piiDetector.js";
+import { scanForPII, redactPII } from "./piiDetector.js";
 import { logAudit, auditAgentEvent, AuditAction } from "./auditLogger.js";
 import { logger } from "./logger.js";
 
@@ -479,6 +479,61 @@ async function executeIteration(
 
   // 5. Parse response
   const parsed = parseLLMResponse(llmResponse.content);
+
+  // 5a. Inbound PII scan — check the LLM response (and any user-facing fields)
+  // before they enter session state or stream to the client. Detections are
+  // recorded against PII_DETECTED_INBOUND; blocked matches in user-facing
+  // fields are redacted in place.
+  const inboundScanText = [
+    llmResponse.content,
+    parsed.thinking,
+    parsed.user_message ?? "",
+    ...parsed.blackboard_updates.map((u) => `${u.title}\n${u.content}`),
+    parsed.scratchpad ?? "",
+  ].join("\n");
+  const inboundScan = scanForPII(inboundScanText, { userId: session.userId, sessionId: session.id });
+  if (inboundScan.blockedCount > 0) {
+    logAudit({
+      userId: session.userId,
+      action: AuditAction.PII_DETECTED_INBOUND,
+      resourceType: "agent_session",
+      resourceId: session.id,
+      details: {
+        iteration: session.currentIteration,
+        detections: inboundScan.detections.map((d) => ({ type: d.type, action: d.action })),
+      },
+    });
+    sendSSE(res, {
+      type: "pii_warning",
+      message: `PII detected in model response (${inboundScan.blockedCount} blocked). Output redacted.`,
+    });
+    // Redact user-facing fields. Each field is scanned independently so
+    // detection offsets line up with the field being redacted.
+    if (parsed.user_message) {
+      const userMsgScan = scanForPII(parsed.user_message);
+      if (userMsgScan.blockedCount > 0) {
+        parsed.user_message = redactPII(parsed.user_message, userMsgScan.detections);
+      }
+    }
+    if (parsed.scratchpad) {
+      const scratchScan = scanForPII(parsed.scratchpad);
+      if (scratchScan.blockedCount > 0) {
+        parsed.scratchpad = redactPII(parsed.scratchpad, scratchScan.detections);
+      }
+    }
+    parsed.blackboard_updates = parsed.blackboard_updates.map((u) => {
+      const combined = `${u.title}\n${u.content}`;
+      const entryScan = scanForPII(combined);
+      if (entryScan.blockedCount === 0) return u;
+      const titleScan = scanForPII(u.title);
+      const contentScan = scanForPII(u.content);
+      return {
+        ...u,
+        title: titleScan.blockedCount > 0 ? redactPII(u.title, titleScan.detections) : u.title,
+        content: contentScan.blockedCount > 0 ? redactPII(u.content, contentScan.detections) : u.content,
+      };
+    });
+  }
 
   sendSSE(res, {
     type: "llm_response",

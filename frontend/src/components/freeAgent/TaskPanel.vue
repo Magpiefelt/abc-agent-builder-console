@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { useAgentSessionStore, type PromptSectionOverride } from '@/stores/agentSession'
 import { useAuthStore } from '@/stores/auth'
 import { useModelsStore } from '@/stores/models'
@@ -9,6 +9,7 @@ import { useToast } from '@/composables/useToast'
 import PromptCustomizer from './PromptCustomizer.vue'
 
 const session = useAgentSessionStore()
+const route = useRoute()
 const router = useRouter()
 const modelsStore = useModelsStore()
 const memory = useUserMemoryStore()
@@ -71,6 +72,13 @@ onMounted(async () => {
   if (auth.isAuthenticated) {
     void memory.fetchRecentSessions()
     void memory.fetchSavedPrompts()
+  }
+  // Pick up a prompt handed off via ?prompt= (e.g. from Profile → "Use").
+  const queryPrompt = route.query.prompt
+  if (typeof queryPrompt === 'string' && queryPrompt.length > 0) {
+    prompt.value = queryPrompt
+    const { prompt: _omit, ...rest } = route.query
+    void router.replace({ query: rest })
   }
 })
 

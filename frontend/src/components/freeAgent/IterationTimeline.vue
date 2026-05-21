@@ -40,6 +40,22 @@ function toggle(iteration: number): void {
   }
 }
 
+const allExpanded = computed(
+  () =>
+    sortedIterations.value.length > 0 &&
+    sortedIterations.value.every((i) => expanded.value.has(i.iteration)),
+)
+
+function toggleAll(): void {
+  if (allExpanded.value) {
+    manuallyExpanded.value = new Set()
+    manuallyCollapsed.value = new Set(sortedIterations.value.map((i) => i.iteration))
+  } else {
+    manuallyExpanded.value = new Set(sortedIterations.value.map((i) => i.iteration))
+    manuallyCollapsed.value = new Set()
+  }
+}
+
 watch(
   () => session.sessionId,
   () => {
@@ -73,9 +89,19 @@ function durationLabel(ms: number | undefined): string {
     class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md flex flex-col min-h-0 overflow-hidden"
     aria-label="Iteration timeline"
   >
-    <header class="px-3 py-2 border-b border-[var(--goa-color-border)] flex items-center justify-between">
+    <header class="px-3 py-2 border-b border-[var(--goa-color-border)] flex items-center justify-between gap-2">
       <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Iterations</h3>
-      <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ session.iterations.length }} total</span>
+      <div class="flex items-center gap-2">
+        <button
+          v-if="sortedIterations.length > 1"
+          type="button"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+          @click="toggleAll"
+        >
+          {{ allExpanded ? 'Collapse all' : 'Expand all' }}
+        </button>
+        <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ session.iterations.length }} total</span>
+      </div>
     </header>
     <div class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
       <div
