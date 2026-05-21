@@ -450,6 +450,7 @@ async function executeIteration(
       tools,
       responseFormat: "json",
       temperature: 0.7,
+      sessionId: session.id,
     });
   } catch (err) {
     const errorMsg = (err as Error).message;

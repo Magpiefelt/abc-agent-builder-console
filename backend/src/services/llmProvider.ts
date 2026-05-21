@@ -56,6 +56,8 @@ export interface LLMRequest {
   maxTokens?: number;
   temperature?: number;
   responseFormat?: "json" | "text";
+  /** Optional opaque identifier used by the mock provider to key canned responses. */
+  sessionId?: string;
 }
 
 export interface LLMToolCall {
@@ -285,6 +287,19 @@ function getDefaultModels(): ModelRegistryEntry[] {
       supports_tools: true,
       data_residency: "us",
       max_classification: "unclassified",
+      is_active: true,
+    },
+    {
+      id: 99,
+      model_id: "mock-llm",
+      display_name: "Mock LLM",
+      provider: "anthropic",
+      api_model_name: "mock-model",
+      max_output_tokens: 8192,
+      supports_streaming: true,
+      supports_tools: true,
+      data_residency: "canada",
+      max_classification: "protected_b",
       is_active: true,
     },
   ];
@@ -757,6 +772,43 @@ class GoogleGeminiProvider implements LLMProvider {
 }
 
 // ============================================================================
+// MOCK PROVIDER (test-only, gated by MOCK_LLM=1)
+// ============================================================================
+
+/**
+ * Mock provider used by Vitest tests and the evals harness. Reads canned
+ * responses from backend/test/helpers/mockLLM.ts. The model registry row
+ * carries provider="anthropic" so the union type stays untouched; this
+ * provider is only swapped in when MOCK_LLM=1 AND the model id is "mock-llm".
+ */
+class MockProvider implements LLMProvider {
+  name = "mock";
+
+  async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
+    const startTime = Date.now();
+    const helper = await import("../../test/helpers/mockLLM.js");
+    const sessionId = request.sessionId || "default";
+    const canned = helper.consumeMockResponse(sessionId);
+    return helper.renderMockResponse(modelName, startTime, canned);
+  }
+
+  async stream(request: LLMRequest, modelName: string, onEvent: LLMStreamCallback): Promise<LLMResponse> {
+    const response = await this.call(request, modelName);
+    const helper = await import("../../test/helpers/mockLLM.js");
+    helper.emitMockStream(response, onEvent);
+    return response;
+  }
+}
+
+function isMockEnabled(): boolean {
+  return process.env.MOCK_LLM === "1";
+}
+
+function isMockModel(model: ModelRegistryEntry): boolean {
+  return model.model_id === "mock-llm" || model.display_name === "Mock LLM";
+}
+
+// ============================================================================
 // PROVIDER FACTORY
 // ============================================================================
 
@@ -767,6 +819,13 @@ const providers: Map<string, LLMProvider> = new Map();
  * Providers are singletons cached by provider name.
  */
 function getProviderInstance(model: ModelRegistryEntry): LLMProvider {
+  if (isMockEnabled() && isMockModel(model)) {
+    if (!providers.has("mock")) {
+      providers.set("mock", new MockProvider());
+    }
+    return providers.get("mock")!;
+  }
+
   const key = model.provider;
 
   if (!providers.has(key)) {
