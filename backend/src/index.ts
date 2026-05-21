@@ -27,7 +27,12 @@ import agentRoutes from "./routes/agent.js";
 // ============================================================================
 
 installProcessMonitor(async () => {
-  // Graceful shutdown: close all DB pools (host + per-connection SQL tool pools)
+  // Graceful shutdown order:
+  //   1. Drain the SQL tool pools (per-connection allowlist entries). Any
+  //      in-flight tool call dies cleanly; the dispatcher returns the error
+  //      to the agent.
+  //   2. Close the host pool LAST so audit/logger writes from step 1 still
+  //      have a working backend.
   await closeDatabaseToolPools();
   await closePool();
 });

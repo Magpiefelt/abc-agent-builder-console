@@ -360,7 +360,7 @@ router.get("/sessions/:id/artifacts", async (req: Request, res: Response) => {
       `SELECT id, artifact_type, title, description, mime_type, size_bytes, iteration, created_at
        FROM artifacts
        WHERE session_id = $1
-       ORDER BY created_at DESC`,
+       ORDER BY created_at DESC, id DESC`,
       [id]
     );
     res.json({ artifacts: result.rows });

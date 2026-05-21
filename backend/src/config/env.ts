@@ -83,7 +83,11 @@ const envSchema = z.object({
   EMAIL_SMTP_PASS: z.string().optional(),
   EMAIL_SMTP_SECURE: z
     .union([z.boolean(), z.string()])
-    .transform((v) => (typeof v === "string" ? v === "true" || v === "1" : v))
+    .transform((v) => {
+      if (typeof v === "boolean") return v;
+      const lower = v.toLowerCase().trim();
+      return lower === "true" || lower === "1" || lower === "yes";
+    })
     .default(false),
 
   // ============================================================================

@@ -14,6 +14,9 @@
  * - Timeout protection
  */
 
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { logger } from "../services/logger.js";
 import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
 
@@ -380,9 +383,18 @@ interface TesseractWorker {
   terminate(): Promise<unknown>;
 }
 
-interface TesseractModule {
-  createWorker(language: string): Promise<TesseractWorker>;
+interface TesseractCreateWorkerOptions {
+  cachePath?: string;
+  langPath?: string;
 }
+
+interface TesseractModule {
+  createWorker(language: string, oem?: number, options?: TesseractCreateWorkerOptions): Promise<TesseractWorker>;
+}
+
+// Persist Tesseract's ~10MB language data outside the current working directory
+// so the file isn't re-downloaded on every cwd change.
+const TESSERACT_CACHE_DIR = join(tmpdir(), "abc-tesseract-cache");
 
 /**
  * Extract text from an image using Tesseract.js. Spawns a fresh worker per
@@ -419,7 +431,14 @@ export async function ocrImage(params: Record<string, unknown>): Promise<OcrResu
 
   let worker: TesseractWorker | null = null;
   try {
-    worker = await tesseract.createWorker(language);
+    // Ensure the cache directory exists — Tesseract's writeCache uses fs.writeFile
+    // without mkdir, so a missing dir silently fails and forces a re-download.
+    mkdirSync(TESSERACT_CACHE_DIR, { recursive: true });
+  } catch (err) {
+    logger.warn("Failed to create Tesseract cache dir", { dir: TESSERACT_CACHE_DIR, error: (err as Error).message });
+  }
+  try {
+    worker = await tesseract.createWorker(language, undefined, { cachePath: TESSERACT_CACHE_DIR });
   } catch (err) {
     logger.error("Tesseract worker init failed", err, { language });
     return { success: false, error: `Tesseract worker init failed: ${(err as Error).message}` };

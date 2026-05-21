@@ -46,11 +46,23 @@ function isHostnameAllowlisted(hostname: string): boolean {
 
 /**
  * Validate and sanitize a URL for external API calls. Combines SSRF blocking
- * with the optional API_PROXY_ALLOWLIST check.
+ * with the optional API_PROXY_ALLOWLIST check. Audits SSRF private-IP
+ * refusals so callers don't need to re-parse the URL.
  */
 function validateUrl(url: string, toolName: string): { valid: boolean; parsed?: URL; error?: string } {
   const base = validatePublicHttpUrl(url);
-  if (!base.valid) return base;
+  if (!base.valid) {
+    // Try to extract the hostname to audit the SSRF case specifically.
+    if (url) {
+      try {
+        const hostname = new URL(url.trim()).hostname;
+        if (isPrivateOrReservedHost(hostname)) {
+          auditSecurityEvent(AuditAction.SECURITY_PRIVATE_IP_BLOCKED, "system", { tool: toolName, url });
+        }
+      } catch { /* malformed URL — original validation error stands */ }
+    }
+    return base;
+  }
 
   if (!isHostnameAllowlisted(base.parsed!.hostname)) {
     auditSecurityEvent(AuditAction.SECURITY_INVALID_REQUEST, "system", {
@@ -91,14 +103,6 @@ export async function getCallApi(params: Record<string, unknown>): Promise<ApiPr
 
   const validation = validateUrl(url, "get_call_api");
   if (!validation.valid) {
-    try {
-      if (url && isPrivateOrReservedHost(new URL(url).hostname)) {
-        auditSecurityEvent(AuditAction.SECURITY_PRIVATE_IP_BLOCKED, "system", {
-          tool: "get_call_api",
-          url,
-        });
-      }
-    } catch { /* URL was malformed — already handled by validation */ }
     return { success: false, error: validation.error };
   }
 
@@ -190,16 +194,6 @@ export async function postCallApi(params: Record<string, unknown>): Promise<ApiP
 
   const validation = validateUrl(url, "post_call_api");
   if (!validation.valid) {
-    if (url) {
-      try {
-        if (isPrivateOrReservedHost(new URL(url).hostname)) {
-          auditSecurityEvent(AuditAction.SECURITY_PRIVATE_IP_BLOCKED, "system", {
-            tool: "post_call_api",
-            url,
-          });
-        }
-      } catch { /* invalid URL, already handled */ }
-    }
     return { success: false, error: validation.error };
   }
 

@@ -38,15 +38,20 @@ export function isPrivateOrReservedHost(hostname: string): boolean {
   if (ipv6.includes(":")) {
     // Loopback `::1` and unspecified `::`
     if (ipv6 === "::1" || ipv6 === "::") return true;
-    // IPv4-mapped IPv6 (::ffff:a.b.c.d) — re-check the embedded IPv4
-    const mapped = ipv6.match(/^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/i);
-    if (mapped) return isPrivateOrReservedHost(mapped[1]);
-    // fc00::/7 unique-local (fc.. or fd..)
-    if (/^f[cd][0-9a-f]{2}:/i.test(ipv6) || ipv6.startsWith("fc") || ipv6.startsWith("fd")) return true;
+    // Embedded IPv4 in any IPv6 form — recurse into the IPv4 check.
+    // Catches `::ffff:a.b.c.d` (IPv4-mapped) and `::a.b.c.d` (legacy IPv4-compatible).
+    const embedded = ipv6.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+    if (embedded && isPrivateOrReservedHost(embedded[1])) return true;
+    // Block any `::ffff:` prefix outright (IPv4-mapped form). Legitimate
+    // public IPv6 should not use this prefix, and the hex-encoded variant
+    // `::ffff:0a00:0001` cannot be safely decoded with a regex.
+    if (ipv6.startsWith("::ffff:") || ipv6.startsWith("::0:ffff:")) return true;
+    // fc00::/7 unique-local (the entire fc00..fdff range starts with fc/fd)
+    if (/^f[cd]/i.test(ipv6)) return true;
     // fe80::/10 link-local — match fe8x/fe9x/feax/febx
-    if (/^fe[89ab][0-9a-f]?:/i.test(ipv6)) return true;
+    if (/^fe[89ab]/i.test(ipv6)) return true;
     // ff00::/8 multicast
-    if (/^ff[0-9a-f]{2}:/i.test(ipv6)) return true;
+    if (/^ff/i.test(ipv6)) return true;
   }
 
   // Internal TLDs

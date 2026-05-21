@@ -103,7 +103,9 @@ export async function imageGeneration(
 
 async function callGeminiImage(prompt: string): Promise<{ base64: string; mimeType: string }> {
   const model = "gemini-2.5-flash-image-preview";
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GOOGLE_AI_API_KEY}`;
+  // Pass API key via x-goog-api-key header (not querystring) so it never lands
+  // in URL-shaped log lines, network traces, or error envelopes.
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`;
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
@@ -113,6 +115,7 @@ async function callGeminiImage(prompt: string): Promise<{ base64: string; mimeTy
       headers: {
         "Content-Type": "application/json",
         "User-Agent": USER_AGENT,
+        "x-goog-api-key": env.GOOGLE_AI_API_KEY ?? "",
       },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],

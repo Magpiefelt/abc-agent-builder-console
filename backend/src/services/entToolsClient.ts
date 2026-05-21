@@ -17,13 +17,6 @@ import { isPrivateOrReservedHost } from "../tools/_shared/ssrf.js";
 const USER_AGENT = "GoA-ABC-Bot/1.0 (+https://gov.ab.ca)";
 const FETCH_TIMEOUT_MS = 30_000;
 
-export class EntToolsNotConfiguredError extends Error {
-  constructor() {
-    super("ENT_TOOLS_API_KEY is not configured.");
-    this.name = "EntToolsNotConfiguredError";
-  }
-}
-
 export function isEntToolsConfigured(): boolean {
   return !!env.ENT_TOOLS_API_KEY;
 }
@@ -40,7 +33,9 @@ function ensureBaseUrlSafe(): URL {
 }
 
 async function entFetch(path: string, init: RequestInit): Promise<Response> {
-  if (!env.ENT_TOOLS_API_KEY) throw new EntToolsNotConfiguredError();
+  // Defensive: callers should check `isEntToolsConfigured()` first; this
+  // double-check keeps `entFetch` safe to call directly without coupling.
+  if (!env.ENT_TOOLS_API_KEY) throw new Error("ENT_TOOLS_API_KEY is not configured.");
 
   const base = ensureBaseUrlSafe();
   const url = new URL(path, base);

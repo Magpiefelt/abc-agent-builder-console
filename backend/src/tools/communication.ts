@@ -23,6 +23,8 @@ const ALLOWLIST = emailAllowlist as EmailAllowlist;
 const SUBJECT_PREFIX = "[ABC] ";
 const RATE_LIMIT_PER_USER = 10;
 const RATE_LIMIT_WINDOW_MS = 60_000;
+const MAX_SUBJECT_LENGTH = 200;
+const MAX_BODY_BYTES = 1 * 1024 * 1024; // 1MB
 
 export interface SendEmailResult {
   success: boolean;
@@ -134,6 +136,14 @@ export async function sendEmail(
   if (!to) return { success: false, error: "Parameter 'to' is required." };
   if (!subjectRaw) return { success: false, error: "Parameter 'subject' is required." };
   if (!body) return { success: false, error: "Parameter 'body' is required." };
+
+  if (subjectRaw.length > MAX_SUBJECT_LENGTH) {
+    return { success: false, error: `Subject exceeds ${MAX_SUBJECT_LENGTH} character limit.` };
+  }
+  const bodyBytes = Buffer.byteLength(body, "utf-8");
+  if (bodyBytes > MAX_BODY_BYTES) {
+    return { success: false, error: `Email body exceeds ${MAX_BODY_BYTES / (1024 * 1024)}MB limit (got ${Math.round(bodyBytes / (1024 * 1024))}MB).` };
+  }
 
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) {
     return { success: false, error: `'${to}' is not a valid email address.` };
