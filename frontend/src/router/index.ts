@@ -10,9 +10,18 @@ const router = createRouter({
       component: FreeAgentView,
     },
     {
-      path: '/workflow',
-      name: 'workflow',
+      path: '/workflows',
+      name: 'workflow-list',
+      component: () => import('@/views/WorkflowListView.vue'),
+    },
+    {
+      path: '/workflows/:id',
+      name: 'workflow-edit',
       component: () => import('@/views/WorkflowView.vue'),
+    },
+    {
+      path: '/workflow',
+      redirect: '/workflows',
     },
   ],
 })

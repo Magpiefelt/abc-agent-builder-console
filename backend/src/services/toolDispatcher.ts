@@ -50,6 +50,12 @@ export interface ToolContext {
   ministryCode: string | null;
   iteration: number;
   memory: SessionMemory;
+  /**
+   * When set, the tool dispatcher is running inside a workflow execution
+   * rather than a free-agent session. Memory tools that persist (e.g.
+   * create_artifact) write to workflow_execution_id and leave session_id NULL.
+   */
+  workflowExecutionId?: string | null;
 }
 
 // ============================================================================
@@ -424,11 +430,13 @@ async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
 ): Promise<void> {
+  const isWorkflow = !!context.workflowExecutionId;
   await query(
-    `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+    `INSERT INTO artifacts (session_id, workflow_execution_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
     [
-      context.sessionId,
+      isWorkflow ? null : context.sessionId,
+      isWorkflow ? context.workflowExecutionId : null,
       context.userId,
       artifact.type,
       artifact.title,
