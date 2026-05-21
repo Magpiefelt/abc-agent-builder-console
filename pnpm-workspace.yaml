@@ -1,0 +1,6 @@
+packages:
+  - "backend"
+  - "frontend"
+  - "shared"
+allowBuilds:
+  esbuild: set this to true or false

@@ -1,0 +1,33 @@
+@import "tailwindcss";
+
+/* Alberta Design System - Base Tokens */
+:root {
+  --goa-color-primary: #0070C4;
+  --goa-color-primary-dark: #004F84;
+  --goa-color-primary-light: #DEEAF7;
+  --goa-color-text: #333333;
+  --goa-color-text-secondary: #666666;
+  --goa-color-border: #DCDCDC;
+  --goa-color-background: #F1F1F1;
+  --goa-color-surface: #FFFFFF;
+  --goa-color-success: #2E8540;
+  --goa-color-warning: #FCBA19;
+  --goa-color-error: #D8292F;
+  --goa-color-info: #0070C4;
+  --goa-font-family: 'acumin-pro-semi-condensed', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+}
+
+body {
+  font-family: var(--goa-font-family);
+  font-size: 18px;
+  line-height: 1.6;
+  color: var(--goa-color-text);
+  background-color: var(--goa-color-background);
+  margin: 0;
+}
+
+#app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}

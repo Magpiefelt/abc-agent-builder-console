@@ -1,0 +1,358 @@
+{
+  "tools": [
+    {
+      "name": "brave_search",
+      "category": "web_search",
+      "description": "Search the web using Brave Search API. Returns relevant web results for a query.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "The search query" },
+          "numResults": { "type": "number", "description": "Number of results to return (max 20)", "default": 10 }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "google_search",
+      "category": "web_search",
+      "description": "Search the web using Google Custom Search API. Returns relevant web results.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "The search query" },
+          "numResults": { "type": "number", "description": "Number of results to return (max 10)", "default": 10 }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "web_scrape",
+      "category": "web_scrape",
+      "description": "Fetch and extract text content from a web page URL. Supports HTML, PDF, and DOCX.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "The URL to scrape" },
+          "maxCharacters": { "type": "number", "description": "Maximum characters to return", "default": 50000 }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "read_github_repo",
+      "category": "github",
+      "description": "List the file structure of a GitHub repository.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": "string", "description": "Repository owner" },
+          "repo": { "type": "string", "description": "Repository name" },
+          "path": { "type": "string", "description": "Path within the repo (default: root)", "default": "" },
+          "branch": { "type": "string", "description": "Branch name", "default": "main" }
+        },
+        "required": ["owner", "repo"]
+      }
+    },
+    {
+      "name": "read_github_file",
+      "category": "github",
+      "description": "Read the contents of a specific file from a GitHub repository.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "owner": { "type": "string", "description": "Repository owner" },
+          "repo": { "type": "string", "description": "Repository name" },
+          "path": { "type": "string", "description": "File path within the repo" },
+          "branch": { "type": "string", "description": "Branch name", "default": "main" }
+        },
+        "required": ["owner", "repo", "path"]
+      }
+    },
+    {
+      "name": "pdf_extract_text",
+      "category": "documents",
+      "description": "Extract text content from a PDF file or URL.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the PDF file" },
+          "maxPages": { "type": "number", "description": "Maximum pages to extract", "default": 50 }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "pdf_info",
+      "category": "documents",
+      "description": "Get metadata and page count from a PDF file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the PDF file" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "ocr_image",
+      "category": "documents",
+      "description": "Extract text from an image using OCR.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the image" },
+          "language": { "type": "string", "description": "OCR language code", "default": "eng" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "read_zip_contents",
+      "category": "documents",
+      "description": "List the file entries in a ZIP archive.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the ZIP file" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "read_zip_file",
+      "category": "documents",
+      "description": "Extract and read a specific file from a ZIP archive.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the ZIP file" },
+          "filePath": { "type": "string", "description": "Path of the file within the ZIP" }
+        },
+        "required": ["url", "filePath"]
+      }
+    },
+    {
+      "name": "extract_zip_files",
+      "category": "documents",
+      "description": "Extract all files from a ZIP archive.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "URL of the ZIP file" },
+          "filter": { "type": "string", "description": "Glob pattern to filter files" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "get_call_api",
+      "category": "api_proxy",
+      "description": "Make a GET request to an external API endpoint.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "The API endpoint URL" },
+          "headers": { "type": "object", "description": "Optional request headers" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "post_call_api",
+      "category": "api_proxy",
+      "description": "Make a POST request to an external API endpoint.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": { "type": "string", "description": "The API endpoint URL" },
+          "headers": { "type": "object", "description": "Optional request headers" },
+          "body": { "type": "object", "description": "Request body (JSON)" }
+        },
+        "required": ["url"]
+      }
+    },
+    {
+      "name": "execute_sql",
+      "category": "database",
+      "description": "Execute a parameterized SQL query against an approved database.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "SQL query with $1, $2... placeholders" },
+          "params": { "type": "array", "description": "Query parameters", "items": {} },
+          "connectionId": { "type": "string", "description": "Database connection identifier" },
+          "isWrite": { "type": "boolean", "description": "Whether this is a write operation", "default": false }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "read_database_schemas",
+      "category": "database",
+      "description": "List tables and columns in a database schema.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "connectionId": { "type": "string", "description": "Database connection identifier" },
+          "schema": { "type": "string", "description": "Schema name to inspect" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "image_generation",
+      "category": "generation",
+      "description": "Generate an image from a text description using AI.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": { "type": "string", "description": "Image generation prompt" },
+          "style": { "type": "string", "description": "Image style (realistic, illustration, diagram)", "default": "realistic" },
+          "size": { "type": "string", "description": "Image dimensions (1024x1024, 1792x1024, 1024x1792)", "default": "1024x1024" }
+        },
+        "required": ["prompt"]
+      }
+    },
+    {
+      "name": "elevenlabs_tts",
+      "category": "generation",
+      "description": "Convert text to speech using ElevenLabs API.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": { "type": "string", "description": "Text to convert to speech" },
+          "voiceId": { "type": "string", "description": "ElevenLabs voice ID" },
+          "model": { "type": "string", "description": "TTS model to use", "default": "eleven_multilingual_v2" }
+        },
+        "required": ["text"]
+      }
+    },
+    {
+      "name": "get_time",
+      "category": "utilities",
+      "description": "Get the current time in a specified timezone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timezone": { "type": "string", "description": "IANA timezone (e.g., America/Edmonton)", "default": "America/Edmonton" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "get_weather",
+      "category": "utilities",
+      "description": "Get current weather for a location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": { "type": "string", "description": "City name or coordinates" }
+        },
+        "required": ["location"]
+      }
+    },
+    {
+      "name": "send_email",
+      "category": "communication",
+      "description": "Send an email to an approved recipient.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "to": { "type": "string", "description": "Recipient email address" },
+          "subject": { "type": "string", "description": "Email subject" },
+          "body": { "type": "string", "description": "Email body (plain text or HTML)" },
+          "isHtml": { "type": "boolean", "description": "Whether body is HTML", "default": false }
+        },
+        "required": ["to", "subject", "body"]
+      }
+    },
+    {
+      "name": "read_blackboard",
+      "category": "memory",
+      "description": "Read the current blackboard entries. Optionally filter by category.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "description": "Filter by category (optional)" }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "write_blackboard",
+      "category": "memory",
+      "description": "Write a new entry to the blackboard.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "category": { "type": "string", "description": "Entry category" },
+          "title": { "type": "string", "description": "Entry title" },
+          "content": { "type": "string", "description": "Entry content" }
+        },
+        "required": ["category", "title", "content"]
+      }
+    },
+    {
+      "name": "read_scratchpad",
+      "category": "memory",
+      "description": "Read the current scratchpad content.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "write_scratchpad",
+      "category": "memory",
+      "description": "Overwrite the scratchpad with new content.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": { "type": "string", "description": "New scratchpad content" }
+        },
+        "required": ["content"]
+      }
+    },
+    {
+      "name": "read_attributes",
+      "category": "memory",
+      "description": "Read the current session attributes.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "required": []
+      }
+    },
+    {
+      "name": "write_attribute",
+      "category": "memory",
+      "description": "Set a session attribute key-value pair.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "key": { "type": "string", "description": "Attribute key" },
+          "value": { "type": "string", "description": "Attribute value" }
+        },
+        "required": ["key", "value"]
+      }
+    },
+    {
+      "name": "create_artifact",
+      "category": "memory",
+      "description": "Create a persistent artifact (document, code, data) from the session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "title": { "type": "string", "description": "Artifact title" },
+          "type": { "type": "string", "description": "Artifact type (text, file, image, audio, data)" },
+          "content": { "type": "string", "description": "Artifact content" },
+          "mimeType": { "type": "string", "description": "MIME type of the content" },
+          "description": { "type": "string", "description": "Description of the artifact" }
+        },
+        "required": ["title", "type", "content"]
+      }
+    }
+  ]
+}
