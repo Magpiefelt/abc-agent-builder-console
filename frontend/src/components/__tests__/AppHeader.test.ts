@@ -16,6 +16,7 @@ beforeEach(() => {
       { path: "/workflows", name: "workflow", component: { template: "<div>wf</div>" } },
       { path: "/profile", name: "profile", component: { template: "<div>profile</div>" } },
       { path: "/login", name: "login", component: { template: "<div>login</div>" } },
+      { path: "/admin", name: "admin", component: { template: "<div>admin</div>" } },
     ],
   });
 });
