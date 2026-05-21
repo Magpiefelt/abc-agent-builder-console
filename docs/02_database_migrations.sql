@@ -820,6 +820,43 @@ VALUES
 -- ----- Spec-app features we intentionally do NOT port -----
 ('spec_browser_spoofing_dropped', 'feature', 'dropped', 'Spec impersonated browsers in web_scrape — rebuild identifies as a transparent GoA bot', NULL, 'backend', 'deprecated', 'high', 3, 'Tracked as V-005 in vulnerabilities'),
 ('spec_client_secrets_dropped', 'feature', 'dropped', 'Spec stored API keys in sessionStorage — rebuild never sends keys to the browser', NULL, 'shared', 'deprecated', 'critical', 1, 'Tracked as V-004 in vulnerabilities'),
-('spec_open_cors_dropped', 'feature', 'dropped', 'Spec used Access-Control-Allow-Origin: * everywhere — rebuild restricts CORS to FRONTEND_URL', NULL, 'backend', 'deprecated', 'high', 1, 'Tracked as V-003 in vulnerabilities')
+('spec_open_cors_dropped', 'feature', 'dropped', 'Spec used Access-Control-Allow-Origin: * everywhere — rebuild restricts CORS to FRONTEND_URL', NULL, 'backend', 'deprecated', 'high', 1, 'Tracked as V-003 in vulnerabilities'),
+
+-- ----- Additional components added after initial feature-table seed -----
+('component_app_header', 'component', 'shell', 'GoA-branded top navigation bar — reactive auth state, ministry badge, nav links, sign-out', 'frontend/src/components/AppHeader.vue', 'shared', 'active', 'critical', 1, NULL),
+('component_toast_container', 'component', 'ui', 'Global toast notification container consuming the useToast composable', 'frontend/src/components/ui/ToastContainer.vue', 'shared', 'active', 'medium', 4, NULL),
+('component_workflow_history_panel', 'component', 'workflow', 'Paginated execution history list with stage-level drill-down and iteration replay', 'frontend/src/components/workflow/WorkflowHistoryPanel.vue', 'workflow', 'active', 'high', 5, NULL),
+
+-- ----- Backend route additions -----
+('endpoint_workflow_versions', 'endpoint', 'workflow', 'GET /api/workflows/:id/versions — list canvas versions; GET /api/workflows/:id/versions/:v — fetch a specific version', 'backend/src/routes/workflow.ts', 'backend', 'active', 'medium', 5, NULL),
+('endpoint_workflow_executions', 'endpoint', 'workflow', 'GET /api/workflows/:id/executions — execution history with stage results', 'backend/src/routes/workflow.ts', 'backend', 'active', 'medium', 5, NULL),
+('endpoint_workflow_execution_stop', 'endpoint', 'workflow', 'POST /api/workflows/executions/:eid/stop — abort a running execution', 'backend/src/routes/workflow.ts', 'backend', 'active', 'high', 5, NULL),
+('endpoint_workflow_templates', 'endpoint', 'workflow', 'GET /api/workflows/templates — list agent templates from agentTemplates.json', 'backend/src/routes/workflow.ts', 'backend', 'active', 'medium', 5, NULL),
+('endpoint_workflow_duplicate', 'endpoint', 'workflow', 'POST /api/workflows/:id/duplicate — deep-copy a workflow under a new ID', 'backend/src/routes/workflow.ts', 'backend', 'active', 'medium', 5, NULL),
+('endpoint_secrets_vault', 'endpoint', 'security', 'GET/POST/PUT/DELETE /api/users/me/secrets — per-user encrypted secret store', 'backend/src/routes/users.ts', 'backend', 'active', 'medium', 6, NULL),
+('endpoint_admin_sessions', 'endpoint', 'admin', 'GET /api/admin/sessions — cross-user session inspector for admins', 'backend/src/routes/admin.ts', 'backend', 'active', 'medium', 6, NULL),
+('endpoint_admin_audit_export', 'endpoint', 'admin', 'GET /api/admin/audit/export — download audit log as CSV', 'backend/src/routes/admin.ts', 'backend', 'active', 'medium', 6, NULL),
+
+-- ----- Database schema additions -----
+('schema_workflow_versions', 'feature', 'database', 'workflow_versions table — versioned canvas_data snapshots for history + replay', 'docs/02_database_migrations.sql', 'backend', 'active', 'high', 5, NULL),
+('schema_workflow_executions', 'feature', 'database', 'workflow_executions table — per-execution audit with stage_results JSONB', 'docs/02_database_migrations.sql', 'backend', 'active', 'high', 5, NULL),
+('schema_user_secrets', 'feature', 'database', 'user_secrets table — pgcrypto-encrypted per-user credential store', 'docs/02_database_migrations.sql', 'backend', 'active', 'high', 6, NULL),
+('schema_retention_policy', 'feature', 'database', 'retention_policy table — classification-gated cleanup windows (90d / 1y / 3y)', 'docs/02_database_migrations.sql', 'backend', 'active', 'high', 6, NULL),
+('schema_user_preferences', 'feature', 'database', 'user_preferences table — per-user theme + default model + classification + notification prefs', 'docs/02_database_migrations.sql', 'backend', 'active', 'medium', 1, NULL),
+('schema_saved_prompts', 'feature', 'database', 'saved_prompts table — user-scoped with ministry_code, tags, public flag', 'docs/02_database_migrations.sql', 'backend', 'active', 'medium', 1, NULL),
+('schema_workflow_favorites', 'feature', 'database', 'workflow_favorites junction table — user ↔ workflow many-to-many', 'docs/02_database_migrations.sql', 'backend', 'active', 'medium', 1, NULL),
+
+-- ----- CI/CD and deployment -----
+('ci_pipeline', 'feature', 'devops', 'GitHub Actions CI — lint + type-check + unit + integration tests on PR and push', '.github/workflows/ci.yml', 'shared', 'active', 'high', 6, NULL),
+('cd_pipeline', 'feature', 'devops', 'GitHub Actions CD — build artifacts + Nexus publish + smoke check', '.github/workflows/deploy.yml', 'shared', 'active', 'high', 6, NULL),
+('nexus_manifest', 'feature', 'devops', 'Nexus app declaration — frontend SPA + backend container + SSO callback + env injection', 'nexus/manifest.yaml', 'shared', 'active', 'high', 6, NULL),
+
+-- ----- Evals / quality -----
+('evals_scenario_runner', 'feature', 'quality', 'Scenario-driven integration harness — spawn backend, feed mock LLM, validate SSE event subsequences', 'evals/runners/scenarioRunner.ts', 'shared', 'active', 'high', 5, NULL),
+('eval_smoke', 'feature', 'quality', 'Smoke scenario — session round-trip with minimal mock LLM response', 'evals/scenarios/01_smoke.json', 'shared', 'active', 'critical', 5, NULL),
+('eval_research_task', 'feature', 'quality', 'Research scenario — 3-iteration canned search + blackboard update + session_complete', 'evals/scenarios/01_research_task.json', 'shared', 'active', 'high', 5, NULL),
+('eval_loop_detection', 'feature', 'quality', 'Loop detection scenario — repeated identical tool calls trigger loop_warning SSE event', 'evals/scenarios/02_loop_detection.json', 'shared', 'active', 'high', 5, NULL),
+('eval_pii_blocking', 'feature', 'quality', 'PII blocking scenario — SIN in prompt triggers HTTP 422 before session creation', 'evals/scenarios/03_pii_blocking.json', 'shared', 'active', 'high', 5, NULL),
+('eval_classification_routing', 'feature', 'quality', 'Classification routing scenario — Protected B task with US-residency model returns HTTP 400', 'evals/scenarios/04_classification_routing.json', 'shared', 'active', 'high', 5, NULL)
 
 ON CONFLICT (name) DO NOTHING;
