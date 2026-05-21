@@ -78,9 +78,7 @@ jobs:
         run: pnpm run type-check
 
       - name: Lint (backend)
-        run: pnpm --filter backend run lint || true
-        # `|| true` while eslint config is being finalized; remove when lint
-        # becomes a hard requirement.
+        run: pnpm --filter backend run lint
 
       - name: Backend unit tests + coverage
         run: pnpm --filter backend run test:coverage

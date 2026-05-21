@@ -163,7 +163,7 @@ async function withRetry<T>(
     }
   }
 
-  throw lastError!;
+  throw lastError ?? new Error(`${context} failed after ${config.maxRetries + 1} attempts.`);
 }
 
 // ============================================================================
