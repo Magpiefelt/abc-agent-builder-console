@@ -18,7 +18,7 @@ import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { logger } from "../services/logger.js";
-import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
+import { isPrivateOrReservedHost, safeFetch } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -51,11 +51,10 @@ async function fetchFileBuffer(url: string): Promise<{ buffer: Buffer; contentTy
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
-    const response = await fetch(parsedUrl.toString(), {
+    const response = await safeFetch(parsedUrl.toString(), {
       method: "GET",
       headers: { "User-Agent": USER_AGENT },
       signal: controller.signal,
-      redirect: "follow",
     });
 
     clearTimeout(timeout);

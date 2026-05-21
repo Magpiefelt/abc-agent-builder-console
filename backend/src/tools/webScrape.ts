@@ -13,7 +13,7 @@
 
 import { logger } from "../services/logger.js";
 import { auditSecurityEvent, AuditAction } from "../services/auditLogger.js";
-import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
+import { isPrivateOrReservedHost, safeFetch } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -126,7 +126,7 @@ export async function webScrape(params: Record<string, unknown>): Promise<WebScr
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch(parsedUrl.toString(), {
+    const response = await safeFetch(parsedUrl.toString(), {
       method: "GET",
       headers: {
         "User-Agent": USER_AGENT,
@@ -134,7 +134,6 @@ export async function webScrape(params: Record<string, unknown>): Promise<WebScr
         "Accept-Language": "en-CA,en;q=0.9",
       },
       signal: controller.signal,
-      redirect: "follow",
     });
 
     clearTimeout(timeout);

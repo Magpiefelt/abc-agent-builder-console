@@ -185,11 +185,15 @@ async function runSessionDelete(
       cutoffDays: days,
       rowsAffected: iterationsCascaded,
     });
+    // Artifacts are removed via ON DELETE CASCADE from agent_sessions, so
+    // their effective cutoff is the session retention window — not
+    // `policy.artifacts_days`, which only matters for direct artifact-table
+    // deletes (none of which the cascade strategy performs).
     report.byTable.push({
       table: "artifacts",
       strategy: "cascade",
       classification: policy.classification,
-      cutoffDays: policy.artifacts_days,
+      cutoffDays: days,
       rowsAffected: artifactsCascaded,
     });
   } catch (err) {

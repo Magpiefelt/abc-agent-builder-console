@@ -621,6 +621,7 @@ export async function runWorkflow(
 
       sendSSE(res, { type: "stage_start", executionId, nodeId, kind: node.data.kind, stageIndex: i });
 
+      const stageStart = Date.now();
       let stageOutput: StageOutput;
       try {
         if (node.data.kind === "agent") {
@@ -650,11 +651,13 @@ export async function runWorkflow(
           continue;
         }
       } catch (err) {
+        // Record the elapsed time so the report doesn't claim instantaneous
+        // failures for stages that actually ran for seconds before throwing.
         stageOutput = {
           nodeId,
           kind: node.data.kind,
           value: null,
-          durationMs: 0,
+          durationMs: Date.now() - stageStart,
           status: "error",
           error: (err as Error).message,
         };

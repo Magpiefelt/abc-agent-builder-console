@@ -33,6 +33,22 @@ function getAuthHeaders(): Record<string, string> {
   return headers;
 }
 
+/**
+ * Encode a slash-delimited GitHub path for use after `.../contents/`.
+ * `encodeURIComponent` would turn `src/foo.ts` into `src%2Ffoo.ts`, which
+ * GitHub treats as a single literal filename and rejects with 404. We need
+ * each segment encoded individually so special characters in filenames are
+ * still escaped while the directory separators stay intact.
+ */
+function encodePathSegments(path: string): string {
+  if (!path) return "";
+  return path
+    .split("/")
+    .filter((segment) => segment.length > 0)
+    .map(encodeURIComponent)
+    .join("/");
+}
+
 // ============================================================================
 // TYPES
 // ============================================================================
@@ -81,7 +97,7 @@ export async function readGithubRepo(params: Record<string, unknown>): Promise<G
   }
 
   try {
-    const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+    const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePathSegments(path)}?ref=${encodeURIComponent(branch)}`;
 
     const response = await fetch(url, {
       method: "GET",
@@ -164,7 +180,7 @@ export async function readGithubFile(params: Record<string, unknown>): Promise<G
   }
 
   try {
-    const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodeURIComponent(path)}?ref=${encodeURIComponent(branch)}`;
+    const url = `${GITHUB_API_BASE}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodePathSegments(path)}?ref=${encodeURIComponent(branch)}`;
 
     const response = await fetch(url, {
       method: "GET",
