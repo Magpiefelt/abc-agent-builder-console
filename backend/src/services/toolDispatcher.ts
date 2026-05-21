@@ -56,6 +56,12 @@ export interface ToolContext {
    * create_artifact) write to workflow_execution_id and leave session_id NULL.
    */
   workflowExecutionId?: string | null;
+  /**
+   * Optional sink for orchestrator-level SSE events emitted by tools
+   * (e.g. artifact_created). Kept optional so tools never depend on a
+   * Response object — the orchestrator wires this when streaming.
+   */
+  onEvent?: (event: { type: string; [key: string]: unknown }) => void;
 }
 
 // ============================================================================
@@ -430,23 +436,52 @@ async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
 ): Promise<void> {
+  const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
   const isWorkflow = !!context.workflowExecutionId;
-  await query(
-    `INSERT INTO artifacts (session_id, workflow_execution_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-    [
-      isWorkflow ? null : context.sessionId,
-      isWorkflow ? context.workflowExecutionId : null,
-      context.userId,
-      artifact.type,
-      artifact.title,
-      artifact.content,
-      artifact.description || null,
-      artifact.mimeType || null,
-      Buffer.byteLength(artifact.content, "utf-8"),
-      context.iteration,
-    ]
-  );
+  let id: string | null = null;
+  try {
+    const result = await query<{ id: string }>(
+      `INSERT INTO artifacts (session_id, workflow_execution_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        isWorkflow ? null : context.sessionId,
+        isWorkflow ? context.workflowExecutionId : null,
+        context.userId,
+        artifact.type,
+        artifact.title,
+        artifact.content,
+        artifact.description || null,
+        artifact.mimeType || null,
+        sizeBytes,
+        context.iteration,
+      ]
+    );
+    id = result.rows[0]?.id ?? null;
+  } catch (err) {
+    // Persistence failed (e.g. dev mode without a DB). The artifact is still
+    // surfaced to the live UI via the SSE event below; downstream consumers
+    // that need the row will retry/refresh on next session load.
+    logger.warn("Failed to persist artifact, emitting transient SSE only", {
+      sessionId: context.sessionId,
+      workflowExecutionId: context.workflowExecutionId,
+      title: artifact.title,
+      error: (err as Error).message,
+    });
+  }
+
+  context.onEvent?.({
+    type: "artifact_created",
+    iteration: context.iteration,
+    artifact: {
+      id,
+      title: artifact.title,
+      type: artifact.type,
+      mimeType: artifact.mimeType ?? null,
+      description: artifact.description ?? null,
+      size: sizeBytes,
+    },
+  });
 }
 
 // ============================================================================

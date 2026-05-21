@@ -28,7 +28,9 @@
  */
 
 import { Response } from "express";
+import { randomUUID } from "node:crypto";
 import { query } from "../config/database.js";
+import { env } from "../config/env.js";
 import { callLLM, validateModelClassification } from "./llmProvider.js";
 import { buildSystemPrompt, getToolDefinitions } from "./promptBuilder.js";
 import type { BlackboardEntry } from "./promptBuilder.js";
@@ -135,14 +137,28 @@ function sendHeartbeat(res: Response): void {
 }
 
 // ============================================================================
+// IN-MEMORY SESSION STORE (dev-mode fallback when LLM_MOCK=1)
+// ============================================================================
+
+const inMemorySessions: Map<string, AgentSession> = new Map();
+
+function isMockMode(): boolean {
+  return env.LLM_MOCK === "1";
+}
+
+// ============================================================================
 // DATABASE PERSISTENCE
 // ============================================================================
 
 async function updateSessionInDB(session: AgentSession): Promise<void> {
+  if (isMockMode()) {
+    inMemorySessions.set(session.id, { ...session });
+    return;
+  }
   try {
     await query(
-      `UPDATE agent_sessions 
-       SET status = $1, current_iteration = $2, blackboard = $3, 
+      `UPDATE agent_sessions
+       SET status = $1, current_iteration = $2, blackboard = $3,
            scratchpad = $4, attributes = $5, final_report = $6, error = $7,
            completed_at = CASE WHEN $1 IN ('completed', 'error') THEN NOW() ELSE completed_at END
        WHERE id = $8`,
@@ -179,6 +195,7 @@ async function recordIteration(
     durationMs?: number;
   }
 ): Promise<void> {
+  if (isMockMode()) return;
   try {
     await query(
       `INSERT INTO agent_iterations 
@@ -488,6 +505,7 @@ async function executeIteration(
       ministryCode: session.ministryCode,
       iteration: session.currentIteration,
       memory: { blackboard: session.blackboard, scratchpad: session.scratchpad, attributes: session.attributes },
+      onEvent: (event) => sendSSE(res, event),
     });
 
     toolResults = dispatchResult.results;
@@ -592,6 +610,30 @@ export async function createSession(params: {
   maxIterations: number;
   classification: string;
 }): Promise<AgentSession> {
+  if (isMockMode()) {
+    const id = randomUUID();
+    const session: AgentSession = {
+      id,
+      userId: params.userId,
+      ministryCode: params.ministryCode,
+      prompt: params.prompt,
+      modelId: params.modelId,
+      maxIterations: params.maxIterations,
+      currentIteration: 0,
+      status: "idle",
+      classification: params.classification,
+      blackboard: [],
+      scratchpad: "",
+      attributes: {},
+      finalReport: null,
+      error: null,
+      createdAt: new Date().toISOString(),
+    };
+    inMemorySessions.set(id, session);
+    logger.agent("session_created_mock", id, { modelId: params.modelId, maxIterations: params.maxIterations });
+    return { ...session };
+  }
+
   const result = await query<{ id: string; created_at: string }>(
     `INSERT INTO agent_sessions (user_id, ministry_code, prompt, model_id, max_iterations, classification)
      VALUES ($1, $2, $3, $4, $5, $6)
@@ -600,6 +642,7 @@ export async function createSession(params: {
   );
 
   const row = result.rows[0];
+  if (!row) throw new Error("Session row not returned from insert.");
   logger.agent("session_created", row.id, { modelId: params.modelId, maxIterations: params.maxIterations });
 
   return {
@@ -622,6 +665,12 @@ export async function createSession(params: {
 }
 
 export async function loadSession(sessionId: string, userId: string): Promise<AgentSession | null> {
+  if (isMockMode()) {
+    const session = inMemorySessions.get(sessionId);
+    if (!session || session.userId !== userId) return null;
+    return { ...session, blackboard: [...session.blackboard], attributes: { ...session.attributes } };
+  }
+
   const result = await query<Record<string, unknown>>(
     `SELECT * FROM agent_sessions WHERE id = $1 AND user_id = $2`,
     [sessionId, userId]
@@ -630,6 +679,7 @@ export async function loadSession(sessionId: string, userId: string): Promise<Ag
   if (result.rows.length === 0) return null;
 
   const row = result.rows[0];
+  if (!row) return null;
   return {
     id: row.id as string,
     userId: row.user_id as string,

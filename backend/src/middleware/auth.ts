@@ -1,11 +1,33 @@
 /**
  * Authentication Middleware
- * Validates Microsoft Entra ID JWT tokens and extracts user identity.
- * In development mode, provides a mock user for local testing.
+ *
+ * Resolves the caller's identity via a precedence ladder:
+ *   1. Session cookie (`abc_session`): HMAC-verify our own session JWT.
+ *   2. Authorization: Bearer header: full Entra ID JWKS verification.
+ *   3. Neither + NODE_ENV !== "production" + Entra unconfigured: inject DEV_USER.
+ *   4. Otherwise: 401 with an AUTH_FAILED audit entry.
+ *
+ * Notes:
+ * - A tampered/expired session cookie ALWAYS 401s — we never fall through to
+ *   DEV_USER, which would let a forged cookie silently demote to the mock user.
+ * - The dev mock keys off `!env.ENTRA_CLIENT_ID` (not just NODE_ENV) so a
+ *   half-configured `.env` does not break local dev silently.
  */
 
 import { Request, Response, NextFunction } from "express";
 import { env } from "../config/env.js";
+import { logger } from "../services/logger.js";
+import { logAudit, AuditAction } from "../services/auditLogger.js";
+import {
+  COOKIE_SESSION,
+  InvalidSignatureError,
+  SessionExpiredError,
+  loadUserById,
+  upsertUser,
+  verifyEntraToken,
+  verifySessionToken,
+  extractMinistry as extractMinistryFromEntra,
+} from "../services/entraAuth.js";
 
 export interface AuthUser {
   id: string;
@@ -16,8 +38,8 @@ export interface AuthUser {
   role: "admin" | "user" | "viewer";
 }
 
-// Extend Express Request to include user
 declare global {
+  // eslint-disable-next-line @typescript-eslint/no-namespace
   namespace Express {
     interface Request {
       user?: AuthUser;
@@ -26,23 +48,16 @@ declare global {
 }
 
 /**
- * Extract ministry code from Entra ID group claims.
- * Groups follow pattern: AIM-G-{MINISTRY}-ALL_EMPLOYEES or AIM-G-{MINISTRY}-ALL_CONTRACTORS
+ * Re-exported for callers that still import from this module.
+ * The canonical implementation lives in `entraAuth.ts`.
  */
-function extractMinistry(groups: string[]): string | null {
-  for (const group of groups) {
-    const match = group.match(/^AIM-G-(\w+)-ALL_(?:EMPLOYEES|CONTRACTORS)$/);
-    if (match) {
-      return match[1];
-    }
-  }
-  return null;
-}
+export const extractMinistry = extractMinistryFromEntra;
 
 /**
- * Development mock user for local testing without SSO.
+ * Development mock user. Injected only when Entra is unconfigured AND no
+ * credentials are presented (no cookie, no Bearer header).
  */
-const DEV_USER: AuthUser = {
+export const DEV_USER: AuthUser = {
   id: "dev-user-001",
   entraId: "dev-entra-id",
   email: "cohen.mcleod@gov.ab.ca",
@@ -51,50 +66,98 @@ const DEV_USER: AuthUser = {
   role: "admin",
 };
 
-/**
- * Authentication middleware.
- * In production: validates Entra ID JWT from Authorization header.
- * In development: uses mock user if no token provided.
- */
-export function authenticate(req: Request, res: Response, next: NextFunction): void {
-  const authHeader = req.headers.authorization;
+function getIp(req: Request): string {
+  return (req.ip || req.socket.remoteAddress || "unknown").toString();
+}
 
-  // Development mode: allow mock user
-  if (env.NODE_ENV === "development" && !authHeader) {
+export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
+  const ipAddress = getIp(req);
+  const sessionCookie: string | undefined = req.cookies?.[COOKIE_SESSION];
+  const bearer = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1];
+
+  // 1. Session cookie wins. Failure here is terminal — do NOT fall through.
+  if (sessionCookie) {
+    // 1a. Authentication-level check: signature + expiry (no DB needed).
+    let payload;
+    try {
+      payload = await verifySessionToken(sessionCookie);
+    } catch (err) {
+      const expired = err instanceof SessionExpiredError;
+      const reason = expired
+        ? "expired"
+        : err instanceof InvalidSignatureError
+          ? "invalid_signature"
+          : "unknown";
+      await logAudit({
+        action: AuditAction.AUTH_FAILED,
+        details: { reason, source: "cookie" },
+        ipAddress,
+      });
+      res.status(401).json({ error: expired ? "SESSION_EXPIRED" : "SESSION_INVALID" });
+      return;
+    }
+
+    // 1b. Resolve the user from DB. DB failures are infrastructure-level → 503.
+    try {
+      const user = await loadUserById(payload.userId);
+      if (!user) {
+        await logAudit({
+          action: AuditAction.AUTH_FAILED,
+          details: { reason: "user_not_found", source: "cookie" },
+          ipAddress,
+        });
+        res.status(401).json({ error: "SESSION_INVALID" });
+        return;
+      }
+      req.user = user;
+      next();
+      return;
+    } catch (err) {
+      logger.error("Session user lookup failed", err as Error, { userId: payload.userId });
+      res.status(503).json({ error: "USER_LOOKUP_FAILED" });
+      return;
+    }
+  }
+
+  // 2. Bearer token (e.g. service-to-service or programmatic clients).
+  if (bearer) {
+    let claims;
+    try {
+      claims = await verifyEntraToken(bearer);
+    } catch (err) {
+      await logAudit({
+        action: AuditAction.AUTH_FAILED,
+        details: { reason: (err as Error).name || "invalid", source: "bearer" },
+        ipAddress,
+      });
+      res.status(401).json({ error: "INVALID_TOKEN" });
+      return;
+    }
+    try {
+      req.user = await upsertUser(claims);
+      next();
+      return;
+    } catch (err) {
+      logger.error("Bearer user upsert failed", err as Error);
+      res.status(503).json({ error: "USER_UPSERT_FAILED" });
+      return;
+    }
+  }
+
+  // 3. No credentials — dev mock only if Entra is unconfigured.
+  if (env.NODE_ENV !== "production" && !env.ENTRA_CLIENT_ID) {
     req.user = DEV_USER;
     next();
     return;
   }
 
-  if (!authHeader || !authHeader.startsWith("Bearer ")) {
-    res.status(401).json({ error: "Authentication required. Provide a valid Bearer token." });
-    return;
-  }
-
-  const token = authHeader.slice(7);
-
-  // TODO: Implement actual Entra ID JWT validation
-  // For now, in development, accept any token and use mock user
-  if (env.NODE_ENV === "development") {
-    req.user = DEV_USER;
-    next();
-    return;
-  }
-
-  // Production: validate JWT against Entra ID
-  // This will be implemented when SSO credentials are provided
-  try {
-    // Placeholder for JWT validation logic:
-    // 1. Verify signature against Entra ID JWKS endpoint
-    // 2. Check expiration, audience, issuer
-    // 3. Extract user claims (oid, email, name, groups)
-    // 4. Extract ministry from group claims
-    // 5. Look up or create user in database
-
-    res.status(401).json({ error: "Token validation not yet configured for production." });
-  } catch (err) {
-    res.status(401).json({ error: "Invalid or expired token." });
-  }
+  // 4. Production (or dev with Entra configured) without credentials → reject.
+  await logAudit({
+    action: AuditAction.AUTH_FAILED,
+    details: { reason: "missing", source: "none" },
+    ipAddress,
+  });
+  res.status(401).json({ error: "UNAUTHENTICATED" });
 }
 
 /**
@@ -117,7 +180,7 @@ export function requireRole(...roles: AuthUser["role"][]) {
 }
 
 /**
- * Ministry scoping middleware - ensures user can only access their ministry's data.
+ * Ministry scoping middleware - ensures user has a ministry association.
  */
 export function requireMinistry(req: Request, res: Response, next: NextFunction): void {
   if (!req.user) {

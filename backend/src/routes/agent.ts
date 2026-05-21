@@ -28,6 +28,7 @@ import {
   isSessionRunning,
 } from "../services/agentOrchestrator.js";
 import { getActiveModels, validateModelClassification, isProviderConfigured } from "../services/llmProvider.js";
+import { getTemplateSections } from "../services/promptBuilder.js";
 import { scanForPII } from "../services/piiDetector.js";
 
 const router = Router();
@@ -324,6 +325,18 @@ router.get("/sessions/:id", async (req: Request, res: Response) => {
     createdAt: session.createdAt,
     isRunning: isSessionRunning(id),
   });
+});
+
+// ============================================================================
+// PROMPT TEMPLATE
+// ============================================================================
+
+/**
+ * GET /api/agent/prompt-template
+ * Returns the base prompt sections so the customizer can render an editor.
+ */
+router.get("/prompt-template", (_req: Request, res: Response) => {
+  res.json({ sections: getTemplateSections() });
 });
 
 // ============================================================================

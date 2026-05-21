@@ -1,12 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
+import { useSSEStream } from '@/composables/useSSEStream'
+import { apiFetch } from '@/composables/useApiFetch'
 import type {
   CanvasData,
   CanvasNode,
   CanvasEdge,
   Classification,
   ExecutionState,
-  ExecutionStatus,
   NodeData,
   NodeKind,
   SSEEvent,
@@ -20,11 +21,9 @@ import type {
  * Workflow store (Stream C).
  *
  * Manages the loaded canvas, the list of saved workflows, the dirty flag,
- * and the live execution state during an SSE stream.
- *
- * NOTE: An inline `streamSSE` helper is included until Stream B's
- * `useSSEStream` composable lands. The signature is preserved so the
- * extraction is mechanical.
+ * and the live execution state during an SSE stream. Uses Stream A's
+ * `apiFetch` for credentialed JSON requests and Stream B's `useSSEStream`
+ * for the execute endpoint.
  */
 export const useWorkflowStore = defineStore('workflow', () => {
   const list = ref<WorkflowSummary[]>([])
@@ -36,7 +35,30 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const execution = ref<ExecutionState | null>(null)
   const events = ref<SSEEvent[]>([])
   const selectedNodeId = ref<string | null>(null)
-  let executionAbort: AbortController | null = null
+
+  // Stream B's reusable SSE consumer. We instantiate once per store; the
+  // composable handles abort + reconnect + line-buffer parsing.
+  const sseStream = useSSEStream<SSEEvent>({
+    onEvent: (event) => {
+      events.value.push(event)
+      applyExecutionEvent(event)
+    },
+    onError: (err) => {
+      if (execution.value && execution.value.status === 'running') {
+        execution.value.status = 'error'
+        execution.value.error = err.message
+        execution.value.completedAt = Date.now()
+      }
+    },
+    onDone: () => {
+      if (execution.value && execution.value.status === 'running') {
+        // Stream closed without an explicit workflow_complete (e.g. server-side
+        // abort). Treat as completed; the audit row reflects the real status.
+        execution.value.status = 'completed'
+        execution.value.completedAt = Date.now()
+      }
+    },
+  })
 
   const selectedNode = computed(() => {
     if (!current.value || !selectedNodeId.value) return null
@@ -49,9 +71,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   async function loadLibrary(): Promise<void> {
     if (library.value) return
-    const res = await fetch('/api/workflows/library')
-    if (!res.ok) throw new Error(`Failed to load library: ${res.status}`)
-    library.value = await res.json()
+    library.value = await apiFetch<WorkflowLibrary>('/api/workflows/library')
   }
 
   // ============================================================================
@@ -62,9 +82,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await fetch('/api/workflows')
-      if (!res.ok) throw new Error(`Failed to list workflows: ${res.status}`)
-      const data = await res.json()
+      const data = await apiFetch<{ workflows: WorkflowSummary[] }>('/api/workflows')
       list.value = data.workflows
     } catch (e) {
       error.value = (e as Error).message
@@ -77,9 +95,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await fetch(`/api/workflows/${id}`)
-      if (!res.ok) throw new Error(`Failed to load workflow: ${res.status}`)
-      current.value = await res.json()
+      current.value = await apiFetch<Workflow>(`/api/workflows/${id}`)
       dirty.value = false
       selectedNodeId.value = null
     } catch (e) {
@@ -89,37 +105,33 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
+  function summarize(wf: Workflow): WorkflowSummary {
+    return {
+      id: wf.id,
+      name: wf.name,
+      description: wf.description,
+      classification: wf.classification,
+      version: wf.version,
+      is_template: wf.is_template,
+      ministry_code: wf.ministry_code,
+      user_id: wf.user_id,
+      updated_at: wf.updated_at,
+      created_at: wf.created_at,
+    }
+  }
+
   async function create(
     name: string,
     classification: Classification = 'unclassified',
     canvasData?: CanvasData
   ): Promise<Workflow> {
     const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 }
-    const res = await fetch('/api/workflows', {
+    const wf = await apiFetch<Workflow>('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ name, classification, canvasData: canvas }),
     })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({ error: 'Failed to create' }))
-      throw new Error(body.error || `Failed to create: ${res.status}`)
-    }
-    const wf: Workflow = await res.json()
-    list.value = [
-      {
-        id: wf.id,
-        name: wf.name,
-        description: wf.description,
-        classification: wf.classification,
-        version: wf.version,
-        is_template: wf.is_template,
-        ministry_code: wf.ministry_code,
-        user_id: wf.user_id,
-        updated_at: wf.updated_at,
-        created_at: wf.created_at,
-      },
-      ...list.value,
-    ]
+    list.value = [summarize(wf), ...list.value]
     return wf
   }
 
@@ -131,50 +143,27 @@ export const useWorkflowStore = defineStore('workflow', () => {
       classification: current.value.classification,
       canvasData: current.value.canvas_data,
     }
-    const res = await fetch(`/api/workflows/${current.value.id}`, {
+    current.value = await apiFetch<Workflow>(`/api/workflows/${current.value.id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     })
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({ error: 'Failed to save' }))
-      throw new Error(errBody.error || `Failed to save: ${res.status}`)
-    }
-    current.value = await res.json()
     dirty.value = false
-    // Refresh list entry
     if (current.value) {
       const idx = list.value.findIndex((w) => w.id === current.value!.id)
-      const summary: WorkflowSummary = {
-        id: current.value.id,
-        name: current.value.name,
-        description: current.value.description,
-        classification: current.value.classification,
-        version: current.value.version,
-        is_template: current.value.is_template,
-        ministry_code: current.value.ministry_code,
-        user_id: current.value.user_id,
-        updated_at: current.value.updated_at,
-        created_at: current.value.created_at,
-      }
+      const summary = summarize(current.value)
       if (idx >= 0) list.value[idx] = summary
       else list.value = [summary, ...list.value]
     }
   }
 
   async function duplicate(id: string, newName?: string): Promise<Workflow> {
-    const res = await fetch(`/api/workflows/${id}`)
-    if (!res.ok) throw new Error(`Failed to load workflow: ${res.status}`)
-    const src: Workflow = await res.json()
+    const src = await apiFetch<Workflow>(`/api/workflows/${id}`)
     return create(newName ?? `${src.name} (copy)`, src.classification, src.canvas_data)
   }
 
   async function remove(id: string): Promise<void> {
-    const res = await fetch(`/api/workflows/${id}`, { method: 'DELETE' })
-    if (!res.ok) {
-      const errBody = await res.json().catch(() => ({ error: 'Failed to delete' }))
-      throw new Error(errBody.error || `Failed to delete: ${res.status}`)
-    }
+    await apiFetch(`/api/workflows/${id}`, { method: 'DELETE' })
     list.value = list.value.filter((w) => w.id !== id)
     if (current.value?.id === id) current.value = null
   }
@@ -265,31 +254,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
     events.value = []
 
-    executionAbort = new AbortController()
-
-    await streamSSE(
-      `/api/workflows/${current.value.id}/execute`,
-      { continueOnError },
-      executionAbort.signal,
-      (event) => {
-        events.value.push(event)
-        applyExecutionEvent(event)
-      }
-    ).catch((err) => {
-      if (execution.value) {
-        const aborted = (err as { name?: string }).name === 'AbortError'
-        execution.value.status = aborted ? 'aborted' : 'error'
-        if (!aborted) execution.value.error = (err as Error).message
-        execution.value.completedAt = Date.now()
-      }
-    }).finally(() => {
-      executionAbort = null
+    await sseStream.start(`/api/workflows/${current.value.id}/execute`, {
+      body: { continueOnError },
     })
   }
 
   function cancelExecution(): void {
-    if (executionAbort) {
-      executionAbort.abort()
+    sseStream.abort()
+    if (execution.value && execution.value.status === 'running') {
+      execution.value.status = 'aborted'
+      execution.value.completedAt = Date.now()
     }
   }
 
@@ -383,61 +357,3 @@ export const useWorkflowStore = defineStore('workflow', () => {
   }
 })
 
-// ============================================================================
-// INLINE SSE STREAMER (replace with Stream B's useSSEStream when ready)
-// ============================================================================
-
-async function streamSSE(
-  url: string,
-  body: unknown,
-  signal: AbortSignal,
-  onEvent: (e: SSEEvent) => void
-): Promise<void> {
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-    signal,
-  })
-  if (!res.ok || !res.body) {
-    let msg = `Stream failed: ${res.status}`
-    try {
-      const body = await res.json()
-      msg = body.error || msg
-    } catch {
-      /* ignore */
-    }
-    throw new Error(msg)
-  }
-
-  const reader = res.body.getReader()
-  const decoder = new TextDecoder('utf-8')
-  let buffer = ''
-
-  while (true) {
-    const { value, done } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    let lineEnd = buffer.indexOf('\n\n')
-    while (lineEnd !== -1) {
-      const chunk = buffer.slice(0, lineEnd)
-      buffer = buffer.slice(lineEnd + 2)
-
-      for (const line of chunk.split('\n')) {
-        if (line.startsWith('data: ')) {
-          const payload = line.slice(6)
-          try {
-            const parsed = JSON.parse(payload) as SSEEvent
-            onEvent(parsed)
-          } catch {
-            /* ignore malformed events */
-          }
-        }
-        // ': heartbeat' lines are silently ignored
-      }
-
-      lineEnd = buffer.indexOf('\n\n')
-    }
-  }
-}
