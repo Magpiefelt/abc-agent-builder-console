@@ -22,7 +22,8 @@ const MAX_TTS_TEXT_LENGTH = 5000;
 
 export interface ImageGenerationResult {
   success: boolean;
-  artifactId?: string;
+  artifactId?: string | null;
+  persisted?: boolean;
   mimeType?: string;
   sizeBytes?: number;
   provider?: string;
@@ -31,7 +32,8 @@ export interface ImageGenerationResult {
 
 export interface TtsResult {
   success: boolean;
-  artifactId?: string;
+  artifactId?: string | null;
+  persisted?: boolean;
   mimeType?: string;
   sizeBytes?: number;
   voiceId?: string;
@@ -88,14 +90,14 @@ export async function imageGeneration(
 
   try {
     const titleSuffix = prompt.length > 60 ? `${prompt.substring(0, 57)}...` : prompt;
-    const { id, sizeBytes } = await storeArtifact(context, {
+    const { id, sizeBytes, persisted } = await storeArtifact(context, {
       title: `Generated image: ${titleSuffix}`,
       type: "image",
       content: base64,
       mimeType,
       description: `Prompt: ${prompt}`,
     });
-    return { success: true, artifactId: id, mimeType, sizeBytes, provider };
+    return { success: true, artifactId: id, persisted, mimeType, sizeBytes, provider };
   } catch (err) {
     return { success: false, error: `Artifact persistence failed: ${(err as Error).message}` };
   }
@@ -209,14 +211,14 @@ export async function elevenlabsTts(
 
   try {
     const snippet = text.length > 60 ? `${text.substring(0, 57)}...` : text;
-    const { id, sizeBytes } = await storeArtifact(context, {
+    const { id, sizeBytes, persisted } = await storeArtifact(context, {
       title: `TTS: ${snippet}`,
       type: "audio",
       content: base64,
       mimeType: "audio/mpeg",
       description: `Voice ${voiceId}: ${text}`.substring(0, 1000),
     });
-    return { success: true, artifactId: id, mimeType: "audio/mpeg", sizeBytes, voiceId };
+    return { success: true, artifactId: id, persisted, mimeType: "audio/mpeg", sizeBytes, voiceId };
   } catch (err) {
     return { success: false, error: `Artifact persistence failed: ${(err as Error).message}` };
   }

@@ -44,24 +44,18 @@ export interface SessionMemory {
   attributes: Record<string, unknown>;
 }
 
-export interface ArtifactCreatedEvent {
-  id: string;
-  type: string;
-  title: string;
-  mimeType?: string;
-  sizeBytes: number;
-  iteration: number;
-  createdAt: string;
-}
-
 export interface ToolContext {
   sessionId: string;
   userId: string;
   ministryCode: string | null;
   iteration: number;
   memory: SessionMemory;
-  /** Optional callback invoked after an artifact is persisted. Orchestrator wires this to SSE. */
-  onArtifactCreated?: (event: ArtifactCreatedEvent) => void;
+  /**
+   * Optional sink for orchestrator-level SSE events emitted by tools
+   * (e.g. `artifact_created`). Kept optional so tools never depend on a
+   * Response object — the orchestrator wires this when streaming.
+   */
+  onEvent?: (event: { type: string; [key: string]: unknown }) => void;
 }
 
 // ============================================================================
@@ -300,7 +294,7 @@ function handleMemoryTool(
       }
 
       // Persist artifact (fire and forget — surfaces errors via logger). Emits artifact_created
-      // SSE event via context.onArtifactCreated when wired by the orchestrator.
+      // SSE event via context.onEvent when wired by the orchestrator.
       storeArtifact(context, { title, type, content, mimeType, description }).catch((err) => {
         logger.error("Failed to store artifact", err as Error, { sessionId: context.sessionId, title });
       });
@@ -454,49 +448,63 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
 export async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
-): Promise<{ id: string; createdAt: string; sizeBytes: number }> {
+): Promise<{ id: string | null; sizeBytes: number; persisted: boolean }> {
   const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
+
+  // 10MB cap applies before any persistence attempt so misbehaving tools
+  // get a clear synchronous error rather than a silent DB rejection.
   if (sizeBytes > MAX_ARTIFACT_CONTENT_BYTES) {
     throw new Error(
       `Artifact content exceeds ${MAX_ARTIFACT_CONTENT_BYTES / (1024 * 1024)}MB limit (got ${Math.round(sizeBytes / (1024 * 1024))}MB).`
     );
   }
 
-  const result = await query<{ id: string; created_at: string }>(
-    `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-     RETURNING id, created_at`,
-    [
-      context.sessionId,
-      context.userId,
-      artifact.type,
-      artifact.title,
-      artifact.content,
-      artifact.description || null,
-      artifact.mimeType || null,
-      sizeBytes,
-      context.iteration,
-    ]
-  );
-
-  const row = result.rows[0];
-  if (context.onArtifactCreated) {
-    try {
-      context.onArtifactCreated({
-        id: row.id,
-        type: artifact.type,
-        title: artifact.title,
-        mimeType: artifact.mimeType,
+  let id: string | null = null;
+  let persisted = false;
+  try {
+    const result = await query<{ id: string }>(
+      `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        context.sessionId,
+        context.userId,
+        artifact.type,
+        artifact.title,
+        artifact.content,
+        artifact.description || null,
+        artifact.mimeType || null,
         sizeBytes,
-        iteration: context.iteration,
-        createdAt: row.created_at,
-      });
-    } catch (err) {
-      logger.error("onArtifactCreated callback threw", err as Error, { artifactId: row.id });
-    }
+        context.iteration,
+      ]
+    );
+    id = result.rows[0]?.id ?? null;
+    persisted = id !== null;
+  } catch (err) {
+    // Persistence failed (e.g. dev mode without a DB). The artifact is still
+    // surfaced to the live UI via the SSE event below; downstream consumers
+    // that need the row will retry/refresh on next session load.
+    logger.warn("Failed to persist artifact, emitting transient SSE only", {
+      sessionId: context.sessionId,
+      title: artifact.title,
+      error: (err as Error).message,
+    });
   }
 
-  return { id: row.id, createdAt: row.created_at, sizeBytes };
+  context.onEvent?.({
+    type: "artifact_created",
+    iteration: context.iteration,
+    artifact: {
+      id,
+      title: artifact.title,
+      type: artifact.type,
+      mimeType: artifact.mimeType ?? null,
+      description: artifact.description ?? null,
+      size: sizeBytes,
+    },
+  });
+
+  return { id, sizeBytes, persisted };
 }
 
 // ============================================================================

@@ -28,6 +28,7 @@ import {
   isSessionRunning,
 } from "../services/agentOrchestrator.js";
 import { getActiveModels, validateModelClassification, isProviderConfigured } from "../services/llmProvider.js";
+import { getTemplateSections } from "../services/promptBuilder.js";
 import { scanForPII } from "../services/piiDetector.js";
 import { query } from "../config/database.js";
 
@@ -400,6 +401,18 @@ router.get("/sessions/:id/artifacts/:artifactId", async (req: Request, res: Resp
     logger.error("Failed to fetch artifact", err as Error, { sessionId: id, artifactId });
     res.status(500).json({ error: "Failed to fetch artifact." });
   }
+});
+
+// ============================================================================
+// PROMPT TEMPLATE
+// ============================================================================
+
+/**
+ * GET /api/agent/prompt-template
+ * Returns the base prompt sections so the customizer can render an editor.
+ */
+router.get("/prompt-template", (_req: Request, res: Response) => {
+  res.json({ sections: getTemplateSections() });
 });
 
 // ============================================================================
