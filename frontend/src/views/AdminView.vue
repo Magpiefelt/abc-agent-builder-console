@@ -5,6 +5,7 @@ import PIIDetectionViewer from '@/components/admin/PIIDetectionViewer.vue'
 import ModelRegistryEditor from '@/components/admin/ModelRegistryEditor.vue'
 import SessionInspector from '@/components/admin/SessionInspector.vue'
 import HealthDiagnostics from '@/components/admin/HealthDiagnostics.vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 interface Tab {
   id: string
@@ -34,6 +35,8 @@ function tabFromHash(): string {
 // Initialize from hash synchronously so the first render shows the right tab.
 const active = ref<string>(tabFromHash())
 const activeTab = computed<Tab>(() => tabs.find((t) => t.id === active.value) ?? tabs[0]!)
+
+useDocumentTitle(() => `Admin · ${activeTab.value.label}`)
 
 function select(tab: Tab) {
   active.value = tab.id

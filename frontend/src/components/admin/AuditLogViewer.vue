@@ -69,11 +69,21 @@ onActivated(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <header class="flex items-center justify-between">
-      <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Audit Log</h3>
+    <header class="flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Audit Log</h3>
+        <p
+          v-if="!loading"
+          class="text-xs text-[var(--goa-color-text-secondary)] mt-1"
+          aria-live="polite"
+        >
+          {{ entries.length }} {{ entries.length === 1 ? 'entry' : 'entries' }}
+          <span v-if="entries.length === filterLimit"> (limit reached — increase to see more)</span>
+        </p>
+      </div>
       <div class="flex gap-2">
-        <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
-          Refresh
+        <goa-button type="primary" size="compact" leadingicon="search" @_click="load">
+          {{ entries.length === 0 ? 'Search' : 'Apply filters' }}
         </goa-button>
         <goa-button
           type="secondary"
@@ -96,6 +106,7 @@ onActivated(() => {
           placeholder="e.g. admin.access"
           width="100%"
           @_change="(e: CustomEvent<{ value: string }>) => (filterAction = e.detail.value)"
+          @_keypress="(e: CustomEvent<{ key: string }>) => e.detail.key === 'Enter' && load()"
         ></goa-input>
       </goa-form-item>
       <goa-form-item label="User ID">
@@ -105,6 +116,7 @@ onActivated(() => {
           placeholder="UUID"
           width="100%"
           @_change="(e: CustomEvent<{ value: string }>) => (filterUserId = e.detail.value)"
+          @_keypress="(e: CustomEvent<{ key: string }>) => e.detail.key === 'Enter' && load()"
         ></goa-input>
       </goa-form-item>
       <goa-form-item label="From">
@@ -134,6 +146,7 @@ onActivated(() => {
           max="500"
           width="100%"
           @_change="(e: CustomEvent<{ value: string }>) => (filterLimit = Number(e.detail.value) || 100)"
+          @_keypress="(e: CustomEvent<{ key: string }>) => e.detail.key === 'Enter' && load()"
         ></goa-input>
       </goa-form-item>
     </div>

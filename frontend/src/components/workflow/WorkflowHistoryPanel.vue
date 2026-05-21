@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import { describeNode, describeEdge } from '@/lib/canvasDiff'
@@ -76,6 +76,15 @@ watch(
     if (!isOpen) store.clearVersionPreview()
   },
 )
+
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && props.open && !restoreTarget.value) {
+    emit('close')
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 function askRestore(v: WorkflowVersionSummary): void {
   if (currentVersion.value !== null && v.version === currentVersion.value) return

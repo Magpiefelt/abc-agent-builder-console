@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { PromptSectionOverride } from '@/stores/agentSession'
 import { apiFetch } from '@/composables/useApiFetch'
 
@@ -50,7 +50,7 @@ function toggle(id: string): void {
   expanded.value = next
 }
 
-function handleSave(): void {
+function computeOverrides(): Record<string, PromptSectionOverride> {
   const overrides: Record<string, PromptSectionOverride> = {}
   for (const s of sections.value) {
     const base = baseSections.value[s.id]
@@ -60,8 +60,42 @@ function handleSave(): void {
     if (contentState.value[s.id] !== base.content) diff.content = contentState.value[s.id]
     if (Object.keys(diff).length > 0) overrides[s.id] = diff
   }
-  emit('save', overrides)
+  return overrides
 }
+
+function handleSave(): void {
+  emit('save', computeOverrides())
+}
+
+function handleReset(): void {
+  for (const s of sections.value) {
+    const base = baseSections.value[s.id]
+    if (!base) continue
+    enabledState.value[s.id] = base.enabled
+    contentState.value[s.id] = base.content
+  }
+}
+
+const overrideCount = computed(() => {
+  let count = 0
+  for (const s of sections.value) {
+    const base = baseSections.value[s.id]
+    if (!base) continue
+    if (enabledState.value[s.id] !== base.enabled) count++
+    else if (contentState.value[s.id] !== base.content) count++
+  }
+  return count
+})
+
+function onKeydown(event: KeyboardEvent): void {
+  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
+    event.preventDefault()
+    handleSave()
+  }
+}
+
+onMounted(() => window.addEventListener('keydown', onKeydown))
+onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 function priorityLabel(p?: number): string {
   switch (p) {
@@ -87,9 +121,26 @@ function priorityLabel(p?: number): string {
     role="dialog"
     @_close="emit('close')"
   >
-    <p class="text-xs text-[var(--goa-color-text-secondary)] mb-3">
-      Toggle sections off or edit their content for this session.
-    </p>
+    <div class="flex items-center justify-between mb-3 gap-2">
+      <p class="text-xs text-[var(--goa-color-text-secondary)]">
+        Toggle sections off or edit their content for this session.
+      </p>
+      <div class="flex items-center gap-2 shrink-0">
+        <goa-badge
+          v-if="overrideCount > 0"
+          type="information"
+          :content="`${overrideCount} change${overrideCount === 1 ? '' : 's'}`"
+        ></goa-badge>
+        <button
+          v-if="overrideCount > 0"
+          type="button"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+          @click="handleReset"
+        >
+          Reset
+        </button>
+      </div>
+    </div>
 
     <p v-if="loading" class="text-sm text-[var(--goa-color-text-secondary)]">Loading sections…</p>
     <goa-callout v-if="error" type="emergency" heading="Couldn't load sections">{{ error }}</goa-callout>
@@ -131,9 +182,16 @@ function priorityLabel(p?: number): string {
       </div>
     </article>
 
-    <div slot="actions" class="flex justify-end gap-2">
-      <goa-button type="secondary" @_click="emit('close')">Cancel</goa-button>
-      <goa-button type="primary" @_click="handleSave">Save Overrides</goa-button>
+    <div slot="actions" class="flex items-center justify-between gap-2 w-full">
+      <span class="text-xs text-[var(--goa-color-text-secondary)] hidden sm:inline">
+        Tip: ⌘/Ctrl+Enter to save.
+      </span>
+      <div class="flex gap-2 ml-auto">
+        <goa-button type="secondary" @_click="emit('close')">Cancel</goa-button>
+        <goa-button type="primary" @_click="handleSave">
+          {{ overrideCount > 0 ? `Save ${overrideCount} override${overrideCount === 1 ? '' : 's'}` : 'Save Overrides' }}
+        </goa-button>
+      </div>
     </div>
   </goa-modal>
 </template>

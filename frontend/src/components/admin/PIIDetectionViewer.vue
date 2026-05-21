@@ -44,11 +44,18 @@ onActivated(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <header class="flex items-center justify-between">
+    <header class="flex items-center justify-between gap-4 flex-wrap">
       <div>
         <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">PII Detections</h3>
         <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
           Matches are truncated server-side (first 4 chars + ***). Raw values are never persisted.
+        </p>
+        <p
+          v-if="!loading"
+          class="text-xs text-[var(--goa-color-text-secondary)] mt-1"
+          aria-live="polite"
+        >
+          {{ detections.length }} {{ detections.length === 1 ? 'detection' : 'detections' }}
         </p>
       </div>
       <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">

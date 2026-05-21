@@ -1,21 +1,30 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useAuthStore } from '@/stores/auth'
+import { useToast } from '@/composables/useToast'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
+
+useDocumentTitle(() => 'Workflows')
 
 const router = useRouter()
 const store = useWorkflowStore()
+const auth = useAuthStore()
+const toast = useToast()
 const { list, loading, error } = storeToRefs(store)
 
 const search = ref('')
 const ministryFilter = ref<'mine' | 'ministry'>('mine')
 const showCreate = ref(false)
 const newName = ref('')
+const newNameInput = ref<HTMLElement | null>(null)
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
 const deleteTarget = ref<{ id: string; name: string } | null>(null)
+const deleting = ref(false)
 
 onMounted(() => {
   store.loadList()
@@ -23,10 +32,53 @@ onMounted(() => {
 
 const filtered = computed(() =>
   list.value.filter((w) => {
-    if (search.value && !w.name.toLowerCase().includes(search.value.toLowerCase())) return false
+    if (
+      ministryFilter.value === 'mine' &&
+      auth.user?.ministryCode &&
+      w.ministry_code !== auth.user.ministryCode
+    ) {
+      return false
+    }
+    if (search.value) {
+      const needle = search.value.toLowerCase()
+      const haystack = `${w.name} ${w.description ?? ''}`.toLowerCase()
+      if (!haystack.includes(needle)) return false
+    }
     return true
   })
 )
+
+const hasActiveFilter = computed(
+  () => search.value.length > 0 || ministryFilter.value !== 'mine',
+)
+
+const resultLabel = computed(() => {
+  const total = list.value.length
+  const shown = filtered.value.length
+  if (total === 0) return ''
+  if (shown === total) return `${total} workflow${total === 1 ? '' : 's'}`
+  return `${shown} of ${total} workflow${total === 1 ? '' : 's'}`
+})
+
+async function toggleCreate(): Promise<void> {
+  showCreate.value = !showCreate.value
+  if (showCreate.value) {
+    createError.value = null
+    await nextTick()
+    // goa-input is a web component — focus its inner input.
+    const host = newNameInput.value as (HTMLElement & { focus?: () => void }) | null
+    if (host) {
+      const inner = host.shadowRoot?.querySelector('input') as HTMLInputElement | null
+      if (inner) inner.focus()
+      else host.focus?.()
+    }
+  }
+}
+
+function clearFilters(): void {
+  search.value = ''
+  ministryFilter.value = 'mine'
+}
 
 async function createWorkflow(): Promise<void> {
   if (!newName.value.trim()) return
@@ -34,6 +86,7 @@ async function createWorkflow(): Promise<void> {
   createError.value = null
   try {
     const wf = await store.create(newName.value.trim())
+    toast.push({ kind: 'success', message: `Workflow "${wf.name}" created.` })
     router.push(`/workflows/${wf.id}`)
   } catch (e) {
     createError.value = (e as Error).message
@@ -42,9 +95,10 @@ async function createWorkflow(): Promise<void> {
   }
 }
 
-async function duplicate(id: string): Promise<void> {
+async function duplicate(id: string, name: string): Promise<void> {
   try {
     const wf = await store.duplicate(id)
+    toast.push({ kind: 'success', message: `Duplicated "${name}" as "${wf.name}".` })
     router.push(`/workflows/${wf.id}`)
   } catch (e) {
     createError.value = (e as Error).message
@@ -56,9 +110,18 @@ function askDelete(id: string, name: string): void {
 }
 
 async function confirmDelete(): Promise<void> {
-  if (!deleteTarget.value) return
-  await store.remove(deleteTarget.value.id)
-  deleteTarget.value = null
+  if (!deleteTarget.value || deleting.value) return
+  const { id, name } = deleteTarget.value
+  deleting.value = true
+  try {
+    await store.remove(id)
+    toast.push({ kind: 'success', message: `Workflow "${name}" deleted.` })
+    deleteTarget.value = null
+  } catch (e) {
+    toast.push({ kind: 'error', message: `Couldn't delete: ${(e as Error).message}` })
+  } finally {
+    deleting.value = false
+  }
 }
 
 function formatDate(iso: string): string {
@@ -98,13 +161,14 @@ function formatDate(iso: string): string {
           <goa-dropdown-item value="mine" label="My ministry"></goa-dropdown-item>
           <goa-dropdown-item value="ministry" label="All accessible"></goa-dropdown-item>
         </goa-dropdown>
-        <goa-button type="primary" leadingicon="add" @_click="showCreate = !showCreate">
+        <goa-button type="primary" leadingicon="add" @_click="toggleCreate">
           New workflow
         </goa-button>
       </div>
 
       <div v-if="showCreate" class="mt-3 flex items-center gap-2">
         <goa-input
+          ref="newNameInput"
           name="newName"
           :value="newName"
           placeholder="Workflow name"
@@ -138,11 +202,33 @@ function formatDate(iso: string): string {
         {{ error }}
       </goa-callout>
 
-      <div v-else-if="filtered.length === 0" class="text-sm text-[var(--goa-color-text-secondary)] text-center py-12">
+      <div v-else-if="filtered.length === 0 && list.length === 0" class="text-sm text-[var(--goa-color-text-secondary)] text-center py-12">
         No workflows yet. Click "New workflow" to get started.
       </div>
 
-      <goa-table v-else width="100%" variant="normal" version="2">
+      <div
+        v-else-if="filtered.length === 0"
+        class="text-sm text-[var(--goa-color-text-secondary)] text-center py-12 flex flex-col items-center gap-3"
+      >
+        <span>No workflows match your filters.</span>
+        <goa-button type="tertiary" size="compact" @_click="clearFilters">Clear filters</goa-button>
+      </div>
+
+      <div v-else class="flex items-center justify-between mb-3">
+        <span class="text-xs text-[var(--goa-color-text-secondary)]" aria-live="polite">
+          {{ resultLabel }}
+        </span>
+        <goa-button
+          v-if="hasActiveFilter"
+          type="tertiary"
+          size="compact"
+          @_click="clearFilters"
+        >
+          Clear filters
+        </goa-button>
+      </div>
+
+      <goa-table v-if="filtered.length > 0" width="100%" variant="normal" version="2">
         <thead>
           <tr>
             <th>Name</th>
@@ -167,7 +253,7 @@ function formatDate(iso: string): string {
             <td class="text-xs">v{{ wf.version }}</td>
             <td class="text-xs">{{ formatDate(wf.updated_at) }}</td>
             <td class="text-right">
-              <goa-button type="tertiary" size="compact" @_click="duplicate(wf.id)">
+              <goa-button type="tertiary" size="compact" @_click="duplicate(wf.id, wf.name)">
                 Use as template
               </goa-button>
               <goa-button
@@ -189,14 +275,27 @@ function formatDate(iso: string): string {
       open
       heading="Delete workflow?"
       role="alertdialog"
-      @_close="deleteTarget = null"
+      @_close="deleting ? null : (deleteTarget = null)"
     >
       <p>
         Delete workflow "<strong>{{ deleteTarget.name }}</strong>"? This cannot be undone.
       </p>
       <div slot="actions" class="flex justify-end gap-2">
-        <goa-button type="secondary" @_click="deleteTarget = null">Cancel</goa-button>
-        <goa-button type="primary" variant="destructive" @_click="confirmDelete">Delete</goa-button>
+        <goa-button
+          type="secondary"
+          :disabled="deleting || undefined"
+          @_click="deleteTarget = null"
+        >
+          Cancel
+        </goa-button>
+        <goa-button
+          type="primary"
+          variant="destructive"
+          :disabled="deleting || undefined"
+          @_click="confirmDelete"
+        >
+          {{ deleting ? 'Deleting…' : 'Delete' }}
+        </goa-button>
       </div>
     </goa-modal>
   </div>

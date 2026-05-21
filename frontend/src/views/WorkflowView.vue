@@ -3,6 +3,8 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useToast } from '@/composables/useToast'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
 import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
@@ -14,7 +16,14 @@ import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/wor
 const route = useRoute()
 const router = useRouter()
 const store = useWorkflowStore()
+const toast = useToast()
 const { current, library, dirty, selectedNode, execution, error } = storeToRefs(store)
+
+useDocumentTitle(() => {
+  if (!current.value) return 'Workflow'
+  const name = current.value.name?.trim() || 'Untitled workflow'
+  return dirty.value ? `${name} •` : name
+})
 
 const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
 const models = [
@@ -94,9 +103,11 @@ function onPropertyRemove(): void {
 }
 
 async function onSave(): Promise<void> {
+  if (!dirty.value || !current.value) return
   saveError.value = null
   try {
     await store.save()
+    toast.push({ kind: 'success', message: 'Workflow saved.' })
   } catch (e) {
     saveError.value = (e as Error).message
   }
@@ -111,6 +122,28 @@ async function onRun(): Promise<void> {
   }
 }
 
+function onKeydown(event: KeyboardEvent): void {
+  const mod = event.metaKey || event.ctrlKey
+  if (!mod) return
+  // Cmd/Ctrl+S — save.
+  if (event.key === 's' || event.key === 'S') {
+    event.preventDefault()
+    if (dirty.value) void onSave()
+    return
+  }
+  // Cmd/Ctrl+Enter — run (only when not already running and clean).
+  if (event.key === 'Enter') {
+    const status = execution.value?.status
+    if (status === 'running') return
+    if (dirty.value) {
+      toast.push({ kind: 'warning', message: 'Save your changes before running.' })
+      return
+    }
+    event.preventDefault()
+    void onRun()
+  }
+}
+
 function onBack(): void {
   router.push('/workflows')
 }
@@ -122,8 +155,14 @@ function beforeUnload(event: BeforeUnloadEvent): void {
   }
 }
 
-onMounted(() => window.addEventListener('beforeunload', beforeUnload))
-onBeforeUnmount(() => window.removeEventListener('beforeunload', beforeUnload))
+onMounted(() => {
+  window.addEventListener('beforeunload', beforeUnload)
+  window.addEventListener('keydown', onKeydown)
+})
+onBeforeUnmount(() => {
+  window.removeEventListener('beforeunload', beforeUnload)
+  window.removeEventListener('keydown', onKeydown)
+})
 
 onBeforeRouteLeave((_to, _from, next) => {
   if (dirty.value && !window.confirm('You have unsaved changes. Leave anyway?')) {
@@ -192,7 +231,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         </div>
         <ExecutionPanel
           v-if="execution"
-          class="max-h-[45%] min-h-[140px] shrink-0"
+          class="max-h-[45%] shrink-0"
         />
       </div>
 

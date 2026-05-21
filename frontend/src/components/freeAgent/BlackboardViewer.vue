@@ -76,6 +76,19 @@ function toggleCategory(c: string): void {
       >
         Blackboard is empty.
       </div>
+      <div
+        v-else-if="grouped.length === 0"
+        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center flex flex-col gap-2 items-center"
+      >
+        <span>No entries match your filters.</span>
+        <button
+          type="button"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+          @click="search = ''; activeCategories = new Set()"
+        >
+          Clear filters
+        </button>
+      </div>
       <div v-for="[cat, entries] in grouped" :key="cat" class="flex flex-col gap-2">
         <h4 class="text-xs font-semibold uppercase tracking-wide text-[var(--goa-color-text-secondary)]">
           {{ cat }}
