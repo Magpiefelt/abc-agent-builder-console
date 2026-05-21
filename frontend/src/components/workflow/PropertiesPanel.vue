@@ -56,13 +56,15 @@ function updateParam(name: string, value: unknown): void {
   <aside class="w-80 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] flex flex-col overflow-hidden">
     <div class="px-4 py-3 border-b border-[var(--goa-color-border)] flex items-center justify-between">
       <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Properties</h3>
-      <button
+      <goa-button
         v-if="node"
-        @click="emit('remove')"
-        class="text-xs text-[var(--goa-color-error)] hover:underline"
+        type="tertiary"
+        variant="destructive"
+        size="compact"
+        @_click="emit('remove')"
       >
         Delete node
-      </button>
+      </goa-button>
     </div>
 
     <div v-if="!node" class="flex-1 flex items-center justify-center text-sm text-[var(--goa-color-text-secondary)] p-4 text-center">
@@ -70,182 +72,195 @@ function updateParam(name: string, value: unknown): void {
     </div>
 
     <div v-else class="flex-1 overflow-y-auto p-4 space-y-3 text-sm">
-      <div>
-        <label class="block text-xs font-medium mb-1">Label</label>
-        <input
+      <goa-form-item label="Label">
+        <goa-input
+          name="label"
           :value="node.data.label"
-          @input="update('label', ($event.target as HTMLInputElement).value)"
-          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-        />
-      </div>
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => update('label', e.detail.value)"
+        ></goa-input>
+      </goa-form-item>
 
       <!-- AGENT -->
       <template v-if="node.data.kind === 'agent'">
-        <div>
-          <label class="block text-xs font-medium mb-1">Template</label>
-          <select
+        <goa-form-item label="Template" :helptext="currentTemplate?.description ?? ''">
+          <goa-dropdown
+            name="templateId"
             :value="(node.data as AgentNodeData).templateId ?? ''"
-            @change="update('templateId', ($event.target as HTMLSelectElement).value || undefined)"
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+            width="100%"
+            @_change="(e: CustomEvent<{ value: string }>) => update('templateId', e.detail.value || undefined)"
           >
-            <option value="">(custom)</option>
-            <option v-for="t in agentTemplates" :key="t.id" :value="t.id">{{ t.name }}</option>
-          </select>
-          <p v-if="currentTemplate" class="text-xs text-[var(--goa-color-text-secondary)] mt-1">{{ currentTemplate.description }}</p>
-        </div>
+            <goa-dropdown-item value="" label="(custom)"></goa-dropdown-item>
+            <goa-dropdown-item v-for="t in agentTemplates" :key="t.id" :value="t.id" :label="t.name"></goa-dropdown-item>
+          </goa-dropdown>
+        </goa-form-item>
 
-        <div>
-          <label class="block text-xs font-medium mb-1">Model</label>
-          <select
+        <goa-form-item label="Model">
+          <goa-dropdown
+            name="modelId"
             :value="(node.data as AgentNodeData).modelId"
-            @change="update('modelId', ($event.target as HTMLSelectElement).value)"
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+            width="100%"
+            @_change="(e: CustomEvent<{ value: string }>) => update('modelId', e.detail.value)"
           >
-            <option v-for="m in models" :key="m.id" :value="m.id">{{ m.name }}</option>
-          </select>
-        </div>
+            <goa-dropdown-item v-for="m in models" :key="m.id" :value="m.id" :label="m.name"></goa-dropdown-item>
+          </goa-dropdown>
+        </goa-form-item>
 
-        <div>
-          <label class="block text-xs font-medium mb-1">System Prompt Override</label>
-          <textarea
+        <goa-form-item label="System Prompt Override">
+          <goa-textarea
+            name="systemPromptOverride"
             :value="(node.data as AgentNodeData).systemPromptOverride ?? ''"
-            @input="update('systemPromptOverride', ($event.target as HTMLTextAreaElement).value || undefined)"
             rows="6"
             placeholder="Leave empty to use the template's default prompt."
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-          />
-        </div>
+            @_change="(e: CustomEvent<{ value: string }>) => update('systemPromptOverride', e.detail.value || undefined)"
+          ></goa-textarea>
+        </goa-form-item>
 
         <div class="grid grid-cols-2 gap-2">
-          <div>
-            <label class="block text-xs font-medium mb-1">Temperature</label>
-            <input
+          <goa-form-item label="Temperature">
+            <goa-input
               type="number"
+              name="temperature"
               step="0.1"
               min="0"
               max="2"
-              :value="(node.data as AgentNodeData).temperature ?? ''"
-              @input="update('temperature', Number(($event.target as HTMLInputElement).value) || undefined)"
-              class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-            />
-          </div>
-          <div>
-            <label class="block text-xs font-medium mb-1">Max Tokens</label>
-            <input
+              :value="String((node.data as AgentNodeData).temperature ?? '')"
+              width="100%"
+              @_change="(e: CustomEvent<{ value: string }>) => update('temperature', Number(e.detail.value) || undefined)"
+            ></goa-input>
+          </goa-form-item>
+          <goa-form-item label="Max Tokens">
+            <goa-input
               type="number"
+              name="maxTokens"
               min="1"
-              :value="(node.data as AgentNodeData).maxTokens ?? ''"
-              @input="update('maxTokens', Number(($event.target as HTMLInputElement).value) || undefined)"
-              class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-            />
-          </div>
+              :value="String((node.data as AgentNodeData).maxTokens ?? '')"
+              width="100%"
+              @_change="(e: CustomEvent<{ value: string }>) => update('maxTokens', Number(e.detail.value) || undefined)"
+            ></goa-input>
+          </goa-form-item>
         </div>
       </template>
 
       <!-- FUNCTION -->
       <template v-else-if="node.data.kind === 'function'">
-        <div>
-          <label class="block text-xs font-medium mb-1">Function</label>
-          <select
+        <goa-form-item label="Function" :helptext="currentFunctionEntry?.description ?? ''">
+          <goa-dropdown
+            name="fnName"
             :value="(node.data as FunctionNodeData).fnName"
-            @change="update('fnName', ($event.target as HTMLSelectElement).value)"
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+            width="100%"
+            @_change="(e: CustomEvent<{ value: string }>) => update('fnName', e.detail.value)"
           >
-            <option v-for="f in functionCatalog" :key="f.name" :value="f.name">{{ f.category }} · {{ f.name }}</option>
-          </select>
-          <p v-if="currentFunctionEntry" class="text-xs text-[var(--goa-color-text-secondary)] mt-1">{{ currentFunctionEntry.description }}</p>
-        </div>
+            <goa-dropdown-item
+              v-for="f in functionCatalog"
+              :key="f.name"
+              :value="f.name"
+              :label="`${f.category} · ${f.name}`"
+            ></goa-dropdown-item>
+          </goa-dropdown>
+        </goa-form-item>
 
         <div v-if="currentFunctionEntry && currentFunctionEntry.params.length > 0">
           <div class="text-xs font-medium mb-1">Parameters</div>
           <div class="space-y-2">
-            <div v-for="p in currentFunctionEntry.params" :key="p.name">
-              <label class="block text-xs font-mono">{{ p.name }}<span v-if="p.required" class="text-[var(--goa-color-error)]"> *</span></label>
-              <input
+            <goa-form-item
+              v-for="p in currentFunctionEntry.params"
+              :key="p.name"
+              :label="p.name"
+              :requirement="p.required ? 'required' : 'optional'"
+              :helptext="p.description ?? ''"
+            >
+              <goa-input
                 v-if="p.type === 'number'"
                 type="number"
-                :value="(node.data as FunctionNodeData).params[p.name] ?? p.default ?? ''"
-                @input="updateParam(p.name, Number(($event.target as HTMLInputElement).value))"
-                class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-              />
-              <input
+                :name="p.name"
+                :value="String((node.data as FunctionNodeData).params[p.name] ?? p.default ?? '')"
+                width="100%"
+                @_change="(e: CustomEvent<{ value: string }>) => updateParam(p.name, Number(e.detail.value))"
+              ></goa-input>
+              <goa-checkbox
                 v-else-if="p.type === 'boolean'"
-                type="checkbox"
-                :checked="!!(node.data as FunctionNodeData).params[p.name]"
-                @change="updateParam(p.name, ($event.target as HTMLInputElement).checked)"
-              />
-              <input
+                :name="p.name"
+                :checked="!!(node.data as FunctionNodeData).params[p.name] || undefined"
+                @_change="(e: CustomEvent<{ checked: boolean }>) => updateParam(p.name, e.detail.checked)"
+              ></goa-checkbox>
+              <goa-input
                 v-else
-                type="text"
-                :value="(node.data as FunctionNodeData).params[p.name] ?? p.default ?? ''"
-                @input="updateParam(p.name, ($event.target as HTMLInputElement).value)"
-                class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-              />
-              <p v-if="p.description" class="text-xs text-[var(--goa-color-text-secondary)] mt-0.5">{{ p.description }}</p>
-            </div>
+                :name="p.name"
+                :value="String((node.data as FunctionNodeData).params[p.name] ?? p.default ?? '')"
+                width="100%"
+                @_change="(e: CustomEvent<{ value: string }>) => updateParam(p.name, e.detail.value)"
+              ></goa-input>
+            </goa-form-item>
           </div>
         </div>
       </template>
 
       <!-- TOOL -->
       <template v-else-if="node.data.kind === 'tool'">
-        <div>
-          <label class="block text-xs font-medium mb-1">Tool</label>
-          <select
+        <goa-form-item label="Tool" :helptext="currentToolEntry?.description ?? ''">
+          <goa-dropdown
+            name="toolName"
             :value="(node.data as ToolNodeData).toolName"
-            @change="update('toolName', ($event.target as HTMLSelectElement).value)"
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+            width="100%"
+            @_change="(e: CustomEvent<{ value: string }>) => update('toolName', e.detail.value)"
           >
-            <option v-for="t in tools" :key="t.name" :value="t.name">{{ t.category }} · {{ t.name }}</option>
-          </select>
-          <p v-if="currentToolEntry" class="text-xs text-[var(--goa-color-text-secondary)] mt-1">{{ currentToolEntry.description }}</p>
-        </div>
+            <goa-dropdown-item
+              v-for="t in tools"
+              :key="t.name"
+              :value="t.name"
+              :label="`${t.category} · ${t.name}`"
+            ></goa-dropdown-item>
+          </goa-dropdown>
+        </goa-form-item>
 
         <div v-if="currentToolEntry">
           <div class="text-xs font-medium mb-1">Parameters</div>
           <div class="space-y-2">
-            <div v-for="(prop, key) in (currentToolEntry.parameters.properties as Record<string, { type?: string; description?: string }>)" :key="String(key)">
-              <label class="block text-xs font-mono">
-                {{ key }}<span v-if="currentToolEntry.parameters.required?.includes(String(key))" class="text-[var(--goa-color-error)]"> *</span>
-              </label>
-              <input
+            <goa-form-item
+              v-for="(prop, key) in (currentToolEntry.parameters.properties as Record<string, { type?: string; description?: string }>)"
+              :key="String(key)"
+              :label="String(key)"
+              :requirement="currentToolEntry.parameters.required?.includes(String(key)) ? 'required' : 'optional'"
+              :helptext="prop.description ?? ''"
+            >
+              <goa-input
                 v-if="prop.type === 'number'"
                 type="number"
-                :value="(node.data as ToolNodeData).params[String(key)] ?? ''"
-                @input="updateParam(String(key), Number(($event.target as HTMLInputElement).value))"
-                class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-              />
-              <input
+                :name="String(key)"
+                :value="String((node.data as ToolNodeData).params[String(key)] ?? '')"
+                width="100%"
+                @_change="(e: CustomEvent<{ value: string }>) => updateParam(String(key), Number(e.detail.value))"
+              ></goa-input>
+              <goa-checkbox
                 v-else-if="prop.type === 'boolean'"
-                type="checkbox"
-                :checked="!!(node.data as ToolNodeData).params[String(key)]"
-                @change="updateParam(String(key), ($event.target as HTMLInputElement).checked)"
-              />
-              <input
+                :name="String(key)"
+                :checked="!!(node.data as ToolNodeData).params[String(key)] || undefined"
+                @_change="(e: CustomEvent<{ checked: boolean }>) => updateParam(String(key), e.detail.checked)"
+              ></goa-checkbox>
+              <goa-input
                 v-else
-                type="text"
-                :value="(node.data as ToolNodeData).params[String(key)] ?? ''"
-                @input="updateParam(String(key), ($event.target as HTMLInputElement).value)"
+                :name="String(key)"
+                :value="String((node.data as ToolNodeData).params[String(key)] ?? '')"
                 placeholder="Use ${nodeId} or ${nodeId.path} to reference upstream values"
-                class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-              />
-              <p v-if="prop.description" class="text-xs text-[var(--goa-color-text-secondary)] mt-0.5">{{ prop.description }}</p>
-            </div>
+                width="100%"
+                @_change="(e: CustomEvent<{ value: string }>) => updateParam(String(key), e.detail.value)"
+              ></goa-input>
+            </goa-form-item>
           </div>
         </div>
       </template>
 
       <!-- NOTE -->
       <template v-else>
-        <div>
-          <label class="block text-xs font-medium mb-1">Markdown</label>
-          <textarea
+        <goa-form-item label="Markdown">
+          <goa-textarea
+            name="markdown"
             :value="(node.data as NoteNodeData).markdown"
-            @input="update('markdown', ($event.target as HTMLTextAreaElement).value)"
             rows="8"
-            class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm font-mono focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-          />
-        </div>
+            @_change="(e: CustomEvent<{ value: string }>) => update('markdown', e.detail.value)"
+          ></goa-textarea>
+        </goa-form-item>
       </template>
     </div>
   </aside>

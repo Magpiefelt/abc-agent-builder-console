@@ -46,6 +46,8 @@ const executionDetail = ref<WorkflowExecutionDetail | null>(null)
 const executionDetailLoading = ref(false)
 const executionDetailError = ref<string | null>(null)
 
+const restoreTarget = ref<WorkflowVersionSummary | null>(null)
+
 const isStale = computed(() => historyKey.value !== props.workflowId)
 
 watch(
@@ -59,11 +61,15 @@ watch(
   { immediate: true },
 )
 
-async function onRestore(v: WorkflowVersionSummary): Promise<void> {
+function askRestore(v: WorkflowVersionSummary): void {
   if (currentVersion.value !== null && v.version === currentVersion.value) return
-  if (!window.confirm(`Restore canvas to version ${v.version}? This creates a new version.`)) {
-    return
-  }
+  restoreTarget.value = v
+}
+
+async function confirmRestore(): Promise<void> {
+  const v = restoreTarget.value
+  if (!v) return
+  restoreTarget.value = null
   restoringVersion.value = v.version
   restoreError.value = null
   restoreNotice.value = null
@@ -111,17 +117,17 @@ function formatDuration(ms: number | null | undefined): string {
   return `${m}m ${s}s`
 }
 
-function statusBadgeClass(status: string): string {
+function statusBadgeType(status: string): 'success' | 'important' | 'emergency' | 'midtone' {
   switch (status) {
     case 'completed':
-      return 'bg-[var(--goa-color-success)] text-white'
+      return 'success'
     case 'running':
-      return 'bg-[var(--goa-color-warning)] text-[var(--goa-color-text)]'
+      return 'important'
     case 'error':
     case 'aborted':
-      return 'bg-[var(--goa-color-error)] text-white'
+      return 'emergency'
     default:
-      return 'bg-[var(--goa-color-border)] text-[var(--goa-color-text-secondary)]'
+      return 'midtone'
   }
 }
 
@@ -146,13 +152,12 @@ function stringifyValue(value: unknown): string {
     >
       <header class="px-4 py-3 border-b border-[var(--goa-color-border)] flex items-center gap-3">
         <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] flex-1">History</h3>
-        <button
-          @click="emit('close')"
-          class="text-xs text-[var(--goa-color-text-secondary)] hover:text-[var(--goa-color-text)]"
-          aria-label="Close history panel"
-        >
-          ✕
-        </button>
+        <goa-icon-button
+          icon="close"
+          size="small"
+          ariaLabel="Close history panel"
+          @_click="emit('close')"
+        ></goa-icon-button>
       </header>
 
       <div class="flex border-b border-[var(--goa-color-border)] text-sm" role="tablist">
@@ -184,29 +189,32 @@ function stringifyValue(value: unknown): string {
         </button>
       </div>
 
-      <div
+      <goa-callout
         v-if="historyError"
-        class="px-4 py-2 text-xs bg-[var(--goa-color-error)]/10 text-[var(--goa-color-error)] border-b border-[var(--goa-color-error)]"
-        role="alert"
+        type="emergency"
+        heading="Couldn't load history"
+        class="m-3"
       >
         {{ historyError }}
-      </div>
+      </goa-callout>
 
-      <div
+      <goa-callout
         v-if="restoreError"
-        class="px-4 py-2 text-xs bg-[var(--goa-color-error)]/10 text-[var(--goa-color-error)] border-b border-[var(--goa-color-error)]"
-        role="alert"
+        type="emergency"
+        heading="Restore failed"
+        class="m-3"
       >
         {{ restoreError }}
-      </div>
+      </goa-callout>
 
-      <div
+      <goa-callout
         v-if="restoreNotice"
-        class="px-4 py-2 text-xs bg-[var(--goa-color-success)]/10 text-[var(--goa-color-success)] border-b border-[var(--goa-color-success)]"
-        role="status"
+        type="success"
+        heading="Restored"
+        class="m-3"
       >
         {{ restoreNotice }}
-      </div>
+      </goa-callout>
 
       <div v-if="historyLoading" class="flex-1 flex items-center justify-center text-sm text-[var(--goa-color-text-secondary)]">
         Loading history…
@@ -228,11 +236,11 @@ function stringifyValue(value: unknown): string {
             <div class="flex-1 min-w-0">
               <div class="flex items-center gap-2">
                 <span class="text-sm font-semibold">v{{ v.version }}</span>
-                <span
+                <goa-badge
                   v-if="currentVersion === v.version"
-                  class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-[var(--goa-color-primary)] text-white"
-                  >Current</span
-                >
+                  type="information"
+                  content="Current"
+                ></goa-badge>
               </div>
               <div class="text-xs text-[var(--goa-color-text-secondary)]">
                 {{ formatDate(v.createdAt) }}
@@ -241,10 +249,11 @@ function stringifyValue(value: unknown): string {
                 {{ v.createdByDisplayName || v.createdByEmail || v.createdBy }}
               </div>
             </div>
-            <button
-              :disabled="currentVersion === v.version || restoringVersion !== null"
-              @click="onRestore(v)"
-              class="text-xs py-1 px-2 border border-[var(--goa-color-primary)] text-[var(--goa-color-primary)] rounded hover:bg-[var(--goa-color-primary-light)] disabled:opacity-40 disabled:cursor-not-allowed whitespace-nowrap"
+            <goa-button
+              type="secondary"
+              size="compact"
+              :disabled="currentVersion === v.version || restoringVersion !== null || undefined"
+              @_click="askRestore(v)"
             >
               {{
                 restoringVersion === v.version
@@ -253,7 +262,7 @@ function stringifyValue(value: unknown): string {
                   ? 'Active'
                   : 'Restore'
               }}
-            </button>
+            </goa-button>
           </li>
         </ul>
         <div v-else class="p-6 text-sm text-[var(--goa-color-text-secondary)] text-center">
@@ -281,12 +290,7 @@ function stringifyValue(value: unknown): string {
               @click="onExpandExecution(exec)"
             >
               <div class="flex items-center gap-2">
-                <span
-                  :class="statusBadgeClass(exec.status)"
-                  class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded font-medium"
-                >
-                  {{ exec.status }}
-                </span>
+                <goa-badge :type="statusBadgeType(exec.status)" :content="exec.status"></goa-badge>
                 <span class="text-xs text-[var(--goa-color-text-secondary)]">
                   {{ formatDuration(exec.durationMs) }}
                 </span>
@@ -322,12 +326,7 @@ function stringifyValue(value: unknown): string {
                     class="text-xs"
                   >
                     <div class="flex items-center gap-2">
-                      <span
-                        :class="statusBadgeClass(stage.status)"
-                        class="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded font-medium"
-                      >
-                        {{ stage.status }}
-                      </span>
+                      <goa-badge :type="statusBadgeType(stage.status)" :content="stage.status"></goa-badge>
                       <span class="font-medium">{{ stage.kind }}</span>
                       <span class="text-[var(--goa-color-text-secondary)] truncate">{{ stage.nodeId }}</span>
                       <span v-if="stage.durationMs != null" class="text-[var(--goa-color-text-secondary)]">
@@ -354,6 +353,23 @@ function stringifyValue(value: unknown): string {
           No executions yet. Run the workflow to record one here.
         </div>
       </div>
+
+      <goa-modal
+        v-if="restoreTarget"
+        open
+        heading="Restore this version?"
+        role="alertdialog"
+        @_close="restoreTarget = null"
+      >
+        <p>
+          Restore canvas to version <strong>{{ restoreTarget.version }}</strong>?
+          This creates a new version on top of the current one.
+        </p>
+        <div slot="actions" class="flex justify-end gap-2">
+          <goa-button type="secondary" @_click="restoreTarget = null">Cancel</goa-button>
+          <goa-button type="primary" @_click="confirmRestore">Restore</goa-button>
+        </div>
+      </goa-modal>
     </aside>
   </Transition>
 </template>

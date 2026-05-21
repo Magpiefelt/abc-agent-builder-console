@@ -103,31 +103,31 @@ async function submitContinue(): Promise<void> {
       </div>
 
       <div class="ml-auto flex flex-wrap gap-2">
-        <button
+        <goa-button
           v-if="session.canStop"
-          type="button"
-          @click="handleStop"
-          class="px-3 py-1.5 text-sm font-medium border border-[var(--goa-color-error)] text-[var(--goa-color-error)] rounded-md hover:bg-red-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+          type="secondary"
+          variant="destructive"
+          size="compact"
+          @_click="handleStop"
         >
           Stop
-        </button>
-        <button
+        </goa-button>
+        <goa-button
           v-if="session.canInterject"
-          type="button"
-          @click="interjectOpen = true"
-          class="px-3 py-1.5 text-sm font-medium border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-primary-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+          type="secondary"
+          size="compact"
+          @_click="interjectOpen = true"
         >
           Interject
-        </button>
-        <button
+        </goa-button>
+        <goa-button
           v-if="session.canContinue"
-          type="button"
-          @click="openContinue"
-          :aria-expanded="continueOpen"
-          class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded-md hover:bg-[var(--goa-color-primary-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
+          type="primary"
+          size="compact"
+          @_click="openContinue"
         >
           Continue
-        </button>
+        </goa-button>
       </div>
     </div>
 
@@ -135,41 +135,40 @@ async function submitContinue(): Promise<void> {
       v-if="continueOpen"
       class="px-4 pb-3 border-t border-[var(--goa-color-border)] bg-[var(--goa-color-background)]"
     >
-      <label for="fa-continue-prompt" class="block text-xs font-medium mt-2 mb-1">Continuation prompt</label>
-      <textarea
-        id="fa-continue-prompt"
-        v-model="continuePrompt"
-        rows="3"
-        placeholder="What should the agent do next?"
-        class="w-full p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-      />
+      <goa-form-item label="Continuation prompt" class="mt-2 block">
+        <goa-textarea
+          name="continuePrompt"
+          :value="continuePrompt"
+          rows="3"
+          placeholder="What should the agent do next?"
+          @_change="(e: CustomEvent<{ value: string }>) => (continuePrompt = e.detail.value)"
+        ></goa-textarea>
+      </goa-form-item>
       <div class="flex flex-wrap items-center gap-2 mt-2">
-        <label for="fa-continue-iter" class="text-xs">Add iterations:</label>
-        <input
-          id="fa-continue-iter"
-          v-model.number="continueAdditional"
-          type="number"
-          min="1"
-          max="100"
-          placeholder="optional"
-          class="w-24 p-1 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-        />
+        <goa-form-item label="Add iterations">
+          <goa-input
+            type="number"
+            name="continueAdditional"
+            :value="continueAdditional == null ? '' : String(continueAdditional)"
+            min="1"
+            max="100"
+            placeholder="optional"
+            width="6ch"
+            @_change="(e: CustomEvent<{ value: string }>) => (continueAdditional = e.detail.value === '' ? null : Number(e.detail.value))"
+          ></goa-input>
+        </goa-form-item>
         <div class="ml-auto flex gap-2">
-          <button
-            type="button"
-            @click="continueOpen = false"
-            class="px-3 py-1 text-sm border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-surface)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-          >
+          <goa-button type="secondary" size="compact" @_click="continueOpen = false">
             Cancel
-          </button>
-          <button
-            type="button"
-            @click="submitContinue"
-            :disabled="!continuePrompt.trim()"
-            class="px-3 py-1 text-sm bg-[var(--goa-color-primary)] text-white rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+          </goa-button>
+          <goa-button
+            type="primary"
+            size="compact"
+            :disabled="!continuePrompt.trim() || undefined"
+            @_click="submitContinue"
           >
             Continue Session
-          </button>
+          </goa-button>
         </div>
       </div>
     </div>

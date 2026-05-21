@@ -79,17 +79,14 @@ onBeforeUnmount(stopPolling)
           Auto-refreshes every 30s. Last fetched: {{ lastFetched ? lastFetched.toLocaleTimeString() : 'never' }}
         </p>
       </div>
-      <button
-        @click="load"
-        class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded hover:bg-[var(--goa-color-primary-dark)]"
-      >
+      <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
         Refresh now
-      </button>
+      </goa-button>
     </header>
 
-    <div v-if="error" class="p-3 bg-red-50 border border-[var(--goa-color-error)] text-[var(--goa-color-error)] text-sm rounded">
+    <goa-callout v-if="error" type="emergency" heading="Health check failed">
       {{ error }}
-    </div>
+    </goa-callout>
 
     <div v-if="data" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <!-- Status -->
@@ -156,13 +153,14 @@ onBeforeUnmount(stopPolling)
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Scheduler</dt><dd class="font-mono text-xs">{{ data.retention.enabled ? 'enabled' : 'disabled' }}</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Daily hour</dt><dd class="font-mono text-xs">{{ data.retention.hour }}:00</dd></div>
         </dl>
-        <button
-          @click="runRetention"
-          :disabled="retentionRunning"
-          class="w-full px-3 py-1.5 text-sm font-medium border border-[var(--goa-color-border)] rounded hover:bg-gray-50 disabled:opacity-50"
+        <goa-button
+          type="secondary"
+          size="compact"
+          :disabled="retentionRunning || undefined"
+          @_click="runRetention"
         >
           {{ retentionRunning ? 'Running…' : 'Run retention pass now' }}
-        </button>
+        </goa-button>
         <div v-if="retentionReport" class="mt-3 text-xs bg-gray-50 rounded p-2">
           <div>Affected: <span class="font-mono">{{ retentionReport.totalRowsAffected }}</span> rows in <span class="font-mono">{{ retentionReport.durationMs }}ms</span></div>
           <ul class="mt-1 space-y-0.5">

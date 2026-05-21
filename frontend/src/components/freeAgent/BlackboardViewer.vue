@@ -47,30 +47,25 @@ function toggleCategory(c: string): void {
 <template>
   <div class="flex flex-col gap-3 h-full min-h-0" aria-label="Blackboard viewer">
     <div class="flex flex-col gap-2">
-      <label for="bb-search" class="sr-only">Search blackboard</label>
-      <input
-        id="bb-search"
-        v-model="search"
+      <goa-input
+        name="bb-search"
         type="search"
+        :value="search"
         placeholder="Search blackboard…"
-        class="w-full p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-      />
+        leadingicon="search"
+        width="100%"
+        @_change="(e: CustomEvent<{ value: string }>) => (search = e.detail.value)"
+      ></goa-input>
       <div v-if="categories.length > 0" class="flex flex-wrap gap-1">
-        <button
+        <goa-button
           v-for="c in categories"
           :key="c"
-          type="button"
-          @click="toggleCategory(c)"
-          :aria-pressed="activeCategories.has(c)"
-          :class="[
-            'px-2 py-0.5 rounded-full text-xs font-medium border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]',
-            activeCategories.has(c)
-              ? 'bg-[var(--goa-color-primary)] text-white border-[var(--goa-color-primary)]'
-              : 'bg-[var(--goa-color-surface)] text-[var(--goa-color-text)] border-[var(--goa-color-border)]',
-          ]"
+          :type="activeCategories.has(c) ? 'primary' : 'secondary'"
+          size="compact"
+          @_click="toggleCategory(c)"
         >
           {{ c }}
-        </button>
+        </goa-button>
       </div>
     </div>
 
@@ -92,12 +87,7 @@ function toggleCategory(c: string): void {
         >
           <header class="flex items-center justify-between gap-2 mb-1">
             <h5 class="text-sm font-medium text-[var(--goa-color-text)]">{{ e.title }}</h5>
-            <span
-              class="text-xs px-1.5 py-0.5 rounded bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]"
-              :aria-label="`Iteration ${e.iteration}`"
-            >
-              #{{ e.iteration }}
-            </span>
+            <goa-badge type="information" :content="`#${e.iteration}`"></goa-badge>
           </header>
           <div class="text-sm prose prose-sm max-w-none" v-html="renderMarkdown(e.content)" />
         </article>

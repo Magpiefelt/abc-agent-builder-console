@@ -102,18 +102,18 @@ function toggle(nodeId: string): void {
   expanded.value = next
 }
 
-function statusBadgeClass(s: StageStatus): string {
+function statusBadgeType(s: StageStatus): 'information' | 'success' | 'midtone' | 'emergency' {
   switch (s) {
     case 'running':
-      return 'bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]'
+      return 'information'
     case 'completed':
-      return 'bg-green-100 text-[var(--goa-color-success)]'
+      return 'success'
     case 'skipped':
-      return 'bg-gray-100 text-[var(--goa-color-text-secondary)]'
+      return 'midtone'
     case 'error':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'emergency'
     default:
-      return 'bg-gray-50 text-[var(--goa-color-text-secondary)]'
+      return 'midtone'
   }
 }
 
@@ -173,13 +173,12 @@ defineExpose({ rows, counts })
       <span class="text-xs text-[var(--goa-color-text-secondary)]" aria-label="Total duration">
         {{ durationLabel(totalDuration) }}
       </span>
-      <span
+      <goa-badge
         v-if="execution.piiBlockedTotal > 0"
-        class="text-xs px-2 py-0.5 rounded bg-yellow-100 text-[var(--goa-color-warning)] font-medium"
+        type="important"
+        :content="`${execution.piiBlockedTotal} PII blocked`"
         :title="`${execution.piiBlockedTotal} PII pattern match${execution.piiBlockedTotal === 1 ? '' : 'es'} blocked before LLM call`"
-      >
-        ⚠ {{ execution.piiBlockedTotal }} PII blocked
-      </span>
+      ></goa-badge>
       <span
         v-if="execution.error"
         class="text-xs text-[var(--goa-color-error)] flex-1 truncate"
@@ -188,15 +187,14 @@ defineExpose({ rows, counts })
         {{ execution.error }}
       </span>
       <div class="flex-1" />
-      <button
-        type="button"
-        @click="store.clearExecution"
-        :disabled="execution.status === 'running'"
-        class="text-xs px-2 py-1 rounded border border-[var(--goa-color-border)] text-[var(--goa-color-text-secondary)] hover:bg-[var(--goa-color-background)] disabled:opacity-40 disabled:cursor-not-allowed"
-        aria-label="Clear execution results"
+      <goa-button
+        type="tertiary"
+        size="compact"
+        :disabled="execution.status === 'running' || undefined"
+        @_click="store.clearExecution"
       >
         Clear
-      </button>
+      </goa-button>
     </header>
 
     <div class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
@@ -231,18 +229,16 @@ defineExpose({ rows, counts })
           <span class="text-sm font-medium text-[var(--goa-color-text)] truncate flex-1">
             {{ row.label }}
           </span>
-          <span
-            :class="['px-2 py-0.5 rounded text-xs font-medium shrink-0', statusBadgeClass(row.state.status)]"
-          >
-            {{ row.state.status }}
-          </span>
-          <span
+          <goa-badge
+            :type="statusBadgeType(row.state.status)"
+            :content="row.state.status"
+          ></goa-badge>
+          <goa-badge
             v-if="row.state.piiBlockedCount"
-            class="text-xs px-1.5 py-0.5 rounded bg-yellow-100 text-[var(--goa-color-warning)] shrink-0"
+            type="important"
+            content="PII"
             :title="`${row.state.piiBlockedCount} PII match${row.state.piiBlockedCount === 1 ? '' : 'es'} blocked`"
-          >
-            ⚠
-          </span>
+          ></goa-badge>
           <span
             v-if="row.state.tokens"
             class="text-xs text-[var(--goa-color-text-secondary)] shrink-0"

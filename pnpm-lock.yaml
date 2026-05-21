@@ -132,6 +132,12 @@ importers:
 
   frontend:
     dependencies:
+      '@abgov/design-tokens':
+        specifier: ^2.8.1
+        version: 2.8.1
+      '@abgov/web-components':
+        specifier: ^2.2.0
+        version: 2.2.0
       '@vue-flow/background':
         specifier: ^1.3.2
         version: 1.3.2(@vue-flow/core@1.48.2(vue@3.5.34(typescript@6.0.3)))(vue@3.5.34(typescript@6.0.3))
@@ -210,6 +216,12 @@ importers:
         version: 3.3.1(typescript@6.0.3)
 
 packages:
+
+  '@abgov/design-tokens@2.8.1':
+    resolution: {integrity: sha512-1jwOMlI23OJmSGkai4CUqxgqfeJqE6FQwRUy7cCiRUijEu0SlopKdGURgngx9Uja3dCL+AX5Nz3wtMEk9VpFKg==}
+
+  '@abgov/web-components@2.2.0':
+    resolution: {integrity: sha512-S3OQKDdEl9MHuXAXnV/6jFOUHBs3PX6KQmAVD4oecKYZxxoivQ4YeiHmMJUaBgEMAd6QVYPeMzkXgR9z3LQ73w==}
 
   '@ampproject/remapping@2.3.0':
     resolution: {integrity: sha512-30iZtAPgz+LTIYoeivqYo853f02jBYSd5uGnGpkFV0M3xOt9aN73erkgYAmZU43x4VfqcnLxW9Kpg3R5LC4YYw==}
@@ -3808,6 +3820,10 @@ packages:
     resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
 
 snapshots:
+
+  '@abgov/design-tokens@2.8.1': {}
+
+  '@abgov/web-components@2.2.0': {}
 
   '@ampproject/remapping@2.3.0':
     dependencies:

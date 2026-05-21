@@ -2,29 +2,35 @@
 @import "@vue-flow/core/dist/style.css";
 @import "@vue-flow/core/dist/theme-default.css";
 
-/* Alberta Design System - Base Tokens */
+/*
+ * Local aliases for the canonical GoA design tokens (loaded ahead of this
+ * file in src/main.ts via `@abgov/design-tokens/dist/tokens.css`).
+ *
+ * Components reference these short, app-scoped names in Tailwind arbitrary
+ * values (e.g. `bg-[var(--goa-color-primary)]`). The values resolve to the
+ * official GoA token palette so the rendered colours match the design system.
+ */
 :root {
-  --goa-color-primary: #0070C4;
-  --goa-color-primary-dark: #004F84;
-  --goa-color-primary-light: #DEEAF7;
-  --goa-color-text: #333333;
-  --goa-color-text-secondary: #666666;
-  --goa-color-border: #DCDCDC;
-  --goa-color-background: #F1F1F1;
-  --goa-color-surface: #FFFFFF;
-  --goa-color-success: #2E8540;
-  --goa-color-warning: #FCBA19;
-  --goa-color-error: #D8292F;
-  --goa-color-info: #0070C4;
-  --goa-font-family: 'acumin-pro-semi-condensed', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --goa-color-primary: var(--goa-color-interactive-default);
+  --goa-color-primary-dark: var(--goa-color-interactive-hover);
+  --goa-color-primary-light: var(--goa-color-info-light);
+  --goa-color-text: var(--goa-color-text-default);
+  --goa-color-text-secondary: var(--goa-color-greyscale-700);
+  --goa-color-border: var(--goa-color-greyscale-200);
+  --goa-color-background: var(--goa-color-surface-50);
+  --goa-color-surface: var(--goa-color-greyscale-white);
+  --goa-color-success: var(--goa-color-success-default);
+  --goa-color-warning: var(--goa-color-important-default);
+  --goa-color-error: var(--goa-color-emergency-default);
+  --goa-color-info: var(--goa-color-info-default);
 }
 
 body {
-  font-family: var(--goa-font-family);
+  font-family: var(--goa-font-family-sans);
   font-size: 18px;
   line-height: 1.6;
-  color: var(--goa-color-text);
-  background-color: var(--goa-color-background);
+  color: var(--goa-color-text-default);
+  background-color: var(--goa-color-surface-50);
   margin: 0;
 }
 
@@ -39,14 +45,14 @@ body {
    we explicitly render sanitized HTML from `marked + DOMPurify`. */
 .prose {
   font-size: 0.9rem;
-  color: var(--goa-color-text);
+  color: var(--goa-color-text-default);
 }
 .prose h1,
 .prose h2,
 .prose h3,
 .prose h4 {
   font-weight: 600;
-  color: var(--goa-color-primary-dark);
+  color: var(--goa-color-brand-dark);
   margin-top: 0.75rem;
   margin-bottom: 0.35rem;
   line-height: 1.3;
@@ -62,14 +68,14 @@ body {
 .prose ul { list-style: disc; }
 .prose ol { list-style: decimal; }
 .prose code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--goa-font-family-number);
   font-size: 0.85em;
-  background-color: var(--goa-color-background);
+  background-color: var(--goa-color-surface-50);
   padding: 0.05em 0.3em;
   border-radius: 3px;
 }
 .prose pre {
-  background-color: var(--goa-color-background);
+  background-color: var(--goa-color-surface-50);
   padding: 0.6rem 0.8rem;
   border-radius: 4px;
   overflow-x: auto;
@@ -77,18 +83,18 @@ body {
 }
 .prose pre code { background: transparent; padding: 0; }
 .prose blockquote {
-  border-left: 3px solid var(--goa-color-primary-light);
+  border-left: 3px solid var(--goa-color-info-light);
   padding-left: 0.75rem;
-  color: var(--goa-color-text-secondary);
+  color: var(--goa-color-greyscale-700);
   margin: 0.5rem 0;
 }
 .prose a {
-  color: var(--goa-color-primary);
+  color: var(--goa-color-interactive-default);
   text-decoration: underline;
 }
 .prose hr {
   border: none;
-  border-top: 1px solid var(--goa-color-border);
+  border-top: 1px solid var(--goa-color-greyscale-200);
   margin: 0.8rem 0;
 }
 .prose table {
@@ -98,21 +104,21 @@ body {
 }
 .prose th,
 .prose td {
-  border: 1px solid var(--goa-color-border);
+  border: 1px solid var(--goa-color-greyscale-200);
   padding: 0.35rem 0.5rem;
   text-align: left;
 }
 .prose th {
-  background-color: var(--goa-color-background);
+  background-color: var(--goa-color-surface-50);
   font-weight: 600;
 }
 
 /* Vue Flow minimap default background is too dark for Alberta palette. */
 .vue-flow__minimap {
-  background-color: var(--goa-color-surface);
-  border: 1px solid var(--goa-color-border);
+  background-color: var(--goa-color-greyscale-white);
+  border: 1px solid var(--goa-color-greyscale-200);
   border-radius: 4px;
 }
 .vue-flow__minimap-mask {
-  fill: rgba(0, 112, 196, 0.08);
+  fill: rgba(0, 109, 204, 0.08);
 }
