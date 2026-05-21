@@ -1,7 +1,7 @@
 {
   "name": "03 — PII blocking on prompt",
   "description": "User submits a prompt containing a Social Insurance Number; the route must reject the request with HTTP 422 and the orchestrator must never run. An audit row of type pii.blocked.prompt is also recorded server-side.",
-  "prompt": "Please research the population of Edmonton; my SIN for verification is 123-456-789.",
+  "prompt": "Please research the population of Edmonton; my SIN for verification is 046-454-286.",
   "modelId": "mock-llm",
   "classification": "unclassified",
   "llmResponses": [],

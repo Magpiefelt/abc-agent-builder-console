@@ -465,8 +465,9 @@ export async function storeArtifact(
     );
   }
 
-  // Workflow executions route to workflow_execution_id; free-agent sessions
-  // route to session_id. A context can carry one or the other (never both).
+  // An artifact belongs to either a workflow execution (Stream C) or a
+  // free-agent session (default). The artifacts table CHECK constraint
+  // requires exactly one. A context can carry one or the other (never both).
   const isWorkflow = !!context.workflowExecutionId;
 
   let id: string | null = null;

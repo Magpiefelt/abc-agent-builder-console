@@ -1,0 +1,119 @@
+# Nexus deployment manifest for the ABC Agent Builder Console.
+# Stream F owns this file. See docs/operations/deployment_nexus.md for the runbook.
+
+apiVersion: nexus.goa.alberta.ca/v1
+kind: Application
+metadata:
+  name: abc-agent-builder-console
+  owner: cohen.mcleod@gov.ab.ca
+  ministry: INFRA
+  classification: protected_b  # The app HANDLES up to Protected B
+  description: >
+    Greenfield rebuild of the Agent Builder Console — an agentic workflow
+    canvas for GoA staff. Server-side orchestration, Entra ID SSO,
+    classification-aware LLM routing.
+
+spec:
+  components:
+    - name: frontend
+      type: static-site
+      port: 5173
+      artifact: frontend-dist.tar.gz
+      buildCommand: pnpm -C frontend build
+      serveDir: dist
+      healthCheck:
+        path: /
+        expectedStatus: 200
+
+    - name: backend
+      type: node-service
+      port: 3000
+      artifact: backend-dist.tar.gz
+      runtime: node22
+      startCommand: node dist/index.js
+      healthCheck:
+        # Public minimal health endpoint — must return 200 for the LB to mark up.
+        # /api/health/detailed requires admin auth and is NOT used as a probe.
+        path: /api/health
+        expectedStatus: 200
+        intervalSeconds: 15
+        timeoutSeconds: 5
+
+  sso:
+    provider: entra-id
+    # TODO: register these redirect URIs in the Entra ID app once Stream A lands.
+    # See docs/operations/deployment_nexus.md § "SSO callback registration steps".
+    redirectUris:
+      - https://abc-agent-builder.gov.ab.ca/api/auth/callback
+      - https://abc-agent-builder.staging.gov.ab.ca/api/auth/callback
+    requiredClaims:
+      - oid
+      - email
+      - name
+      - groups
+    groupClaimSource: security_groups  # drives ministry extraction
+
+  environment:
+    # Values come from Nexus secret store — do NOT embed plaintext here.
+    secrets:
+      - name: DATABASE_URL
+        description: Postgres connection string with sslmode=require
+      - name: SECRETS_VAULT_KEY
+        description: pgcrypto symmetric key, 32-byte minimum (see key_rotation.md)
+      - name: SESSION_SECRET
+        description: random 64-byte session signing key
+      - name: ENTRA_CLIENT_ID
+      - name: ENTRA_CLIENT_SECRET
+      - name: ENTRA_TENANT_ID
+      - name: ENTRA_REDIRECT_URI
+      - name: VERTEX_AI_API_KEY
+      - name: VERTEX_AI_PROJECT_ID
+      - name: ANTHROPIC_API_KEY
+        optional: true
+      - name: GOOGLE_AI_API_KEY
+        optional: true
+      - name: BRAVE_SEARCH_API_KEY
+        optional: true
+      - name: GOOGLE_SEARCH_API_KEY
+        optional: true
+      - name: GOOGLE_SEARCH_CX
+        optional: true
+      - name: ELEVENLABS_API_KEY
+        optional: true
+      - name: GITHUB_TOKEN
+        optional: true
+
+    config:
+      NODE_ENV: production
+      VERTEX_AI_REGION: northamerica-northeast1
+      FRONTEND_URL: https://abc-agent-builder.gov.ab.ca
+      RETENTION_JOB_ENABLED: 'true'
+      RETENTION_JOB_HOUR: '2'
+      MAX_ITERATIONS_LIMIT: '100'
+      LLM_TIMEOUT_MS: '120000'
+      TOOL_TIMEOUT_MS: '30000'
+      MAX_CONCURRENT_SESSIONS: '3'
+
+  database:
+    # Stream F adds pgcrypto + user_secrets + retention_policy tables.
+    # Migration is idempotent. See docs/02_database_migrations.sql.
+    type: postgresql
+    schema: cohen_mcleod
+    migrationScript: docs/02_database_migrations.sql
+    extensions:
+      - pgcrypto
+
+  observability:
+    logs:
+      stream: stdout  # captured by Nexus platform logging
+    metrics:
+      endpoint: /api/health/detailed
+      requiresAuth: true
+      pollIntervalSeconds: 30
+
+  compliance:
+    threatModel: docs/security/threat_model_stride.md
+    dataFlowDiagram: docs/security/data_flow_diagram.md
+    controlsMatrix: docs/security/controls_matrix.md
+    privacyImpactAssessment: docs/privacy/pia.md
+    retentionSchedule: docs/privacy/retention_schedule.md

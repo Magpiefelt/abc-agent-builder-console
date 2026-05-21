@@ -23,9 +23,12 @@ import { validateConnectionAllowlist, closeDatabaseToolPools } from "./tools/dat
 import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
+import adminRoutes from "./routes/admin.js";
 import workflowRoutes from "./routes/workflow.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
+import { logVaultFingerprint } from "./services/secretsVault.js";
+import { startRetentionScheduler, stopRetentionScheduler } from "./services/retentionJob.js";
 
 // ============================================================================
 // PROCESS MONITOR (must be first — catches unhandled errors)
@@ -33,11 +36,13 @@ import userRoutes from "./routes/users.js";
 
 installProcessMonitor(async () => {
   // Graceful shutdown order:
-  //   1. Drain the SQL tool pools (per-connection allowlist entries). Any
+  //   1. Stop the retention scheduler so no pass starts mid-shutdown.
+  //   2. Drain the SQL tool pools (per-connection allowlist entries). Any
   //      in-flight tool call dies cleanly; the dispatcher returns the error
   //      to the agent.
-  //   2. Close the host pool LAST so audit/logger writes from step 1 still
+  //   3. Close the host pool LAST so audit/logger writes from step 2 still
   //      have a working backend.
+  stopRetentionScheduler();
   await closeDatabaseToolPools();
   await closePool();
 });
@@ -49,6 +54,13 @@ installProcessMonitor(async () => {
 validateConnectionAllowlist();
 validateEmailAllowlist();
 registerAllTools();
+
+// ============================================================================
+// COMPLIANCE INITIALIZATION (Stream F)
+// ============================================================================
+
+logVaultFingerprint();
+startRetentionScheduler();
 
 // ============================================================================
 // EXPRESS APP
@@ -127,9 +139,8 @@ if (process.env.MOCK_LLM === "1") {
   logger.warn("Test routes mounted at /api/test (MOCK_LLM=1).");
 }
 
-app.use("/api/admin", (_req, res) => {
-  res.json({ message: "Admin routes - Phase 6" });
-});
+// Admin routes (authenticate + requireRole('admin') + auditAdminAccess applied inside the router)
+app.use("/api/admin", adminRoutes);
 
 // ============================================================================
 // ERROR HANDLING

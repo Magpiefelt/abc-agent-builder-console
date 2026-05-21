@@ -51,7 +51,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
   await truncateAll();
-  await seedUser({ id: "dev-user-001" });
+  // No id arg: dbHelpers.seedUser defaults to the DEV_USER UUID,
+  // matching what authenticate() injects on req.user.
+  await seedUser();
   await seedMockModel();
   clearMockResponses();
 });
@@ -139,7 +141,7 @@ describe("POST /api/agent/sessions", () => {
 
   it("rejects PII (SIN) with 422 + detection details", async () => {
     const res = await plainPost("/api/agent/sessions", {
-      prompt: "research alberta — my SIN is 123-456-789",
+      prompt: "research alberta — my SIN is 046-454-286",
       modelId: "mock-llm",
     });
     expect(res.status).toBe(422);

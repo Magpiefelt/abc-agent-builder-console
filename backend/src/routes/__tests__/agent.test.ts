@@ -93,7 +93,7 @@ describe("POST /api/agent/sessions", () => {
   it("rejects a prompt containing a blocked PII pattern (SIN) with 422", async () => {
     const res = await request(makeApp())
       .post("/api/agent/sessions")
-      .send({ prompt: "research Edmonton; my SIN is 123-456-789" });
+      .send({ prompt: "research Edmonton; my SIN is 046-454-286" });
     expect(res.status).toBe(422);
     expect(res.body.detections).toBeDefined();
     expect(res.body.detections.length).toBeGreaterThan(0);
@@ -165,7 +165,7 @@ describe("POST /api/agent/sessions/:id/interject", () => {
     isSessionRunningMock.mockReturnValueOnce(true);
     const res = await request(makeApp())
       .post("/api/agent/sessions/12345/interject")
-      .send({ message: "Also include my SIN 123-456-789." });
+      .send({ message: "Also include my SIN 046-454-286." });
     expect(res.status).toBe(422);
   });
 
@@ -335,7 +335,7 @@ describe("POST /api/agent/sessions/:id/continue", () => {
     });
     const res = await request(makeApp())
       .post("/api/agent/sessions/sess-1/continue")
-      .send({ prompt: "consider my SIN: 123-456-789" });
+      .send({ prompt: "consider my SIN: 046-454-286" });
     expect(res.status).toBe(422);
   });
 });

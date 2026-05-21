@@ -60,7 +60,7 @@ router.post("/sessions", async (req: Request, res: Response) => {
   }
 
   // PII scan on the user prompt
-  const piiScan = scanForPII(prompt);
+  const piiScan = scanForPII(prompt, { userId: req.user!.id });
   if (piiScan.blockedCount > 0) {
     logAudit({
       userId: req.user!.id,
@@ -229,7 +229,7 @@ router.post("/sessions/:id/continue", async (req: Request, res: Response) => {
   }
 
   // PII scan
-  const piiScan = scanForPII(prompt);
+  const piiScan = scanForPII(prompt, { userId: req.user!.id, sessionId: id });
   if (piiScan.blockedCount > 0) {
     res.status(422).json({
       error: "Continuation prompt contains blocked content.",
@@ -279,7 +279,7 @@ router.post("/sessions/:id/interject", async (req: Request, res: Response) => {
     return;
   }
 
-  const piiScan = scanForPII(message);
+  const piiScan = scanForPII(message, { userId: req.user!.id, sessionId: id });
   if (piiScan.blockedCount > 0) {
     res.status(422).json({ error: "Interjection contains blocked content." });
     return;
