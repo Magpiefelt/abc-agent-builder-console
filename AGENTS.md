@@ -37,7 +37,7 @@ Phase 1 deliverables:
 Phase 2 deliverables (2026-05-21):
 - `backend/src/services/llmProvider.ts` — LLM Provider Factory (Vertex AI Claude + Google Gemini)
 - `backend/src/services/promptBuilder.ts` — Dynamic system prompt builder from template + runtime state
-- `backend/src/services/loopDetector.ts` — 4-level loop detection algorithm
+- `backend/src/services/loopDetector.ts` — 5-level loop detection algorithm
 - `backend/src/services/toolDispatcher.ts` — Central tool routing (memory tools + edge tool stubs)
 - `backend/src/services/agentOrchestrator.ts` — Core server-side iteration loop with SSE streaming
 - `backend/src/data/systemPromptTemplate.json` — Configurable prompt template sections

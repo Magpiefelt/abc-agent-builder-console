@@ -392,24 +392,9 @@ async function handleEdgeTool(
     }
   }
 
-  // Built-in: get_time (always available without Phase 3)
-  if (toolCall.tool === "get_time") {
-    const timezone = (toolCall.params.timezone as string) || "America/Edmonton";
-    try {
-      const now = new Date();
-      const formatted = now.toLocaleString("en-CA", { timeZone: timezone });
-      return {
-        tool: toolCall.tool,
-        success: true,
-        result: { time: formatted, timezone, iso: now.toISOString() },
-        durationMs: Date.now() - startTime,
-      };
-    } catch {
-      return failResultSimple(toolCall.tool, `Invalid timezone: "${timezone}"`, startTime);
-    }
-  }
-
-  // No handler registered
+  // No handler registered. `tools/register.ts` is imported from index.ts
+  // before any session runs, so every name in `KNOWN_EDGE_TOOLS` should have
+  // a handler. A miss here indicates a registration regression worth surfacing.
   return {
     tool: toolCall.tool,
     success: false,
@@ -427,10 +412,6 @@ function failResult(tool: string, error: string, startTime: number): { result: T
   return {
     result: { tool, success: false, result: null, error, durationMs: Date.now() - startTime },
   };
-}
-
-function failResultSimple(tool: string, error: string, startTime: number): ToolResult {
-  return { tool, success: false, result: null, error, durationMs: Date.now() - startTime };
 }
 
 async function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {

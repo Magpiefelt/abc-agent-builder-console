@@ -105,4 +105,32 @@ describe("readGithubFile", () => {
     expect(result.success).toBe(false);
     expect(result.error).toMatch(/too large/i);
   });
+
+  it("preserves slashes in nested paths so GitHub treats them as directory separators", async () => {
+    // The previous implementation called encodeURIComponent on the whole path,
+    // which turns "src/services/auth.ts" into "src%2Fservices%2Fauth.ts" — and
+    // GitHub's contents API treats the result as a single literal filename and
+    // 404s. Each segment must be encoded individually so reserved characters
+    // are still escaped but slashes stay as path separators.
+    const fetchMock = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({
+          type: "file",
+          encoding: "base64",
+          content: Buffer.from("hello").toString("base64"),
+          size: 5,
+        }),
+        { status: 200, headers: { "content-type": "application/json" } }
+      )
+    );
+    await readGithubFile({ owner: "a", repo: "b", path: "src/services/auth ts.ts" });
+
+    const url = fetchMock.mock.calls[0][0] as string;
+    // Slashes preserved.
+    expect(url).toContain("/contents/src/services/");
+    // Spaces (and other reserved chars) within a segment must still be escaped.
+    expect(url).toContain("auth%20ts.ts");
+    // The legacy bug would produce %2F encodings.
+    expect(url).not.toContain("%2F");
+  });
 });

@@ -92,18 +92,26 @@ setInterval(() => {
 // ============================================================================
 
 /**
+ * Normalize a path so per-resource IDs collapse into the static endpoint shape.
+ * `/sessions/12345678-1234-1234-1234-123456789012/start` → `/sessions/start`
+ *
+ * Exported so the rate-limit storeKey uses the same normalized form as the
+ * bucket lookup — otherwise per-UUID storeKeys let a caller bypass the limit
+ * by creating a new session per request.
+ */
+function normalizePath(path: string): string {
+  return path
+    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
+    .replace(/\/\d+/g, "")
+    .replace(/\/\//g, "/");
+}
+
+/**
  * Resolve the rate-limit bucket for a given request.
  * Matches against METHOD:path patterns, normalizing dynamic :id segments.
  */
 function resolveBucket(method: string, path: string): RateLimitBucket {
-  // Normalize path: replace UUIDs/IDs with a generic segment
-  // /sessions/abc-123-def/start → /sessions/start
-  const normalizedPath = path
-    .replace(/\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "")
-    .replace(/\/\d+/g, "")
-    .replace(/\/\//g, "/");
-
-  const key = `${method.toUpperCase()}:${normalizedPath}`;
+  const key = `${method.toUpperCase()}:${normalizePath(path)}`;
 
   // Try exact match first
   if (ENDPOINT_LIMITS[key]) {
@@ -147,8 +155,13 @@ export function agentRateLimit(req: Request, res: Response, next: NextFunction):
   }
 
   const ip = getClientIP(req);
+  const normalized = normalizePath(req.path);
   const bucket = resolveBucket(req.method, req.path);
-  const storeKey = `agent:${ip}:${req.method}:${req.path}`;
+  // Use the normalized path in the storeKey so per-resource IDs (session UUIDs,
+  // workflow IDs) all share the same bucket. Without this a client could hit
+  // POST /sessions/<uuid-A>/start 5 times, create uuid-B, hit it 5 more times,
+  // and never trip the configured "5 per minute" limit.
+  const storeKey = `agent:${ip}:${req.method}:${normalized}`;
 
   const now = Date.now();
   let entry = store.get(storeKey);

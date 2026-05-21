@@ -185,6 +185,12 @@ export class LoopDetector {
 
   /**
    * Run all detection levels and return the highest-severity result.
+   *
+   * Per-level detectors are pure analyses — they only return a `detected`
+   * flag and description. Intervention text (which has the side effect of
+   * advancing `interventionCount`) is materialized once, on the chosen
+   * best result. This prevents simultaneous multi-level detection from
+   * inflating the intervention counter and triggering a premature force-stop.
    */
   detect(): LoopDetectionResult {
     if (this.history.length < this.config.minIterations) {
@@ -211,6 +217,10 @@ export class LoopDetector {
       const best = detected[0];
       this.metrics.detectionsTriggered++;
       this.metrics.levelCounts[best.level] = (this.metrics.levelCounts[best.level] || 0) + 1;
+
+      // Materialize the intervention text exactly once — this is the only
+      // place that advances `interventionCount`.
+      best.intervention = this.getIntervention(best.level);
 
       // Check if we should force stop
       if (this.interventionCount >= this.config.maxInterventionsBeforeStop) {
@@ -246,7 +256,7 @@ export class LoopDetector {
       detected,
       level: 1,
       description: `Exact response repeated ${maxRepeat} times in the last ${window.length} iterations.`,
-      intervention: detected ? this.getIntervention(1) : "",
+      intervention: "",
       confidence,
       shouldForceStop: false,
     };
@@ -277,7 +287,7 @@ export class LoopDetector {
       detected,
       level: 2,
       description: `Tool "${toolName}" called with same parameters ${maxRepeat} times.`,
-      intervention: detected ? this.getIntervention(2) : "",
+      intervention: "",
       confidence,
       shouldForceStop: false,
     };
@@ -316,7 +326,7 @@ export class LoopDetector {
       detected,
       level: 3,
       description: `Tool sequence pattern "${repeatedNgram?.[0] || "?"}" repeated ${maxRepeat} times.`,
-      intervention: detected ? this.getIntervention(3) : "",
+      intervention: "",
       confidence,
       shouldForceStop: false,
     };
@@ -348,7 +358,7 @@ export class LoopDetector {
       detected,
       level: 4,
       description: `Agent reasoning is ${(maxSimilarity * 100).toFixed(0)}% similar across ${highSimilarityCount + 1} consecutive iterations.`,
-      intervention: detected ? this.getIntervention(4) : "",
+      intervention: "",
       confidence,
       shouldForceStop: false,
     };
@@ -371,7 +381,7 @@ export class LoopDetector {
       detected,
       level: 5,
       description: `No new blackboard entries in the last ${this.config.progressStallThreshold} iterations.`,
-      intervention: detected ? this.getIntervention(5) : "",
+      intervention: "",
       confidence,
       shouldForceStop: false,
     };
