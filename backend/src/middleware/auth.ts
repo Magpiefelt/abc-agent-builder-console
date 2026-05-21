@@ -16,6 +16,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import { env } from "../config/env.js";
+import { logger } from "../services/logger.js";
 import { logAudit, AuditAction } from "../services/auditLogger.js";
 import {
   COOKIE_SESSION,
@@ -71,13 +72,33 @@ function getIp(req: Request): string {
 
 export async function authenticate(req: Request, res: Response, next: NextFunction): Promise<void> {
   const ipAddress = getIp(req);
-  const sessionCookie = (req as Request & { cookies?: Record<string, string> }).cookies?.[COOKIE_SESSION];
+  const sessionCookie: string | undefined = req.cookies?.[COOKIE_SESSION];
   const bearer = req.headers.authorization?.match(/^Bearer (.+)$/i)?.[1];
 
   // 1. Session cookie wins. Failure here is terminal — do NOT fall through.
   if (sessionCookie) {
+    // 1a. Authentication-level check: signature + expiry (no DB needed).
+    let payload;
     try {
-      const payload = await verifySessionToken(sessionCookie);
+      payload = await verifySessionToken(sessionCookie);
+    } catch (err) {
+      const expired = err instanceof SessionExpiredError;
+      const reason = expired
+        ? "expired"
+        : err instanceof InvalidSignatureError
+          ? "invalid_signature"
+          : "unknown";
+      await logAudit({
+        action: AuditAction.AUTH_FAILED,
+        details: { reason, source: "cookie" },
+        ipAddress,
+      });
+      res.status(401).json({ error: expired ? "SESSION_EXPIRED" : "SESSION_INVALID" });
+      return;
+    }
+
+    // 1b. Resolve the user from DB. DB failures are infrastructure-level → 503.
+    try {
       const user = await loadUserById(payload.userId);
       if (!user) {
         await logAudit({
@@ -92,28 +113,17 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
       next();
       return;
     } catch (err) {
-      const reason = err instanceof SessionExpiredError
-        ? "expired"
-        : err instanceof InvalidSignatureError
-          ? "invalid_signature"
-          : "unknown";
-      await logAudit({
-        action: AuditAction.AUTH_FAILED,
-        details: { reason, source: "cookie" },
-        ipAddress,
-      });
-      res.status(401).json({ error: reason === "expired" ? "SESSION_EXPIRED" : "SESSION_INVALID" });
+      logger.error("Session user lookup failed", err as Error, { userId: payload.userId });
+      res.status(503).json({ error: "USER_LOOKUP_FAILED" });
       return;
     }
   }
 
   // 2. Bearer token (e.g. service-to-service or programmatic clients).
   if (bearer) {
+    let claims;
     try {
-      const claims = await verifyEntraToken(bearer);
-      req.user = await upsertUser(claims);
-      next();
-      return;
+      claims = await verifyEntraToken(bearer);
     } catch (err) {
       await logAudit({
         action: AuditAction.AUTH_FAILED,
@@ -121,6 +131,15 @@ export async function authenticate(req: Request, res: Response, next: NextFuncti
         ipAddress,
       });
       res.status(401).json({ error: "INVALID_TOKEN" });
+      return;
+    }
+    try {
+      req.user = await upsertUser(claims);
+      next();
+      return;
+    } catch (err) {
+      logger.error("Bearer user upsert failed", err as Error);
+      res.status(503).json({ error: "USER_UPSERT_FAILED" });
       return;
     }
   }

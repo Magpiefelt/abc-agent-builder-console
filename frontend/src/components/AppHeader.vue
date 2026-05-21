@@ -44,14 +44,14 @@ async function handleLogout(): Promise<void> {
       <span
         v-if="auth.user.ministryCode"
         class="hidden sm:inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase tracking-wide rounded bg-white/20"
-        :title="`Ministry: ${auth.user.ministryCode}`"
+        :aria-label="`Ministry: ${auth.user.ministryCode}`"
       >
         {{ auth.user.ministryCode }}
       </span>
       <RouterLink
         :to="{ name: 'profile' }"
-        class="flex items-center gap-2 hover:opacity-90"
-        :title="`Open profile (${auth.user.displayName})`"
+        class="flex items-center gap-2 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded"
+        :aria-label="`Open profile for ${auth.user.displayName}`"
       >
         <span class="text-sm opacity-90 hidden sm:inline">{{ auth.user.displayName }}</span>
         <div
@@ -63,7 +63,8 @@ async function handleLogout(): Promise<void> {
       </RouterLink>
       <button
         type="button"
-        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors"
+        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+        aria-label="Sign out of the Agent Builder Console"
         @click="handleLogout"
       >
         Sign out
@@ -72,7 +73,7 @@ async function handleLogout(): Promise<void> {
     <div v-else class="flex items-center gap-3">
       <RouterLink
         :to="{ name: 'login' }"
-        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors"
+        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
       >
         Sign in
       </RouterLink>

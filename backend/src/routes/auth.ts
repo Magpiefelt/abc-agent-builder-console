@@ -19,6 +19,7 @@ import {
   SESSION_TTL_MS,
   buildAuthorizeUrl,
   exchangeCodeForToken,
+  safeReturnTo,
   signOAuthState,
   signSessionToken,
   upsertUser,
@@ -33,13 +34,6 @@ function base64url(buf: Buffer): string {
   return buf.toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
 }
 
-function safeReturnTo(returnTo: unknown): string {
-  if (typeof returnTo !== "string") return "/";
-  // Only accept relative same-origin paths to prevent open-redirect.
-  if (returnTo.startsWith("/") && !returnTo.startsWith("//")) return returnTo;
-  return "/";
-}
-
 function getRedirectUri(): string {
   if (env.ENTRA_REDIRECT_URI) return env.ENTRA_REDIRECT_URI;
   // Sensible default for development.
@@ -48,6 +42,12 @@ function getRedirectUri(): string {
 
 function cookieSecure(): boolean {
   return env.NODE_ENV === "production";
+}
+
+function frontendBase(): string {
+  // Strip any trailing slash so `frontendBase() + "/path"` never produces a
+  // protocol-relative `//path` redirect.
+  return env.FRONTEND_URL.replace(/\/+$/, "");
 }
 
 // ============================================================================
@@ -83,10 +83,9 @@ router.get("/login", async (req: Request, res: Response) => {
 // ============================================================================
 router.get("/callback", async (req: Request, res: Response) => {
   const ipAddress = (req.ip || req.socket.remoteAddress || "unknown").toString();
-  const cookies = (req as Request & { cookies?: Record<string, string> }).cookies || {};
-  const stateCookie = cookies[COOKIE_OAUTH_STATE];
+  const stateCookie: string | undefined = req.cookies?.[COOKIE_OAUTH_STATE];
 
-  const failureRedirect = `${env.FRONTEND_URL}/login?error=`;
+  const failureRedirect = `${frontendBase()}/login?error=`;
 
   async function fail(reason: string, status = 400): Promise<void> {
     await logAudit({
@@ -154,7 +153,7 @@ router.get("/callback", async (req: Request, res: Response) => {
       ipAddress,
     });
 
-    res.redirect(302, env.FRONTEND_URL + safeReturnTo(statePayload.returnTo));
+    res.redirect(302, frontendBase() + safeReturnTo(statePayload.returnTo));
   } catch (err) {
     logger.error("OAuth callback failure", err as Error);
     if (err instanceof EntraConfigError) {

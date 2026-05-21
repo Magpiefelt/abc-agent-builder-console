@@ -27,6 +27,11 @@ const ENTRA_BASE = "https://login.microsoftonline.com";
 const SESSION_TTL_SECONDS = 8 * 60 * 60; // 8 hours
 const OAUTH_STATE_TTL_SECONDS = 5 * 60; // 5 minutes
 
+// Distinct issuer values so a session JWT cannot be swapped for an OAuth state
+// cookie (or vice versa) — both are HS256 with the same secret.
+const SESSION_ISSUER = "abc-agent-builder/session";
+const OAUTH_STATE_ISSUER = "abc-agent-builder/oauth-state";
+
 const sessionKey = (): Uint8Array => new TextEncoder().encode(env.SESSION_SECRET);
 
 // ============================================================================
@@ -281,6 +286,8 @@ export async function signSessionToken(user: AuthUser): Promise<string> {
     ministryCode: user.ministryCode,
   })
     .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(SESSION_ISSUER)
+    .setSubject(user.id)
     .setIssuedAt()
     .setExpirationTime(`${SESSION_TTL_SECONDS}s`)
     .sign(sessionKey());
@@ -290,6 +297,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload>
   try {
     const { payload } = await jwtVerify(token, sessionKey(), {
       algorithms: ["HS256"],
+      issuer: SESSION_ISSUER,
     });
     return payload as SessionPayload;
   } catch (err) {
@@ -309,17 +317,55 @@ export interface OAuthStatePayload extends JWTPayload {
   returnTo: string;
 }
 
-export async function signOAuthState(payload: Omit<OAuthStatePayload, "iat" | "exp">): Promise<string> {
-  return await new SignJWT(payload as unknown as JWTPayload)
+export async function signOAuthState(input: {
+  codeVerifier: string;
+  state: string;
+  returnTo: string;
+}): Promise<string> {
+  return await new SignJWT({ ...input })
     .setProtectedHeader({ alg: "HS256" })
+    .setIssuer(OAUTH_STATE_ISSUER)
     .setIssuedAt()
     .setExpirationTime(`${OAUTH_STATE_TTL_SECONDS}s`)
     .sign(sessionKey());
 }
 
 export async function verifyOAuthState(token: string): Promise<OAuthStatePayload> {
-  const { payload } = await jwtVerify(token, sessionKey(), { algorithms: ["HS256"] });
+  const { payload } = await jwtVerify(token, sessionKey(), {
+    algorithms: ["HS256"],
+    issuer: OAUTH_STATE_ISSUER,
+  });
   return payload as OAuthStatePayload;
+}
+
+// ============================================================================
+// SAFE RETURN-TO (defends against open-redirect via PKCE state's returnTo)
+// ============================================================================
+
+/**
+ * Returns a same-origin pathname+search+hash, or "/" if input cannot be safely
+ * accepted. Rejects:
+ *   - non-string input
+ *   - inputs > 1024 chars (DoS-shaped queries)
+ *   - inputs that don't start with "/"
+ *   - protocol-relative URLs ("//evil.com")
+ *   - backslash variants that some browsers normalize to "//"
+ *   - anything that resolves to a different origin when parsed
+ */
+export function safeReturnTo(returnTo: unknown): string {
+  if (typeof returnTo !== "string") return "/";
+  if (returnTo.length === 0 || returnTo.length > 1024) return "/";
+  if (!returnTo.startsWith("/")) return "/";
+  if (returnTo.startsWith("//")) return "/";
+  if (returnTo.includes("\\")) return "/";
+  try {
+    const placeholder = "http://localhost.invalid";
+    const url = new URL(returnTo, placeholder);
+    if (url.origin !== placeholder) return "/";
+    return url.pathname + url.search + url.hash || "/";
+  } catch {
+    return "/";
+  }
 }
 
 // ============================================================================

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onBeforeUnmount, onMounted, ref } from 'vue'
 import { useUserMemoryStore } from '@/stores/userMemory'
 
 const memory = useUserMemoryStore()
@@ -16,9 +16,18 @@ const models = [
 const showSaveForm = ref(false)
 const saveTitle = ref('')
 const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+const justSaved = ref(false)
+let savedToastTimer: ReturnType<typeof setTimeout> | null = null
 
 onMounted(async () => {
   await Promise.all([memory.fetchRecentSessions(), memory.fetchSavedPrompts()])
+})
+
+onBeforeUnmount(() => {
+  if (savedToastTimer) {
+    clearTimeout(savedToastTimer)
+    savedToastTimer = null
+  }
 })
 
 async function startAgent(): Promise<void> {
@@ -61,9 +70,21 @@ async function confirmSave(): Promise<void> {
   if (result) {
     saveStatus.value = 'saved'
     showSaveForm.value = false
+    saveTitle.value = ''
+    justSaved.value = true
+    if (savedToastTimer) clearTimeout(savedToastTimer)
+    savedToastTimer = setTimeout(() => {
+      justSaved.value = false
+    }, 2200)
   } else {
     saveStatus.value = 'error'
   }
+}
+
+function cancelSave(): void {
+  showSaveForm.value = false
+  saveTitle.value = ''
+  saveStatus.value = 'idle'
 }
 
 function loadSession(sessionPrompt: string): void {
@@ -172,6 +193,15 @@ function loadSavedPrompt(promptText: string): void {
 
       <!-- Save Prompt Button + inline form -->
       <div class="border-t border-[var(--goa-color-border)] pt-3">
+        <p
+          v-if="justSaved"
+          role="status"
+          aria-live="polite"
+          class="mb-2 text-sm text-[var(--goa-color-success)] flex items-center gap-1"
+        >
+          <span aria-hidden="true">✓</span>
+          Prompt saved to your library.
+        </p>
         <button
           v-if="!showSaveForm"
           type="button"
@@ -182,7 +212,7 @@ function loadSavedPrompt(promptText: string): void {
           Save this prompt
         </button>
 
-        <div v-else class="space-y-2">
+        <div v-else class="space-y-2" role="dialog" aria-label="Save prompt">
           <label for="saveTitle" class="text-sm font-medium">Prompt title</label>
           <input
             id="saveTitle"
@@ -202,7 +232,7 @@ function loadSavedPrompt(promptText: string): void {
             </button>
             <button
               type="button"
-              @click="showSaveForm = false"
+              @click="cancelSave"
               class="px-3 py-2 border border-[var(--goa-color-border)] rounded-md text-sm"
             >
               Cancel

@@ -20,27 +20,35 @@ export const useAuthStore = defineStore('auth', () => {
       .toUpperCase()
   })
 
+  let inFlightFetch: Promise<void> | null = null
+
   async function fetchMe(): Promise<void> {
-    loading.value = true
-    error.value = null
-    try {
-      const response = await fetch('/api/auth/me', {
-        credentials: 'include',
-        headers: { Accept: 'application/json' },
-      })
-      if (response.ok) {
-        user.value = (await response.json()) as AuthUser
-      } else if (response.status === 401) {
-        user.value = null
-      } else {
-        error.value = `Failed to load user (${response.status})`
+    // Dedupe concurrent calls (e.g., router guard + App.vue both kicking off).
+    if (inFlightFetch) return inFlightFetch
+    inFlightFetch = (async () => {
+      loading.value = true
+      error.value = null
+      try {
+        const response = await fetch('/api/auth/me', {
+          credentials: 'include',
+          headers: { Accept: 'application/json' },
+        })
+        if (response.ok) {
+          user.value = (await response.json()) as AuthUser
+        } else if (response.status === 401) {
+          user.value = null
+        } else {
+          error.value = `Failed to load user (${response.status})`
+        }
+      } catch (err) {
+        error.value = err instanceof Error ? err.message : 'Network error'
+      } finally {
+        loading.value = false
+        fetched.value = true
+        inFlightFetch = null
       }
-    } catch (err) {
-      error.value = err instanceof Error ? err.message : 'Network error'
-    } finally {
-      loading.value = false
-      fetched.value = true
-    }
+    })()
+    return inFlightFetch
   }
 
   function login(returnTo: string = window.location.pathname + window.location.search): void {

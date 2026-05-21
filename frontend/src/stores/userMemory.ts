@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { defineStore } from 'pinia'
+import { useAuthStore } from '@/stores/auth'
 
 export interface SavedPrompt {
   id: string
@@ -42,6 +43,12 @@ async function jsonFetch<T>(input: string, init?: RequestInit): Promise<T> {
     headers: { Accept: 'application/json', ...(init?.headers ?? {}) },
     ...init,
   })
+  if (response.status === 401) {
+    // Session expired or invalid — clear local auth state so the router guard
+    // will bounce the user to /login on the next navigation.
+    useAuthStore().reset()
+    throw new Error('Session expired. Please sign in again.')
+  }
   if (!response.ok) {
     const text = await response.text().catch(() => '')
     throw new Error(`${response.status} ${response.statusText}: ${text}`)

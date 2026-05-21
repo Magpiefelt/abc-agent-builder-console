@@ -66,12 +66,35 @@ router.get("/me/preferences", async (req: Request, res: Response) => {
   });
 });
 
+const ALLOWED_THEMES = ["light", "dark", "system"] as const;
+const ALLOWED_CLASSIFICATIONS = ["unclassified", "protected_a", "protected_b"] as const;
+
 router.put("/me/preferences", async (req: Request, res: Response) => {
   if (!requireUser(req, res)) return;
   const { defaultModelId, defaultClassification, theme, notificationPreferences } = req.body ?? {};
 
-  if (theme !== undefined && typeof theme !== "string") {
-    res.status(400).json({ error: "theme must be a string." });
+  if (
+    theme !== undefined &&
+    theme !== null &&
+    !ALLOWED_THEMES.includes(theme as (typeof ALLOWED_THEMES)[number])
+  ) {
+    res.status(400).json({ error: `theme must be one of: ${ALLOWED_THEMES.join(", ")}` });
+    return;
+  }
+  if (
+    defaultClassification !== undefined &&
+    defaultClassification !== null &&
+    !ALLOWED_CLASSIFICATIONS.includes(
+      defaultClassification as (typeof ALLOWED_CLASSIFICATIONS)[number],
+    )
+  ) {
+    res
+      .status(400)
+      .json({ error: `defaultClassification must be one of: ${ALLOWED_CLASSIFICATIONS.join(", ")}` });
+    return;
+  }
+  if (defaultModelId !== undefined && defaultModelId !== null && typeof defaultModelId !== "string") {
+    res.status(400).json({ error: "defaultModelId must be a string or null." });
     return;
   }
   if (
@@ -153,9 +176,19 @@ router.post("/me/saved-prompts", async (req: Request, res: Response) => {
     res.status(400).json({ error: "prompt is required and must be 1-50000 chars." });
     return;
   }
-  if (tags !== undefined && (!Array.isArray(tags) || tags.some((t) => typeof t !== "string"))) {
-    res.status(400).json({ error: "tags must be a string[]." });
-    return;
+  if (tags !== undefined) {
+    if (!Array.isArray(tags) || tags.some((t) => typeof t !== "string")) {
+      res.status(400).json({ error: "tags must be a string[]." });
+      return;
+    }
+    if (tags.length > 20) {
+      res.status(400).json({ error: "tags is limited to 20 entries." });
+      return;
+    }
+    if ((tags as string[]).some((t) => t.length > 50)) {
+      res.status(400).json({ error: "each tag must be 50 chars or fewer." });
+      return;
+    }
   }
 
   const result = await query<{ id: string; created_at: Date; updated_at: Date }>(
