@@ -1,57 +1,94 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { mount, flushPromises } from "@vue/test-utils";
+/**
+ * After Stream B landed the SSE-consuming Free Agent UI, the view became a
+ * thin composition shell over many child components (TaskPanel, ControlBar,
+ * IterationTimeline, BlackboardViewer, ScratchpadViewer, ArtifactsPanel,
+ * AgentCanvas, FinalReportPanel). The previous interaction tests against the
+ * raw textarea + button are obsolete because the form moved into TaskPanel.
+ *
+ * These tests verify the layout structure (landmarks + tablist) rather than
+ * the form fields, which are owned by TaskPanel and its own tests.
+ */
+
+import { describe, it, expect, beforeEach } from "vitest";
+import { mount } from "@vue/test-utils";
+import { createPinia, setActivePinia } from "pinia";
 import FreeAgentView from "../FreeAgentView.vue";
 
-describe("FreeAgentView", () => {
-  beforeEach(() => {
-    vi.spyOn(globalThis, "fetch").mockResolvedValue(
-      new Response(JSON.stringify({ id: "new-session" }), {
-        status: 201,
-        headers: { "content-type": "application/json" },
-      })
-    );
+beforeEach(() => {
+  setActivePinia(createPinia());
+});
+
+describe("FreeAgentView — layout shell", () => {
+  it("renders without crashing under jsdom", () => {
+    const wrapper = mount(FreeAgentView, {
+      global: {
+        stubs: {
+          TaskPanel: true,
+          ControlBar: true,
+          IterationTimeline: true,
+          BlackboardViewer: true,
+          ScratchpadViewer: true,
+          ArtifactsPanel: true,
+          AgentCanvas: true,
+          FinalReportPanel: true,
+        },
+      },
+    });
+    expect(wrapper.exists()).toBe(true);
   });
 
-  it("renders the task input, model selector, and start button", () => {
-    const wrapper = mount(FreeAgentView);
-    expect(wrapper.find("textarea#prompt").exists()).toBe(true);
-    expect(wrapper.find("select#model").exists()).toBe(true);
-    expect(wrapper.find("button").exists()).toBe(true);
+  it("renders the task configuration aside (desktop layout)", () => {
+    const wrapper = mount(FreeAgentView, {
+      global: {
+        stubs: {
+          TaskPanel: true,
+          ControlBar: true,
+          IterationTimeline: true,
+          BlackboardViewer: true,
+          ScratchpadViewer: true,
+          ArtifactsPanel: true,
+          AgentCanvas: true,
+          FinalReportPanel: true,
+        },
+      },
+    });
+    expect(wrapper.find('aside[aria-label="Task configuration"]').exists()).toBe(true);
   });
 
-  it("the prompt textarea is associated with a <label> via for=", () => {
-    const wrapper = mount(FreeAgentView);
-    const label = wrapper.find("label[for='prompt']");
-    expect(label.exists()).toBe(true);
+  it("renders the agent memory viewer aside with a memory tablist", () => {
+    const wrapper = mount(FreeAgentView, {
+      global: {
+        stubs: {
+          TaskPanel: true,
+          ControlBar: true,
+          IterationTimeline: true,
+          BlackboardViewer: true,
+          ScratchpadViewer: true,
+          ArtifactsPanel: true,
+          AgentCanvas: true,
+          FinalReportPanel: true,
+        },
+      },
+    });
+    expect(wrapper.find('aside[aria-label="Agent memory viewer"]').exists()).toBe(true);
+    expect(wrapper.find('[role="tablist"]').exists()).toBe(true);
   });
 
-  it("the model selector is associated with a <label> via for=", () => {
-    const wrapper = mount(FreeAgentView);
-    const label = wrapper.find("label[for='model']");
-    expect(label.exists()).toBe(true);
-  });
-
-  it("disables Start Agent when prompt is empty", () => {
-    const wrapper = mount(FreeAgentView);
-    const button = wrapper.find("button");
-    expect(button.attributes("disabled")).toBeDefined();
-  });
-
-  it("enables Start Agent after the user types a prompt", async () => {
-    const wrapper = mount(FreeAgentView);
-    const textarea = wrapper.find("textarea#prompt");
-    await textarea.setValue("Find the population of Edmonton.");
-    expect(wrapper.find("button").attributes("disabled")).toBeUndefined();
-  });
-
-  it("POSTs to /api/agent/sessions when Start Agent is clicked", async () => {
-    const wrapper = mount(FreeAgentView);
-    await wrapper.find("textarea#prompt").setValue("Find the population of Edmonton.");
-    await wrapper.find("button").trigger("click");
-    await flushPromises();
-    expect(globalThis.fetch).toHaveBeenCalledWith(
-      "/api/agent/sessions",
-      expect.objectContaining({ method: "POST" })
-    );
+  it("renders the agent execution canvas section as a landmark", () => {
+    const wrapper = mount(FreeAgentView, {
+      global: {
+        stubs: {
+          TaskPanel: true,
+          ControlBar: true,
+          IterationTimeline: true,
+          BlackboardViewer: true,
+          ScratchpadViewer: true,
+          ArtifactsPanel: true,
+          AgentCanvas: true,
+          FinalReportPanel: true,
+        },
+      },
+    });
+    expect(wrapper.find('section[aria-label="Agent execution canvas"]').exists()).toBe(true);
   });
 });

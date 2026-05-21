@@ -74,10 +74,14 @@ describe("documents — HTTP error propagation", () => {
   });
 });
 
-describe("documents — OCR stub", () => {
-  it("ocrImage returns a configuration error message when called with a valid URL", async () => {
+describe("documents — OCR", () => {
+  // Stream D wired Tesseract.js into ocrImage. With no real image to fetch,
+  // it fails at the HTTP step. The contract here is: the function returns a
+  // structured error result rather than crashing.
+  it("ocrImage returns a structured failure when the upstream URL is unreachable", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(new Response("not found", { status: 404 }));
     const result = await ocrImage({ url: "https://example.com/image.png" });
     expect(result.success).toBe(false);
-    expect(result.error).toMatch(/OCR|Tesseract/i);
+    expect(typeof result.error).toBe("string");
   });
 });

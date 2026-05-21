@@ -1,0 +1,160 @@
+<script setup lang="ts">
+import { computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { useAuthStore } from '@/stores/auth'
+import { useUserMemoryStore } from '@/stores/userMemory'
+
+const auth = useAuthStore()
+const memory = useUserMemoryStore()
+const router = useRouter()
+
+const ministryLabel = computed(() => auth.user?.ministryCode ?? 'Not assigned')
+
+onMounted(async () => {
+  if (!auth.fetched) {
+    await auth.fetchMe()
+  }
+  await Promise.all([memory.fetchSavedPrompts(), memory.fetchFavoriteWorkflows()])
+})
+
+async function handleLogout(): Promise<void> {
+  await auth.logout()
+  memory.reset()
+  await router.push({ name: 'login' })
+}
+
+function fmt(date: string | null): string {
+  if (!date) return ''
+  try {
+    return new Date(date).toLocaleString()
+  } catch {
+    return date
+  }
+}
+</script>
+
+<template>
+  <section class="max-w-4xl mx-auto p-6 space-y-6">
+    <header class="flex items-start justify-between gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-[var(--goa-color-primary-dark)]">Profile</h1>
+        <p class="text-sm text-[var(--goa-color-text-secondary)] mt-1">
+          Your identity, ministry assignment, and saved work.
+        </p>
+      </div>
+      <button
+        type="button"
+        class="px-4 py-2 text-sm font-medium border border-[var(--goa-color-border)] text-[var(--goa-color-primary-dark)] rounded-md hover:bg-[var(--goa-color-primary-light)]"
+        @click="handleLogout"
+      >
+        Sign out
+      </button>
+    </header>
+
+    <div
+      class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md p-5"
+    >
+      <h2 class="text-lg font-semibold mb-3">Identity</h2>
+      <dl class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-sm">
+        <div>
+          <dt class="text-[var(--goa-color-text-secondary)]">Name</dt>
+          <dd>{{ auth.user?.displayName }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--goa-color-text-secondary)]">Email</dt>
+          <dd>{{ auth.user?.email }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--goa-color-text-secondary)]">Ministry</dt>
+          <dd>{{ ministryLabel }}</dd>
+        </div>
+        <div>
+          <dt class="text-[var(--goa-color-text-secondary)]">Role</dt>
+          <dd class="capitalize">{{ auth.user?.role }}</dd>
+        </div>
+      </dl>
+    </div>
+
+    <div
+      class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md p-5"
+    >
+      <h2 class="text-lg font-semibold mb-3">Saved prompts</h2>
+      <p
+        v-if="memory.savedPrompts.length === 0"
+        class="text-sm text-[var(--goa-color-text-secondary)]"
+      >
+        No saved prompts yet. From the Free Agent view, write a prompt and click
+        <em>Save this prompt</em> to add one.
+      </p>
+      <ul v-else class="divide-y divide-[var(--goa-color-border)]">
+        <li
+          v-for="p in memory.savedPrompts"
+          :key="p.id"
+          class="py-3 flex items-start gap-3"
+        >
+          <div class="flex-1 min-w-0">
+            <h3 class="font-medium truncate">{{ p.title }}</h3>
+            <p class="text-sm text-[var(--goa-color-text-secondary)] line-clamp-2">
+              {{ p.prompt }}
+            </p>
+            <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
+              Updated {{ fmt(p.updatedAt) }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="text-sm text-[var(--goa-color-error)] hover:underline"
+            @click="memory.deletePrompt(p.id)"
+          >
+            Delete
+          </button>
+        </li>
+      </ul>
+    </div>
+
+    <div
+      class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md p-5"
+    >
+      <h2 class="text-lg font-semibold mb-3">Favorite workflows</h2>
+      <p
+        v-if="memory.favoriteWorkflows.length === 0"
+        class="text-sm text-[var(--goa-color-text-secondary)]"
+      >
+        No favorited workflows yet.
+      </p>
+      <ul v-else class="divide-y divide-[var(--goa-color-border)]">
+        <li
+          v-for="f in memory.favoriteWorkflows"
+          :key="f.workflowId"
+          class="py-3 flex items-start gap-3"
+        >
+          <div class="flex-1 min-w-0">
+            <h3 class="font-medium truncate">
+              {{ f.name ?? 'Workflow ' + f.workflowId.slice(0, 8) }}
+            </h3>
+            <p
+              v-if="f.description"
+              class="text-sm text-[var(--goa-color-text-secondary)] line-clamp-2"
+            >
+              {{ f.description }}
+            </p>
+            <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
+              Favorited {{ fmt(f.favoritedAt) }}
+            </p>
+          </div>
+          <button
+            type="button"
+            class="text-sm text-[var(--goa-color-error)] hover:underline"
+            @click="memory.unfavoriteWorkflow(f.workflowId)"
+          >
+            Remove
+          </button>
+        </li>
+      </ul>
+    </div>
+
+    <p v-if="memory.error" class="text-sm text-[var(--goa-color-error)]">
+      {{ memory.error }}
+    </p>
+  </section>
+</template>

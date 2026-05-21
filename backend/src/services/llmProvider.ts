@@ -252,8 +252,11 @@ export async function getActiveModels(): Promise<ModelRegistryEntry[]> {
     logger.error("Failed to fetch model registry", err as Error);
     // Return cached data if available, even if stale
     if (registryCache) return registryCache;
-    // Fallback: return default models for development
-    return getDefaultModels();
+    // Hardcoded fallback only in test mode — production/dev must seed model_registry.
+    if (env.NODE_ENV === "test") return getDefaultModels();
+    throw new Error(
+      "Model registry is empty or unreachable. Run docs/02_database_migrations.sql to seed cohen_mcleod.model_registry."
+    );
   }
 }
 
@@ -792,18 +795,158 @@ class GoogleGeminiProvider implements LLMProvider {
 }
 
 // ============================================================================
-// MOCK PROVIDER (test-only, gated by MOCK_LLM=1)
+// UI DEMO MOCK PROVIDER (dev only, gated on env.LLM_MOCK === "1")
+// ============================================================================
+
+/**
+ * Deterministic provider that lets the Free Agent UI be driven end-to-end
+ * without a real API key. Returns a scripted sequence: scout → research +
+ * artifact (+ one intentional tool failure) → synthesis with final report.
+ *
+ * Step detection is stateless — derived from the systemPrompt that the
+ * orchestrator rebuilds each iteration (which includes prior blackboard
+ * entries). This means rerunning with the same prompt always starts from
+ * step 0, and it works for any concurrent session without per-process
+ * counter contention.
+ */
+class UIDemoMockProvider implements LLMProvider {
+  name = "mock";
+
+  private detectStep(systemPrompt: string): number {
+    if (systemPrompt.includes("Final analysis")) return 3;
+    if (systemPrompt.includes("Sources reviewed")) return 2;
+    if (systemPrompt.includes("Initial scan")) return 1;
+    return 0;
+  }
+
+  private scriptFor(step: number): { content: string } {
+    if (step === 0) {
+      return {
+        content: JSON.stringify({
+          thinking:
+            "I'll scout the problem space and capture initial findings on the blackboard before planning concrete actions.",
+          tool_calls: [],
+          blackboard_updates: [
+            { category: "findings", title: "Initial scan", content: "Task understood. Identifying constraints and likely sub-goals." },
+            { category: "plan", title: "Approach", content: "Three-phase plan: scout, research, synthesize. Produces a final report." },
+          ],
+          scratchpad: "## Working notes\n\n- Reading task description\n- Planning approach\n- Will use memory tools to track progress",
+          attribute_updates: { phase: "scouting", confidence: 0.4 },
+          status: "running",
+          user_message: "Scouting the problem and laying out a plan.",
+        }),
+      };
+    }
+    if (step === 1) {
+      return {
+        content: JSON.stringify({
+          thinking:
+            "Now collecting reference material and storing a representative artifact. I'll also try a tool that will fail so the operator can see error styling in the timeline.",
+          tool_calls: [
+            {
+              tool: "create_artifact",
+              params: {
+                title: "Research summary",
+                type: "text",
+                content:
+                  "# Research summary\n\nMock artifact produced by the dev-mode provider. In production this would be real research output.",
+                description: "Synthesized findings from the research phase.",
+                mimeType: "text/markdown",
+              },
+            },
+            { tool: "this_tool_does_not_exist", params: { demo: true } },
+          ],
+          blackboard_updates: [
+            { category: "research", title: "Sources reviewed", content: "Reviewed three illustrative sources (mock) and extracted three key points." },
+          ],
+          scratchpad: "## Working notes\n\n- Scout complete\n- Research phase underway\n- Artifact drafted",
+          attribute_updates: { phase: "research", confidence: 0.7 },
+          status: "running",
+          user_message: "Gathering research and producing a draft artifact.",
+        }),
+      };
+    }
+    if (step === 2) {
+      return {
+        content: JSON.stringify({
+          thinking:
+            "All findings recorded. Producing the final synthesized report and marking the session complete.",
+          tool_calls: [],
+          blackboard_updates: [
+            { category: "synthesis", title: "Final analysis", content: "Synthesized findings into a recommendation. Ready to report." },
+          ],
+          scratchpad: "## Working notes\n\n- Scout complete\n- Research complete\n- Synthesis complete",
+          attribute_updates: { phase: "complete", confidence: 0.92 },
+          status: "completed",
+          user_message: "Session complete. Final report attached.",
+          final_report: {
+            summary: "Mock session completed successfully across three phases.",
+            phases: ["scouting", "research", "synthesis"],
+            recommendation: "Proceed with the proposed plan.",
+          },
+        }),
+      };
+    }
+    return {
+      content: JSON.stringify({
+        thinking: "Continuation iteration acknowledged. No additional work required.",
+        tool_calls: [],
+        blackboard_updates: [],
+        scratchpad: null,
+        attribute_updates: null,
+        status: "completed",
+        user_message: "No further action required for this continuation.",
+      }),
+    };
+  }
+
+  async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
+    const step = this.detectStep(request.systemPrompt);
+    const { content } = this.scriptFor(step);
+
+    // Small delay so the SSE stream actually streams visibly in the UI.
+    await new Promise((r) => setTimeout(r, 350));
+
+    const promptTokens = Math.max(
+      1,
+      Math.ceil((request.systemPrompt.length + request.messages.reduce((n, m) => n + m.content.length, 0)) / 4),
+    );
+    const completionTokens = Math.max(1, Math.ceil(content.length / 4));
+
+    return {
+      content,
+      toolCalls: [],
+      finishReason: "stop",
+      usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
+      model: modelName,
+      provider: this.name,
+      latencyMs: 350,
+    };
+  }
+
+  async stream(request: LLMRequest, modelName: string, onEvent: LLMStreamCallback): Promise<LLMResponse> {
+    const response = await this.call(request, modelName);
+    onEvent({ type: "text_delta", content: response.content });
+    onEvent({ type: "done" });
+    return response;
+  }
+}
+
+// ============================================================================
+// TEST MOCK PROVIDER (Stream E: vitest + evals harness, gated by MOCK_LLM=1)
 // ============================================================================
 
 /**
  * Mock provider used by Vitest tests and the evals harness. Reads canned
- * responses from backend/test/helpers/mockLLM.ts. The model registry row
- * carries provider="anthropic" so the union type stays untouched; this
- * provider is only swapped in when MOCK_LLM=1 AND the model id is "mock-llm".
+ * responses from backend/test/helpers/mockLLM.ts keyed by sessionId, so each
+ * test can register a deterministic LLM script before invoking the
+ * orchestrator. Activated only when MOCK_LLM=1 AND the model id is "mock-llm",
+ * so it never interferes with either real providers or the UI demo mock above.
+ *
+ * Path computed at runtime so the TypeScript compiler does not pull the
+ * test/ tree under rootDir. The TestMockProvider is only ever instantiated
+ * when MOCK_LLM=1 is set, which is never the case in a production build.
  */
-// Path computed at runtime so the TypeScript compiler does not pull the
-// test/ tree under rootDir. The MockProvider is only ever instantiated when
-// MOCK_LLM=1 is set, which is never the case in a production build.
 const MOCK_HELPER_PATH = "../" + "../test/helpers/mockLLM.js";
 
 interface MockHelperModule {
@@ -822,7 +965,7 @@ interface MockHelperModule {
   emitMockStream: (response: LLMResponse, onEvent: LLMStreamCallback) => void;
 }
 
-class MockProvider implements LLMProvider {
+class TestMockProvider implements LLMProvider {
   name = "mock";
 
   async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
@@ -841,11 +984,11 @@ class MockProvider implements LLMProvider {
   }
 }
 
-function isMockEnabled(): boolean {
+function isTestMockEnabled(): boolean {
   return process.env.MOCK_LLM === "1";
 }
 
-function isMockModel(model: ModelRegistryEntry): boolean {
+function isTestMockModel(model: ModelRegistryEntry): boolean {
   return model.model_id === "mock-llm" || model.display_name === "Mock LLM";
 }
 
@@ -858,12 +1001,24 @@ const providers: Map<string, LLMProvider> = new Map();
 /**
  * Get the LLM provider instance for a given model registry entry.
  * Providers are singletons cached by provider name.
+ *
+ * Order of precedence:
+ *   1. TestMockProvider — when MOCK_LLM=1 AND model is "mock-llm". Used by
+ *      vitest and the evals harness; serves per-session canned responses.
+ *   2. UIDemoMockProvider — when env.LLM_MOCK="1". Used to drive the Free
+ *      Agent UI without an API key.
+ *   3. Real Anthropic / Gemini providers.
  */
 function getProviderInstance(model: ModelRegistryEntry): LLMProvider {
-  if (isMockEnabled() && isMockModel(model)) {
-    if (!providers.has("mock")) {
-      providers.set("mock", new MockProvider());
+  if (isTestMockEnabled() && isTestMockModel(model)) {
+    if (!providers.has("test-mock")) {
+      providers.set("test-mock", new TestMockProvider());
     }
+    return providers.get("test-mock")!;
+  }
+
+  if (env.LLM_MOCK === "1") {
+    if (!providers.has("mock")) providers.set("mock", new UIDemoMockProvider());
     return providers.get("mock")!;
   }
 
@@ -1016,6 +1171,7 @@ export async function validateModelClassification(
  * Check if the LLM provider is configured and ready.
  */
 export function isProviderConfigured(): boolean {
+  if (env.LLM_MOCK === "1") return true;
   return !!(env.ANTHROPIC_API_KEY || env.VERTEX_AI_API_KEY);
 }
 

@@ -5,3 +5,6 @@ dist/
 .DS_Store
 coverage/
 .vite/
+
+# Tesseract.js runtime-downloaded language data
+*.traineddata

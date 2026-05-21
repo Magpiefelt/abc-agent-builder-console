@@ -22,6 +22,11 @@ import { pdfExtractText, pdfInfo, ocrImage, readZipContents, readZipFile, extrac
 import { getCallApi, postCallApi } from "./apiProxy.js";
 import { getTime, getWeather } from "./utilities.js";
 
+// Stream D additions
+import { executeSql, readDatabaseSchemas } from "./database.js";
+import { imageGeneration, elevenlabsTts } from "./generation.js";
+import { sendEmail } from "./communication.js";
+
 /**
  * Register all Phase 3 edge tools with the dispatcher.
  * Call this once at application startup.
@@ -54,6 +59,17 @@ export function registerAllTools(): void {
     // Utilities
     get_time: getTime,
     get_weather: getWeather,
+
+    // Database (Stream D)
+    execute_sql: executeSql,
+    read_database_schemas: readDatabaseSchemas,
+
+    // Generation (Stream D)
+    image_generation: imageGeneration,
+    elevenlabs_tts: elevenlabsTts,
+
+    // Communication (Stream D)
+    send_email: sendEmail,
   });
 
   logger.info("All Phase 3 tools registered successfully");

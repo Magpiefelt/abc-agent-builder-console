@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { Request, Response, NextFunction } from "express";
 
 vi.mock("../../config/env.js", () => ({
@@ -14,15 +14,37 @@ vi.mock("../../config/env.js", () => ({
     TOOL_TIMEOUT_MS: 30000,
     MAX_CONCURRENT_SESSIONS: 3,
     FRONTEND_URL: "http://localhost:5173",
+    ENTRA_CLIENT_ID: undefined,
   },
+}));
+
+// Stream A's auth pulls entraAuth helpers; stub the module so we don't need
+// the full JWKS / DB infrastructure to test the dev-mode bypass.
+vi.mock("../../services/entraAuth.js", () => ({
+  COOKIE_SESSION: "abc_session",
+  InvalidSignatureError: class extends Error {},
+  SessionExpiredError: class extends Error {},
+  loadUserById: vi.fn(),
+  upsertUser: vi.fn(),
+  verifyEntraToken: vi.fn(),
+  verifySessionToken: vi.fn(),
+  extractMinistry: vi.fn(),
+}));
+
+vi.mock("../../services/auditLogger.js", () => ({
+  logAudit: vi.fn().mockResolvedValue(undefined),
+  AuditAction: { AUTH_FAILED: "auth.failed" },
 }));
 
 import { authenticate, requireRole, requireMinistry } from "../auth.js";
 
-function makeReq(headers: Record<string, string> = {}, user?: unknown): Request {
+function makeReq(opts: { headers?: Record<string, string>; cookies?: Record<string, string>; user?: unknown } = {}): Request {
   return {
-    headers,
-    user,
+    headers: opts.headers ?? {},
+    cookies: opts.cookies ?? {},
+    user: opts.user,
+    ip: "127.0.0.1",
+    socket: { remoteAddress: "127.0.0.1" },
   } as unknown as Request;
 }
 
@@ -30,44 +52,35 @@ function makeRes(): Response & { _status: number; _body: unknown } {
   const res = {
     _status: 200,
     _body: null as unknown,
-    status(code: number) {
+    status(this: { _status: number }, code: number) {
       this._status = code;
-      return this;
+      return this as unknown as Response;
     },
-    json(body: unknown) {
+    json(this: { _body: unknown }, body: unknown) {
       this._body = body;
-      return this;
+      return this as unknown as Response;
     },
   };
   return res as unknown as Response & { _status: number; _body: unknown };
 }
 
-describe("auth.authenticate (env mocked as development)", () => {
-  it("attaches the dev mock user when no Authorization header is present", () => {
+describe("auth.authenticate — dev mock fallback", () => {
+  it("attaches the DEV_USER when ENTRA_CLIENT_ID is unset and no credentials are presented", async () => {
     const req = makeReq();
     const res = makeRes();
     const next = vi.fn();
-    authenticate(req, res, next as unknown as NextFunction);
+    await authenticate(req, res, next as unknown as NextFunction);
     expect(next).toHaveBeenCalledOnce();
     expect(req.user).toBeDefined();
     expect(req.user?.email).toBe("cohen.mcleod@gov.ab.ca");
     expect(req.user?.ministryCode).toBe("INFRA");
     expect(req.user?.role).toBe("admin");
   });
-
-  it("attaches the dev mock user when a Bearer token is provided in development", () => {
-    const req = makeReq({ authorization: "Bearer anything" });
-    const res = makeRes();
-    const next = vi.fn();
-    authenticate(req, res, next as unknown as NextFunction);
-    expect(next).toHaveBeenCalledOnce();
-    expect(req.user?.email).toBe("cohen.mcleod@gov.ab.ca");
-  });
 });
 
 describe("auth.requireRole", () => {
   it("calls next() when user has the required role", () => {
-    const req = makeReq({}, { role: "admin" });
+    const req = makeReq({ user: { role: "admin" } });
     const res = makeRes();
     const next = vi.fn();
     requireRole("admin")(req, res, next as unknown as NextFunction);
@@ -75,7 +88,7 @@ describe("auth.requireRole", () => {
   });
 
   it("returns 403 when user does not have the required role", () => {
-    const req = makeReq({}, { role: "viewer" });
+    const req = makeReq({ user: { role: "viewer" } });
     const res = makeRes();
     const next = vi.fn();
     requireRole("admin")(req, res, next as unknown as NextFunction);
@@ -92,7 +105,7 @@ describe("auth.requireRole", () => {
   });
 
   it("accepts a role list (one of several)", () => {
-    const req = makeReq({}, { role: "user" });
+    const req = makeReq({ user: { role: "user" } });
     const res = makeRes();
     const next = vi.fn();
     requireRole("admin", "user")(req, res, next as unknown as NextFunction);
@@ -102,7 +115,7 @@ describe("auth.requireRole", () => {
 
 describe("auth.requireMinistry", () => {
   it("calls next when user has a ministry code", () => {
-    const req = makeReq({}, { ministryCode: "INFRA" });
+    const req = makeReq({ user: { ministryCode: "INFRA" } });
     const res = makeRes();
     const next = vi.fn();
     requireMinistry(req, res, next as unknown as NextFunction);
@@ -110,7 +123,7 @@ describe("auth.requireMinistry", () => {
   });
 
   it("returns 403 when user is missing ministry", () => {
-    const req = makeReq({}, { ministryCode: null });
+    const req = makeReq({ user: { ministryCode: null } });
     const res = makeRes();
     const next = vi.fn();
     requireMinistry(req, res, next as unknown as NextFunction);

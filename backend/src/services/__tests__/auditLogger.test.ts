@@ -5,6 +5,16 @@ vi.mock("../../config/database.js", () => ({
   query: queryMock,
 }));
 
+// Stream F gated DB persistence on env.DATABASE_URL being set. We mock env
+// here so the audit writes always hit our query mock.
+vi.mock("../../config/env.js", () => ({
+  env: {
+    DATABASE_URL: "postgresql://test:test@localhost/test",
+    DB_SCHEMA: "test",
+    NODE_ENV: "test",
+  },
+}));
+
 import {
   logAudit,
   auditAction,

@@ -59,7 +59,9 @@ describe("toolDispatcher — registry", () => {
       makeContext()
     );
     expect(result.success).toBe(true);
-    expect(fakeHandler).toHaveBeenCalledWith({ query: "test" });
+    // Handler is called with (params, context?) — assert on the first arg.
+    expect(fakeHandler).toHaveBeenCalled();
+    expect(fakeHandler.mock.calls[0][0]).toEqual({ query: "test" });
   });
 
   it("registerEdgeTools registers multiple handlers", () => {
@@ -251,7 +253,8 @@ describe("toolDispatcher — edge tool dispatch", () => {
       { tool: "get_call_api", params: { url: "https://example.org" } },
       makeContext()
     );
-    expect(handler).toHaveBeenCalledWith({ url: "https://example.org" });
+    expect(handler).toHaveBeenCalled();
+    expect(handler.mock.calls[0][0]).toEqual({ url: "https://example.org" });
     expect(result.success).toBe(true);
     expect((result.result as { ok: number }).ok).toBe(1);
   });
