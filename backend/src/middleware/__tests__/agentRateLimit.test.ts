@@ -130,4 +130,32 @@ describe("agentRateLimit — buckets", () => {
 
     expect(readLimit).toBeGreaterThan(writeLimit as number);
   });
+
+  it("shares the bucket across different session IDs (no bypass by minting new UUIDs)", () => {
+    // Regression: storeKey used to include the raw path, so a client could
+    // hit /sessions/UUID-A/start until rate-limited and then switch to
+    // /sessions/UUID-B/start and start over. The limit is per-endpoint, not
+    // per-resource, so all UUIDs must share the same bucket.
+    const ip = "11.22.33.44";
+    const limitForStart = 5; // POST:/sessions/start
+    let last200 = 0;
+    let firstStatus = 0;
+
+    for (let i = 0; i < limitForStart + 3; i++) {
+      const uuid = `12345678-aaaa-bbbb-cccc-${i.toString().padStart(12, "0")}`;
+      const res = makeRes();
+      agentRateLimit(
+        makeReq("POST", `/sessions/${uuid}/start`, ip),
+        res,
+        vi.fn() as unknown as NextFunction
+      );
+      if (firstStatus === 0) firstStatus = res._status;
+      if (res._status === 200) last200 = i;
+    }
+
+    expect(firstStatus).toBe(200);
+    // The 6th, 7th, 8th calls (i=5,6,7) must be denied — every UUID shares
+    // the same bucket, so the limit caps at 5 successful starts.
+    expect(last200).toBeLessThanOrEqual(limitForStart - 1);
+  });
 });
