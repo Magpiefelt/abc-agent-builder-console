@@ -220,7 +220,7 @@ function loadFromRecent(p: string): void {
       ></goa-textarea>
     </goa-form-item>
 
-    <goa-form-item label="Model" :helptext="modelsStore.error ?? ''">
+    <goa-form-item label="Model">
       <goa-dropdown
         name="modelId"
         :value="selectedModelId"
@@ -235,15 +235,12 @@ function loadFromRecent(p: string): void {
           :label="m.name"
         ></goa-dropdown-item>
       </goa-dropdown>
-      <goa-button
-        v-if="modelsStore.error"
-        type="tertiary"
-        size="compact"
-        slot="helptext"
-        @_click="modelsStore.ensureLoaded()"
-      >
-        Retry
-      </goa-button>
+      <div v-if="modelsStore.error" slot="helptext" class="flex items-center gap-2 text-[var(--goa-color-error)]">
+        <span class="text-xs">{{ modelsStore.error }}</span>
+        <goa-button type="tertiary" size="compact" @_click="modelsStore.ensureLoaded()">
+          Retry
+        </goa-button>
+      </div>
     </goa-form-item>
 
     <goa-form-item label="Classification">
