@@ -85,9 +85,16 @@ function sizeLabel(bytes: number): string {
       </div>
       <div
         v-else-if="filtered.length === 0"
-        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center"
+        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center flex flex-col gap-2 items-center"
       >
-        No artifacts match the selected type{{ activeTypes.size === 1 ? '' : 's' }}.
+        <span>No artifacts match the selected type{{ activeTypes.size === 1 ? '' : 's' }}.</span>
+        <button
+          type="button"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+          @click="activeTypes = new Set()"
+        >
+          Clear filters
+        </button>
       </div>
       <article
         v-for="(a, idx) in filtered"

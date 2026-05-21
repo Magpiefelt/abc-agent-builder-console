@@ -231,7 +231,7 @@ onBeforeRouteLeave((_to, _from, next) => {
         </div>
         <ExecutionPanel
           v-if="execution"
-          class="max-h-[45%] min-h-[140px] shrink-0"
+          class="max-h-[45%] shrink-0"
         />
       </div>
 

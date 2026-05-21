@@ -9,6 +9,7 @@ const store = useWorkflowStore()
 const { current, execution } = storeToRefs(store)
 
 const expanded = ref<Set<string>>(new Set())
+const panelCollapsed = ref(false)
 
 interface StageRow {
   nodeId: string
@@ -158,11 +159,24 @@ defineExpose({ rows, counts })
 <template>
   <section
     v-if="execution"
-    class="bg-[var(--goa-color-surface)] border-t border-[var(--goa-color-border)] flex flex-col min-h-0"
+    :class="[
+      'bg-[var(--goa-color-surface)] border-t border-[var(--goa-color-border)] flex flex-col min-h-0',
+      panelCollapsed ? '' : 'min-h-[140px]',
+    ]"
     aria-label="Workflow execution results"
   >
     <header class="px-4 py-2 border-b border-[var(--goa-color-border)] flex items-center gap-3 flex-wrap">
-      <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Execution</h3>
+      <button
+        type="button"
+        class="flex items-center gap-1 text-sm font-semibold text-[var(--goa-color-primary-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+        :aria-expanded="!panelCollapsed"
+        aria-controls="execution-panel-body"
+        :title="panelCollapsed ? 'Expand execution panel' : 'Collapse execution panel'"
+        @click="panelCollapsed = !panelCollapsed"
+      >
+        <span aria-hidden="true" class="inline-block w-3 text-center">{{ panelCollapsed ? '▸' : '▾' }}</span>
+        Execution
+      </button>
       <span class="text-xs text-[var(--goa-color-text-secondary)]">
         {{ counts.completed }}/{{ rows.length }} completed
         <span v-if="counts.error > 0" class="text-[var(--goa-color-error)] font-medium">
@@ -197,7 +211,7 @@ defineExpose({ rows, counts })
       </goa-button>
     </header>
 
-    <div class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
+    <div v-if="!panelCollapsed" id="execution-panel-body" class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
       <p
         v-if="rows.length === 0"
         class="text-sm text-[var(--goa-color-text-secondary)] p-6 text-center"

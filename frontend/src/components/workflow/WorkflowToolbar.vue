@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import type { Classification, ExecutionStatus, Workflow } from '@/types/workflow'
 
 const props = defineProps<{
@@ -9,6 +9,34 @@ const props = defineProps<{
   classifications: Classification[]
   models: { id: string; name: string }[]
 }>()
+
+// Tick once a minute so "saved 2m ago" stays accurate without polling the
+// store. We don't need second-granularity here — anything older than a minute
+// rounds to the nearest minute.
+const now = ref(Date.now())
+let tickHandle: ReturnType<typeof setInterval> | null = null
+onMounted(() => {
+  tickHandle = setInterval(() => (now.value = Date.now()), 30_000)
+})
+onBeforeUnmount(() => {
+  if (tickHandle) clearInterval(tickHandle)
+})
+
+const savedAgo = computed(() => {
+  if (props.dirty) return ''
+  const updated = props.workflow.updated_at
+  if (!updated) return ''
+  const ts = new Date(updated).getTime()
+  if (Number.isNaN(ts)) return ''
+  const diff = Math.max(0, now.value - ts)
+  if (diff < 60_000) return 'just now'
+  const mins = Math.floor(diff / 60_000)
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
+})
 
 const emit = defineEmits<{
   (e: 'save'): void
@@ -71,6 +99,13 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
     <span class="text-xs text-[var(--goa-color-text-secondary)]">v{{ workflow.version }}</span>
 
     <goa-badge v-if="dirty" type="important" content="Unsaved"></goa-badge>
+    <span
+      v-else-if="savedAgo"
+      class="text-xs text-[var(--goa-color-text-secondary)]"
+      :title="`Saved ${new Date(workflow.updated_at).toLocaleString()}`"
+    >
+      Saved {{ savedAgo }}
+    </span>
 
     <div class="flex-1" />
 

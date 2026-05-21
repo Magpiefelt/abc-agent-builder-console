@@ -51,8 +51,18 @@ onActivated(() => {
 
 <template>
   <div class="flex flex-col gap-4">
-    <header class="flex items-center justify-between">
-      <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Sessions</h3>
+    <header class="flex items-center justify-between gap-4 flex-wrap">
+      <div>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Sessions</h3>
+        <p
+          v-if="!loading"
+          class="text-xs text-[var(--goa-color-text-secondary)] mt-1"
+          aria-live="polite"
+        >
+          {{ sessions.length }} {{ sessions.length === 1 ? 'session' : 'sessions' }}
+          <span v-if="statusFilter"> · status: {{ statusFilter }}</span>
+        </p>
+      </div>
       <div class="flex items-center gap-2">
         <goa-dropdown
           name="statusFilter"
