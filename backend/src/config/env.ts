@@ -55,6 +55,8 @@ const envSchema = z
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Google AI API key (for Gemini via Google AI Studio) */
   GOOGLE_AI_API_KEY: z.string().optional(),
+  /** Dev-only: when "1", short-circuit LLM calls with a deterministic mock so the UI can be driven without an API key. */
+  LLM_MOCK: z.enum(["0", "1"]).default("0"),
 
   // ============================================================================
   // TOOL API KEYS
@@ -64,6 +66,38 @@ const envSchema = z
   GOOGLE_SEARCH_CX: z.string().optional(),
   ELEVENLABS_API_KEY: z.string().optional(),
   GITHUB_TOKEN: z.string().optional(),
+
+  // ============================================================================
+  // GoA ENTERPRISE TOOLS (proxy for Brave / image generation)
+  // ============================================================================
+  ENT_TOOLS_API_KEY: z.string().optional(),
+  ENT_TOOLS_BASE_URL: z.string().url().default("https://ent-tools.sandbox.aim.int.gov.ab.ca"),
+  /** Overridable Ent Tools endpoint paths (in case the proxy spec differs). */
+  ENT_TOOLS_BRAVE_PATH: z.string().default("/v1/brave/search"),
+  ENT_TOOLS_IMAGE_PATH: z.string().default("/v1/images/generations"),
+
+  // ============================================================================
+  // EMAIL (SMTP)
+  // ============================================================================
+  EMAIL_FROM: z.string().optional(),
+  EMAIL_SMTP_HOST: z.string().optional(),
+  EMAIL_SMTP_PORT: z.coerce.number().default(587),
+  EMAIL_SMTP_USER: z.string().optional(),
+  EMAIL_SMTP_PASS: z.string().optional(),
+  EMAIL_SMTP_SECURE: z
+    .union([z.boolean(), z.string()])
+    .transform((v) => {
+      if (typeof v === "boolean") return v;
+      const lower = v.toLowerCase().trim();
+      return lower === "true" || lower === "1" || lower === "yes";
+    })
+    .default(false),
+
+  // ============================================================================
+  // API PROXY ALLOWLIST (optional)
+  // ============================================================================
+  /** Comma-separated host list for get_call_api / post_call_api. Supports `*.example.com`. */
+  API_PROXY_ALLOWLIST: z.string().optional(),
 
   // ============================================================================
   // ORCHESTRATION CONFIGURATION
@@ -143,5 +177,8 @@ export function getConfigSummary(): Record<string, boolean> {
     googleSearch: !!(env.GOOGLE_SEARCH_API_KEY && env.GOOGLE_SEARCH_CX),
     elevenLabs: !!env.ELEVENLABS_API_KEY,
     github: !!env.GITHUB_TOKEN,
+    entTools: !!env.ENT_TOOLS_API_KEY,
+    smtp: !!(env.EMAIL_SMTP_HOST && env.EMAIL_SMTP_USER && env.EMAIL_SMTP_PASS),
+    apiProxyAllowlist: !!env.API_PROXY_ALLOWLIST,
   };
 }

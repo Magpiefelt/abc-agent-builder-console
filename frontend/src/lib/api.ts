@@ -1,13 +1,13 @@
 /**
- * Thin typed fetch helper for talking to the backend.
+ * Thin typed fetch helper for talking to the admin and health endpoints.
  *
- * Stream A will replace the bearer-token interceptor below with a real
- * MSAL-issued access token once Entra ID is wired up. For now, the dev-mock
- * user middleware on the backend accepts any (or missing) token.
+ * Authentication: relies on Stream A's HttpOnly cookie session set up by
+ * `/api/auth/login` / `/api/auth/callback`. `credentials: 'include'` ships
+ * the cookie with every request. Stream A's `stores/auth.ts` handles `/api/auth/me`
+ * directly (not via this helper) so this module focuses on admin + health.
  */
 
 import type {
-  AuthUser,
   AuditEntry,
   PIIDetection,
   ModelRegistryEntry,
@@ -70,8 +70,6 @@ function toQuery(params: Record<string, unknown>): string {
 }
 
 export const api = {
-  me: () => fetchJson<{ user: AuthUser }>("/api/me"),
-
   admin: {
     audit: (params: {
       action?: string;

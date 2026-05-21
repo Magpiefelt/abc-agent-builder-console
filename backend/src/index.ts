@@ -9,6 +9,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import { env } from "./config/env.js";
 import { closePool } from "./config/database.js";
@@ -18,9 +19,14 @@ import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
 import { authenticate } from "./middleware/auth.js";
 import { registerAllTools } from "./tools/register.js";
+import { validateConnectionAllowlist, closeDatabaseToolPools } from "./tools/database.js";
+import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
 import adminRoutes from "./routes/admin.js";
+import workflowRoutes from "./routes/workflow.js";
+import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
 import { logVaultFingerprint } from "./services/secretsVault.js";
 import { startRetentionScheduler, stopRetentionScheduler } from "./services/retentionJob.js";
 
@@ -29,8 +35,15 @@ import { startRetentionScheduler, stopRetentionScheduler } from "./services/rete
 // ============================================================================
 
 installProcessMonitor(async () => {
-  // Graceful shutdown: stop retention scheduler, close database pool
+  // Graceful shutdown order:
+  //   1. Stop the retention scheduler so no pass starts mid-shutdown.
+  //   2. Drain the SQL tool pools (per-connection allowlist entries). Any
+  //      in-flight tool call dies cleanly; the dispatcher returns the error
+  //      to the agent.
+  //   3. Close the host pool LAST so audit/logger writes from step 2 still
+  //      have a working backend.
   stopRetentionScheduler();
+  await closeDatabaseToolPools();
   await closePool();
 });
 
@@ -38,6 +51,8 @@ installProcessMonitor(async () => {
 // TOOL REGISTRATION (must happen before any agent session starts)
 // ============================================================================
 
+validateConnectionAllowlist();
+validateEmailAllowlist();
 registerAllTools();
 
 // ============================================================================
@@ -96,27 +111,29 @@ app.use(globalLimiter);
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+// 6. Cookie parsing (signed cookies use SESSION_SECRET; we sign our own JWTs separately)
+app.use(cookieParser(env.SESSION_SECRET));
+
 // ============================================================================
 // ROUTES
 // ============================================================================
 
 app.use("/api/health", healthRoutes);
 
-// Current user identity — used by the frontend auth store
-app.get("/api/me", authenticate, (req, res) => {
-  res.json({ user: req.user });
-});
+// Authentication routes (login/callback are public; logout and /me have their own auth middleware)
+app.use("/api/auth", authRoutes);
+
+// User memory routes (preferences, saved prompts, favorite workflows, recent sessions)
+app.use("/api/users", authenticate, userRoutes);
 
 // Agent routes with granular per-endpoint rate limiting
 app.use("/api/agent", agentRateLimit, agentRoutes);
 
+// Workflow canvas routes (Stream C)
+app.use("/api/workflows", agentRateLimit, workflowRoutes);
+
 // Admin routes (authenticate + requireRole('admin') + auditAdminAccess applied inside the router)
 app.use("/api/admin", adminRoutes);
-
-// Placeholder routes for future phases
-app.use("/api/workflows", (_req, res) => {
-  res.json({ message: "Workflow routes - Phase 5" });
-});
 
 // ============================================================================
 // ERROR HANDLING

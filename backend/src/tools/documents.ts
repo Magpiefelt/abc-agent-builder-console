@@ -14,7 +14,11 @@
  * - Timeout protection
  */
 
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { logger } from "../services/logger.js";
+import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -23,31 +27,6 @@ import { logger } from "../services/logger.js";
 const USER_AGENT = "GoA-ABC-Bot/1.0 (+https://gov.ab.ca)";
 const FETCH_TIMEOUT_MS = 60000; // 60 seconds for large files
 const MAX_DOWNLOAD_SIZE = 50 * 1024 * 1024; // 50MB max download
-
-// ============================================================================
-// SHARED UTILITIES
-// ============================================================================
-
-/**
- * Check if a hostname is private/internal (SSRF protection).
- */
-function isPrivateHost(hostname: string): boolean {
-  const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"];
-  if (blockedHosts.includes(hostname.toLowerCase())) return true;
-
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-    if (a === 10) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 0) return true;
-  }
-
-  return false;
-}
 
 /**
  * Fetch a remote file as a Buffer with security checks.
@@ -64,7 +43,7 @@ async function fetchFileBuffer(url: string): Promise<{ buffer: Buffer; contentTy
     return { error: `Unsupported protocol: "${parsedUrl.protocol}"` };
   }
 
-  if (isPrivateHost(parsedUrl.hostname)) {
+  if (isPrivateOrReservedHost(parsedUrl.hostname)) {
     return { error: "Cannot access private or internal network addresses." };
   }
 
@@ -388,39 +367,94 @@ export async function extractZipFiles(params: Record<string, unknown>): Promise<
 }
 
 // ============================================================================
-// OCR TOOL (STUB — requires external service)
+// OCR TOOL (Tesseract.js)
 // ============================================================================
 
-/**
- * OCR image text extraction.
- * This is a stub that returns a helpful message about configuration.
- * Full implementation requires Tesseract.js or an external OCR API.
- */
-export async function ocrImage(params: Record<string, unknown>): Promise<{
+export interface OcrResult {
   success: boolean;
   text?: string;
+  confidence?: number;
+  language?: string;
   error?: string;
-}> {
+}
+
+interface TesseractWorker {
+  recognize(image: Buffer): Promise<{ data: { text: string; confidence: number } }>;
+  terminate(): Promise<unknown>;
+}
+
+interface TesseractCreateWorkerOptions {
+  cachePath?: string;
+  langPath?: string;
+}
+
+interface TesseractModule {
+  createWorker(language: string, oem?: number, options?: TesseractCreateWorkerOptions): Promise<TesseractWorker>;
+}
+
+// Persist Tesseract's ~10MB language data outside the current working directory
+// so the file isn't re-downloaded on every cwd change.
+const TESSERACT_CACHE_DIR = join(tmpdir(), "abc-tesseract-cache");
+
+/**
+ * Extract text from an image using Tesseract.js. Spawns a fresh worker per
+ * call and terminates it in a `finally` block — predictable lifecycle inside
+ * the 30s dispatcher timeout.
+ *
+ * First call may take ~5-8s extra to download language data (~10MB) from CDN.
+ * Subsequent calls in the same process reuse the cached download.
+ */
+export async function ocrImage(params: Record<string, unknown>): Promise<OcrResult> {
   const url = params.url as string;
-  const _language = (params.language as string) || "eng";
+  const language = ((params.language as string) || "eng").trim();
 
   if (!url) {
     return { success: false, error: "URL parameter is required." };
   }
 
-  // Validate URL
-  try {
-    const parsedUrl = new URL(url);
-    if (isPrivateHost(parsedUrl.hostname)) {
-      return { success: false, error: "Cannot access private or internal network addresses." };
-    }
-  } catch {
-    return { success: false, error: `Invalid URL: "${url}"` };
+  const fetchResult = await fetchFileBuffer(url);
+  if ("error" in fetchResult) {
+    return { success: false, error: fetchResult.error };
   }
 
-  // Stub: OCR requires Tesseract.js or external API
-  return {
-    success: false,
-    error: "OCR is not yet fully configured. Install tesseract.js or configure an external OCR service. The agent should note this limitation and suggest alternative approaches.",
-  };
+  let tesseract: TesseractModule;
+  try {
+    const imported = await import("tesseract.js");
+    const mod = (imported as { default?: unknown }).default ?? imported;
+    if (typeof (mod as { createWorker?: unknown }).createWorker !== "function") {
+      return { success: false, error: "tesseract.js package does not expose createWorker." };
+    }
+    tesseract = mod as TesseractModule;
+  } catch (err) {
+    return { success: false, error: `tesseract.js failed to load: ${(err as Error).message}` };
+  }
+
+  let worker: TesseractWorker | null = null;
+  try {
+    // Ensure the cache directory exists — Tesseract's writeCache uses fs.writeFile
+    // without mkdir, so a missing dir silently fails and forces a re-download.
+    mkdirSync(TESSERACT_CACHE_DIR, { recursive: true });
+  } catch (err) {
+    logger.warn("Failed to create Tesseract cache dir", { dir: TESSERACT_CACHE_DIR, error: (err as Error).message });
+  }
+  try {
+    worker = await tesseract.createWorker(language, undefined, { cachePath: TESSERACT_CACHE_DIR });
+  } catch (err) {
+    logger.error("Tesseract worker init failed", err, { language });
+    return { success: false, error: `Tesseract worker init failed: ${(err as Error).message}` };
+  }
+
+  try {
+    const { data } = await worker.recognize(fetchResult.buffer);
+    return { success: true, text: data.text, confidence: data.confidence, language };
+  } catch (err) {
+    logger.error("OCR failed", err, { url, language });
+    return { success: false, error: `OCR failed: ${(err as Error).message}` };
+  } finally {
+    try {
+      await worker.terminate();
+    } catch (err) {
+      logger.warn("Tesseract worker terminate failed", { error: (err as Error).message });
+    }
+  }
 }

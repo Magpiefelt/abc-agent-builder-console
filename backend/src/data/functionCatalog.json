@@ -1,0 +1,391 @@
+{
+  "functions": [
+    {
+      "name": "to_upper",
+      "category": "text-transform",
+      "description": "Convert input string to upper case.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "to_lower",
+      "category": "text-transform",
+      "description": "Convert input string to lower case.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "trim",
+      "category": "text-transform",
+      "description": "Remove leading and trailing whitespace from input.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "slugify",
+      "category": "text-transform",
+      "description": "Convert input string to a URL-friendly slug (lowercase, hyphens, ASCII).",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "truncate",
+      "category": "text-transform",
+      "description": "Truncate input to a maximum length, optionally appending an ellipsis.",
+      "params": [
+        { "name": "maxLength", "type": "number", "required": true, "default": 200, "description": "Maximum number of characters to keep." },
+        { "name": "ellipsis", "type": "string", "required": false, "default": "…", "description": "String appended when truncation occurs." }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "replace",
+      "category": "text-transform",
+      "description": "Replace all occurrences of a substring (or regex) in the input.",
+      "params": [
+        { "name": "find", "type": "string", "required": true, "description": "Pattern to find (literal string or regex source)." },
+        { "name": "replacement", "type": "string", "required": true, "default": "" },
+        { "name": "regex", "type": "boolean", "required": false, "default": false, "description": "When true, treat `find` as a regular expression." }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "template_render",
+      "category": "text-transform",
+      "description": "Render a Mustache-style template using upstream object as context. {{var}} placeholders.",
+      "params": [
+        { "name": "template", "type": "string", "required": true, "description": "Template string with {{var}} placeholders." }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "markdown_to_text",
+      "category": "text-transform",
+      "description": "Strip Markdown formatting and return plain text.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "extract_text_between",
+      "category": "text-transform",
+      "description": "Extract substring between a start and end delimiter (first match).",
+      "params": [
+        { "name": "start", "type": "string", "required": true },
+        { "name": "end", "type": "string", "required": true }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "concat",
+      "category": "text-transform",
+      "description": "Concatenate the upstream input with an additional string.",
+      "params": [
+        { "name": "suffix", "type": "string", "required": false, "default": "" },
+        { "name": "prefix", "type": "string", "required": false, "default": "" },
+        { "name": "separator", "type": "string", "required": false, "default": "" }
+      ],
+      "outputType": "string"
+    },
+
+    {
+      "name": "add",
+      "category": "math",
+      "description": "Add a number to the upstream numeric input.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "subtract",
+      "category": "math",
+      "description": "Subtract a number from the upstream numeric input.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "multiply",
+      "category": "math",
+      "description": "Multiply the upstream numeric input by a value.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "divide",
+      "category": "math",
+      "description": "Divide the upstream numeric input by a value.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "round",
+      "category": "math",
+      "description": "Round the upstream numeric input to a given number of decimal places.",
+      "params": [
+        { "name": "decimals", "type": "number", "required": false, "default": 0 }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "clamp",
+      "category": "math",
+      "description": "Clamp the upstream numeric input between min and max.",
+      "params": [
+        { "name": "min", "type": "number", "required": true },
+        { "name": "max", "type": "number", "required": true }
+      ],
+      "outputType": "number"
+    },
+    {
+      "name": "percent",
+      "category": "math",
+      "description": "Convert a fraction (0..1) to a percent string with optional precision.",
+      "params": [
+        { "name": "decimals", "type": "number", "required": false, "default": 1 }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "sum_array",
+      "category": "math",
+      "description": "Sum a numeric array provided as the upstream input.",
+      "params": [],
+      "outputType": "number"
+    },
+
+    {
+      "name": "json_parse",
+      "category": "parse",
+      "description": "Parse the upstream string input as JSON.",
+      "params": [],
+      "outputType": "any"
+    },
+    {
+      "name": "json_stringify",
+      "category": "parse",
+      "description": "Stringify the upstream input as JSON, optionally pretty-printed.",
+      "params": [
+        { "name": "pretty", "type": "boolean", "required": false, "default": false }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "csv_parse",
+      "category": "parse",
+      "description": "Parse the upstream CSV string into a 2-D array of strings.",
+      "params": [
+        { "name": "delimiter", "type": "string", "required": false, "default": "," }
+      ],
+      "outputType": "array"
+    },
+    {
+      "name": "csv_to_json",
+      "category": "parse",
+      "description": "Parse the upstream CSV string into an array of objects keyed by the header row.",
+      "params": [
+        { "name": "delimiter", "type": "string", "required": false, "default": "," }
+      ],
+      "outputType": "array"
+    },
+    {
+      "name": "yaml_parse",
+      "category": "parse",
+      "description": "Parse the upstream YAML string into a JS value (subset: scalars, mappings, sequences).",
+      "params": [],
+      "outputType": "any"
+    },
+    {
+      "name": "url_parse",
+      "category": "parse",
+      "description": "Parse the upstream URL string into { protocol, host, pathname, query, hash }.",
+      "params": [],
+      "outputType": "object"
+    },
+    {
+      "name": "regex_match",
+      "category": "parse",
+      "description": "Return the first regex match (or null) of the pattern against the upstream input.",
+      "params": [
+        { "name": "pattern", "type": "string", "required": true },
+        { "name": "flags", "type": "string", "required": false, "default": "" }
+      ],
+      "outputType": "any"
+    },
+    {
+      "name": "regex_extract_all",
+      "category": "parse",
+      "description": "Return all regex matches of the pattern against the upstream input as an array of strings.",
+      "params": [
+        { "name": "pattern", "type": "string", "required": true },
+        { "name": "flags", "type": "string", "required": false, "default": "g" }
+      ],
+      "outputType": "array"
+    },
+    {
+      "name": "date_parse_iso",
+      "category": "parse",
+      "description": "Parse the upstream string as an ISO-8601 date; returns epoch milliseconds.",
+      "params": [],
+      "outputType": "number"
+    },
+
+    {
+      "name": "date_format",
+      "category": "format",
+      "description": "Format an upstream epoch (ms) or ISO string using a token pattern (yyyy, MM, dd, HH, mm, ss).",
+      "params": [
+        { "name": "pattern", "type": "string", "required": true, "default": "yyyy-MM-dd" },
+        { "name": "timezone", "type": "string", "required": false, "default": "America/Edmonton" }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "number_format",
+      "category": "format",
+      "description": "Format the upstream number with locale separators and optional fixed decimals.",
+      "params": [
+        { "name": "decimals", "type": "number", "required": false, "default": 2 },
+        { "name": "locale", "type": "string", "required": false, "default": "en-CA" }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "currency_cad",
+      "category": "format",
+      "description": "Format the upstream number as Canadian-dollar currency.",
+      "params": [
+        { "name": "decimals", "type": "number", "required": false, "default": 2 }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "json_pretty",
+      "category": "format",
+      "description": "Pretty-print the upstream value (or JSON string) with 2-space indentation.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "markdown_table",
+      "category": "format",
+      "description": "Format an upstream array of objects as a Markdown pipe table.",
+      "params": [
+        { "name": "columns", "type": "array", "required": false, "description": "Optional ordered column names. Defaults to keys of the first row." }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "wrap_code_fence",
+      "category": "format",
+      "description": "Wrap the upstream string in a Markdown fenced code block.",
+      "params": [
+        { "name": "language", "type": "string", "required": false, "default": "" }
+      ],
+      "outputType": "string"
+    },
+    {
+      "name": "title_case",
+      "category": "format",
+      "description": "Convert the upstream string to title case (English heuristics, preserves all-caps words).",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "kebab_case",
+      "category": "format",
+      "description": "Convert the upstream string to kebab-case.",
+      "params": [],
+      "outputType": "string"
+    },
+    {
+      "name": "snake_case",
+      "category": "format",
+      "description": "Convert the upstream string to snake_case.",
+      "params": [],
+      "outputType": "string"
+    },
+
+    {
+      "name": "equals",
+      "category": "branch",
+      "description": "Branch when the upstream input equals the comparison value (strict equality).",
+      "params": [
+        { "name": "value", "type": "string", "required": true }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "not_equals",
+      "category": "branch",
+      "description": "Branch when the upstream input does not equal the comparison value.",
+      "params": [
+        { "name": "value", "type": "string", "required": true }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "contains",
+      "category": "branch",
+      "description": "Branch when the upstream string contains the substring.",
+      "params": [
+        { "name": "substring", "type": "string", "required": true },
+        { "name": "caseInsensitive", "type": "boolean", "required": false, "default": false }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "starts_with",
+      "category": "branch",
+      "description": "Branch when the upstream string starts with the prefix.",
+      "params": [
+        { "name": "prefix", "type": "string", "required": true },
+        { "name": "caseInsensitive", "type": "boolean", "required": false, "default": false }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "regex_test",
+      "category": "branch",
+      "description": "Branch when a regex pattern matches the upstream string.",
+      "params": [
+        { "name": "pattern", "type": "string", "required": true },
+        { "name": "flags", "type": "string", "required": false, "default": "" }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "gt",
+      "category": "branch",
+      "description": "Branch when the upstream number is greater than the threshold.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "lt",
+      "category": "branch",
+      "description": "Branch when the upstream number is less than the threshold.",
+      "params": [
+        { "name": "value", "type": "number", "required": true }
+      ],
+      "outputType": "object"
+    },
+    {
+      "name": "between",
+      "category": "branch",
+      "description": "Branch when the upstream number is between min and max (inclusive).",
+      "params": [
+        { "name": "min", "type": "number", "required": true },
+        { "name": "max", "type": "number", "required": true }
+      ],
+      "outputType": "object"
+    }
+  ]
+}

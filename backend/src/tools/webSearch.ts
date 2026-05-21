@@ -9,6 +9,7 @@
 
 import { env } from "../config/env.js";
 import { logger } from "../services/logger.js";
+import { entBraveSearch, isEntToolsConfigured } from "../services/entToolsClient.js";
 
 // ============================================================================
 // TYPES
@@ -41,6 +42,22 @@ export async function braveSearch(params: Record<string, unknown>): Promise<Sear
 
   if (!query || typeof query !== "string" || query.trim().length === 0) {
     return { success: false, error: "A non-empty search query is required." };
+  }
+
+  // Route through GoA Enterprise Tools when configured
+  if (isEntToolsConfigured()) {
+    try {
+      const { results } = await entBraveSearch(query.trim(), { count: numResults });
+      return {
+        success: true,
+        results,
+        query: query.trim(),
+        totalResults: results.length,
+      };
+    } catch (err) {
+      logger.error("Ent Tools brave_search failed", err);
+      return { success: false, error: `Ent Tools brave_search failed: ${(err as Error).message}` };
+    }
   }
 
   if (!env.BRAVE_SEARCH_API_KEY) {

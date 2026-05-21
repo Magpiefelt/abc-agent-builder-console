@@ -14,8 +14,8 @@
  * - Truncation strategy for large memory states
  */
 
-import systemPromptTemplate from "../data/systemPromptTemplate.json" assert { type: "json" };
-import toolsManifest from "../data/toolsManifest.json" assert { type: "json" };
+import systemPromptTemplate from "../data/systemPromptTemplate.json" with { type: "json" };
+import toolsManifest from "../data/toolsManifest.json" with { type: "json" };
 import { logger } from "./logger.js";
 
 // ============================================================================

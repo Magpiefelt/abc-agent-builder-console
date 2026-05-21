@@ -1,16 +1,11 @@
 /**
  * Frontend mirrors of backend DTOs. Kept hand-synced (no shared package).
  * See backend/src/services/auditLogger.ts, piiDetector.ts, llmProvider.ts.
+ *
+ * AuthUser lives in `@/types/auth` (Stream A); re-exported here for convenience.
  */
 
-export interface AuthUser {
-  id: string;
-  entraId: string;
-  email: string;
-  displayName: string;
-  ministryCode: string | null;
-  role: "admin" | "user" | "viewer";
-}
+export type { AuthUser } from "@/types/auth";
 
 export interface AuditEntry {
   id: number;

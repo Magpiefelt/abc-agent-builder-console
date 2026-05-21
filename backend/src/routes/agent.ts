@@ -28,7 +28,9 @@ import {
   isSessionRunning,
 } from "../services/agentOrchestrator.js";
 import { getActiveModels, validateModelClassification, isProviderConfigured } from "../services/llmProvider.js";
+import { getTemplateSections } from "../services/promptBuilder.js";
 import { scanForPII } from "../services/piiDetector.js";
+import { query } from "../config/database.js";
 
 const router: express.Router = Router();
 
@@ -324,6 +326,93 @@ router.get("/sessions/:id", async (req: Request, res: Response) => {
     createdAt: session.createdAt,
     isRunning: isSessionRunning(id),
   });
+});
+
+// ============================================================================
+// ARTIFACTS
+// ============================================================================
+
+interface ArtifactRow {
+  id: string;
+  artifact_type: string;
+  title: string;
+  mime_type: string | null;
+  size_bytes: number | null;
+  iteration: number | null;
+  created_at: string;
+  description: string | null;
+  content?: string;
+}
+
+/**
+ * GET /api/agent/sessions/:id/artifacts
+ * List artifact metadata (no content) for a session.
+ */
+router.get("/sessions/:id/artifacts", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const result = await query<ArtifactRow>(
+      `SELECT id, artifact_type, title, description, mime_type, size_bytes, iteration, created_at
+       FROM artifacts
+       WHERE session_id = $1
+       ORDER BY created_at DESC, id DESC`,
+      [id]
+    );
+    res.json({ artifacts: result.rows });
+  } catch (err) {
+    logger.error("Failed to list session artifacts", err as Error, { sessionId: id });
+    res.status(500).json({ error: "Failed to list artifacts." });
+  }
+});
+
+/**
+ * GET /api/agent/sessions/:id/artifacts/:artifactId
+ * Fetch a single artifact's full content (base64 for images/audio).
+ */
+router.get("/sessions/:id/artifacts/:artifactId", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const artifactId = req.params.artifactId as string;
+
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const result = await query<ArtifactRow>(
+      `SELECT id, artifact_type, title, description, content, mime_type, size_bytes, iteration, created_at
+       FROM artifacts
+       WHERE session_id = $1 AND id = $2`,
+      [id, artifactId]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "Artifact not found." });
+      return;
+    }
+    res.json({ artifact: result.rows[0] });
+  } catch (err) {
+    logger.error("Failed to fetch artifact", err as Error, { sessionId: id, artifactId });
+    res.status(500).json({ error: "Failed to fetch artifact." });
+  }
+});
+
+// ============================================================================
+// PROMPT TEMPLATE
+// ============================================================================
+
+/**
+ * GET /api/agent/prompt-template
+ * Returns the base prompt sections so the customizer can render an editor.
+ */
+router.get("/prompt-template", (_req: Request, res: Response) => {
+  res.json({ sections: getTemplateSections() });
 });
 
 // ============================================================================

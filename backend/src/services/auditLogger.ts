@@ -14,6 +14,7 @@
  */
 
 import { query } from "../config/database.js";
+import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 
 // ============================================================================
@@ -111,6 +112,12 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
       ministryCode: entry.ministryCode,
       details: entry.details,
     });
+
+    // Skip DB persistence when no database is configured. Avoids spamming the
+    // error log with ECONNREFUSED on every audit call in smoke tests or
+    // misconfigured dev environments. In production with DATABASE_URL set,
+    // a real DB failure still surfaces loudly via the catch below.
+    if (!env.DATABASE_URL) return;
 
     // Persist to database for long-term audit trail
     await query(

@@ -50,6 +50,18 @@ export interface ToolContext {
   ministryCode: string | null;
   iteration: number;
   memory: SessionMemory;
+  /**
+   * When set, the tool dispatcher is running inside a workflow execution
+   * rather than a free-agent session. Memory tools that persist (e.g.
+   * create_artifact) write to workflow_execution_id and leave session_id NULL.
+   */
+  workflowExecutionId?: string | null;
+  /**
+   * Optional sink for orchestrator-level SSE events emitted by tools
+   * (e.g. `artifact_created`). Kept optional so tools never depend on a
+   * Response object — the orchestrator wires this when streaming.
+   */
+  onEvent?: (event: { type: string; [key: string]: unknown }) => void;
 }
 
 // ============================================================================
@@ -60,6 +72,7 @@ const SCRATCHPAD_MAX_SIZE = 50 * 1024; // 50KB
 const BLACKBOARD_ENTRY_MAX_SIZE = 10 * 1024; // 10KB per entry
 const BLACKBOARD_MAX_ENTRIES = 200;
 const TOOL_TIMEOUT_MS = 30_000; // 30 seconds per tool call
+const MAX_ARTIFACT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB per artifact
 
 // ============================================================================
 // EDGE TOOL HANDLER REGISTRY
@@ -68,9 +81,13 @@ const TOOL_TIMEOUT_MS = 30_000; // 30 seconds per tool call
 /**
  * Tool handler function signature.
  * Each Phase 3 tool file exports functions matching this signature.
+ *
+ * `context` is optional — single-arg handlers (e.g. web_scrape) ignore it.
+ * Tools that need to persist artifacts, look up ministry scope, or apply
+ * per-user rate limits accept it as a second parameter.
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-type EdgeToolHandler = (params: Record<string, unknown>) => Promise<any>;
+type EdgeToolHandler = (params: Record<string, unknown>, context?: ToolContext) => Promise<any>;
 
 /**
  * Registry of edge tool handlers.
@@ -275,7 +292,15 @@ function handleMemoryTool(
         return failResult(toolCall.tool, `Invalid type "${type}". Must be one of: ${validTypes.join(", ")}`, startTime);
       }
 
-      // Store artifact in database (fire and forget)
+      // Pre-check the 10MB cap so the agent gets a clear error synchronously
+      // rather than a silent fire-and-forget failure.
+      const contentSize = Buffer.byteLength(content, "utf-8");
+      if (contentSize > MAX_ARTIFACT_CONTENT_BYTES) {
+        return failResult(toolCall.tool, `Artifact content exceeds ${MAX_ARTIFACT_CONTENT_BYTES / (1024 * 1024)}MB limit (got ${Math.round(contentSize / (1024 * 1024))}MB).`, startTime);
+      }
+
+      // Persist artifact (fire and forget — surfaces errors via logger). Emits artifact_created
+      // SSE event via context.onEvent when wired by the orchestrator.
       storeArtifact(context, { title, type, content, mimeType, description }).catch((err) => {
         logger.error("Failed to store artifact", err as Error, { sessionId: context.sessionId, title });
       });
@@ -323,9 +348,9 @@ async function handleEdgeTool(
   const handler = edgeToolHandlers.get(toolCall.tool);
   if (handler) {
     try {
-      // Execute with timeout
+      // Execute with timeout (pass context so tools that need it can use it)
       const handlerResult = await withTimeout(
-        handler(toolCall.params),
+        handler(toolCall.params, context),
         TOOL_TIMEOUT_MS,
         `Tool "${toolCall.tool}" timed out after ${TOOL_TIMEOUT_MS / 1000}s`
       );
@@ -420,25 +445,78 @@ async function withTimeout<T>(promise: Promise<T>, ms: number, message: string):
   }
 }
 
-async function storeArtifact(
+/**
+ * Persist an artifact to the database and fire the optional SSE callback on
+ * the context. Returns the inserted row id and created_at.
+ * Exposed so tool handlers (e.g. image_generation, elevenlabs_tts) can persist
+ * artifacts they generate.
+ */
+export async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
-): Promise<void> {
-  await query(
-    `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [
-      context.sessionId,
-      context.userId,
-      artifact.type,
-      artifact.title,
-      artifact.content,
-      artifact.description || null,
-      artifact.mimeType || null,
-      Buffer.byteLength(artifact.content, "utf-8"),
-      context.iteration,
-    ]
-  );
+): Promise<{ id: string | null; sizeBytes: number; persisted: boolean }> {
+  const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
+
+  // 10MB cap applies before any persistence attempt so misbehaving tools
+  // get a clear synchronous error rather than a silent DB rejection.
+  if (sizeBytes > MAX_ARTIFACT_CONTENT_BYTES) {
+    throw new Error(
+      `Artifact content exceeds ${MAX_ARTIFACT_CONTENT_BYTES / (1024 * 1024)}MB limit (got ${Math.round(sizeBytes / (1024 * 1024))}MB).`
+    );
+  }
+
+  // An artifact belongs to either a workflow execution (Stream C) or a free-agent
+  // session (default). The artifacts table CHECK constraint requires exactly one.
+  const isWorkflow = !!context.workflowExecutionId;
+
+  let id: string | null = null;
+  let persisted = false;
+  try {
+    const result = await query<{ id: string }>(
+      `INSERT INTO artifacts (session_id, workflow_execution_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+       RETURNING id`,
+      [
+        isWorkflow ? null : context.sessionId,
+        isWorkflow ? context.workflowExecutionId : null,
+        context.userId,
+        artifact.type,
+        artifact.title,
+        artifact.content,
+        artifact.description || null,
+        artifact.mimeType || null,
+        sizeBytes,
+        context.iteration,
+      ]
+    );
+    id = result.rows[0]?.id ?? null;
+    persisted = id !== null;
+  } catch (err) {
+    // Persistence failed (e.g. dev mode without a DB). The artifact is still
+    // surfaced to the live UI via the SSE event below; downstream consumers
+    // that need the row will retry/refresh on next session load.
+    logger.warn("Failed to persist artifact, emitting transient SSE only", {
+      sessionId: context.sessionId,
+      workflowExecutionId: context.workflowExecutionId,
+      title: artifact.title,
+      error: (err as Error).message,
+    });
+  }
+
+  context.onEvent?.({
+    type: "artifact_created",
+    iteration: context.iteration,
+    artifact: {
+      id,
+      title: artifact.title,
+      type: artifact.type,
+      mimeType: artifact.mimeType ?? null,
+      description: artifact.description ?? null,
+      size: sizeBytes,
+    },
+  });
+
+  return { id, sizeBytes, persisted };
 }
 
 // ============================================================================

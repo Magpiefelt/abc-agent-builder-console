@@ -13,6 +13,7 @@
 
 import { logger } from "../services/logger.js";
 import { auditSecurityEvent, AuditAction } from "../services/auditLogger.js";
+import { isPrivateOrReservedHost } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -22,50 +23,6 @@ const USER_AGENT = "GoA-ABC-Bot/1.0 (+https://gov.ab.ca)";
 const MAX_RESPONSE_SIZE = 2 * 1024 * 1024; // 2MB
 const FETCH_TIMEOUT_MS = 30000; // 30 seconds
 const DEFAULT_MAX_CHARS = 50000;
-
-// ============================================================================
-// PRIVATE IP BLOCKING
-// ============================================================================
-
-/**
- * Check if a hostname resolves to a private/internal IP range.
- * This prevents SSRF attacks where the agent could be tricked into
- * accessing internal services.
- */
-function isPrivateOrReservedHost(hostname: string): boolean {
-  // Block obvious private hostnames
-  const blockedHosts = ["localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"];
-  if (blockedHosts.includes(hostname.toLowerCase())) {
-    return true;
-  }
-
-  // Check for IP address patterns
-  const ipv4Match = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-  if (ipv4Match) {
-    const [, a, b] = ipv4Match.map(Number);
-
-    // 10.0.0.0/8
-    if (a === 10) return true;
-    // 172.16.0.0/12
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    // 192.168.0.0/16
-    if (a === 192 && b === 168) return true;
-    // 127.0.0.0/8
-    if (a === 127) return true;
-    // 169.254.0.0/16 (link-local)
-    if (a === 169 && b === 254) return true;
-    // 0.0.0.0/8
-    if (a === 0) return true;
-  }
-
-  // Block internal TLDs
-  const blockedTLDs = [".local", ".internal", ".corp", ".lan"];
-  if (blockedTLDs.some((tld) => hostname.toLowerCase().endsWith(tld))) {
-    return true;
-  }
-
-  return false;
-}
 
 // ============================================================================
 // HTML TEXT EXTRACTION
