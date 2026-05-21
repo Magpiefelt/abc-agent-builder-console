@@ -49,6 +49,14 @@ const filteredTools = computed(() => {
   return groups
 })
 
+const noMatches = computed(
+  () =>
+    search.value.length > 0 &&
+    filteredAgents.value.length === 0 &&
+    Object.keys(filteredFunctions.value).length === 0 &&
+    Object.keys(filteredTools.value).length === 0,
+)
+
 function matches(query: string, ...fields: string[]): boolean {
   if (!query) return true
   const q = query.toLowerCase()
@@ -104,8 +112,22 @@ function noteDefaults(): Partial<NodeData> {
     </div>
 
     <div class="flex-1 overflow-y-auto">
+      <div
+        v-if="noMatches"
+        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center flex flex-col gap-2 items-center"
+      >
+        <span>Nothing matches "{{ search }}".</span>
+        <button
+          type="button"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+          @click="search = ''"
+        >
+          Clear search
+        </button>
+      </div>
+
       <!-- Agents -->
-      <details open class="border-b border-[var(--goa-color-border)]">
+      <details v-if="!noMatches" open class="border-b border-[var(--goa-color-border)]">
         <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
           Agents
         </summary>
@@ -124,7 +146,7 @@ function noteDefaults(): Partial<NodeData> {
       </details>
 
       <!-- Functions -->
-      <details class="border-b border-[var(--goa-color-border)]">
+      <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
         <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
           Functions
         </summary>
@@ -151,7 +173,7 @@ function noteDefaults(): Partial<NodeData> {
       </details>
 
       <!-- Tools -->
-      <details class="border-b border-[var(--goa-color-border)]">
+      <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
         <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
           Tools
         </summary>
@@ -173,7 +195,7 @@ function noteDefaults(): Partial<NodeData> {
       </details>
 
       <!-- Notes -->
-      <details class="border-b border-[var(--goa-color-border)]">
+      <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
         <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
           Notes
         </summary>

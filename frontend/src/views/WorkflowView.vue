@@ -4,6 +4,7 @@ import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useToast } from '@/composables/useToast'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
 import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
@@ -17,6 +18,12 @@ const router = useRouter()
 const store = useWorkflowStore()
 const toast = useToast()
 const { current, library, dirty, selectedNode, execution, error } = storeToRefs(store)
+
+useDocumentTitle(() => {
+  if (!current.value) return 'Workflow'
+  const name = current.value.name?.trim() || 'Untitled workflow'
+  return dirty.value ? `${name} •` : name
+})
 
 const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
 const models = [

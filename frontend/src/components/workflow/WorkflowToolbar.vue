@@ -64,7 +64,8 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
       :value="workflow.name"
       @input="emit('update:name', ($event.target as HTMLInputElement).value)"
       aria-label="Workflow name"
-      class="text-base font-semibold bg-transparent border-b border-transparent hover:border-[var(--goa-color-border)] focus:border-[var(--goa-color-primary)] focus:outline-none px-1 min-w-[200px]"
+      placeholder="Untitled workflow"
+      class="text-base font-semibold bg-transparent border-b border-transparent hover:border-[var(--goa-color-border)] focus:border-[var(--goa-color-primary)] focus:outline-none px-1 min-w-[200px] placeholder:italic placeholder:text-[var(--goa-color-text-secondary)] placeholder:font-normal"
     />
 
     <span class="text-xs text-[var(--goa-color-text-secondary)]">v{{ workflow.version }}</span>

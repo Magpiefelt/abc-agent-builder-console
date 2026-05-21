@@ -9,10 +9,22 @@ import ScratchpadViewer from '@/components/freeAgent/ScratchpadViewer.vue'
 import ArtifactsPanel from '@/components/freeAgent/ArtifactsPanel.vue'
 import FinalReportPanel from '@/components/freeAgent/FinalReportPanel.vue'
 import AgentCanvas from '@/components/freeAgent/AgentCanvas.vue'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
 
 type MemoryTab = 'blackboard' | 'scratchpad' | 'artifacts'
 
 const session = useAgentSessionStore()
+
+useDocumentTitle(() => {
+  switch (session.status) {
+    case 'running': return 'Free Agent · running'
+    case 'paused': return 'Free Agent · paused'
+    case 'needs_assistance': return 'Free Agent · needs input'
+    case 'completed': return 'Free Agent · done'
+    case 'error': return 'Free Agent · error'
+    default: return 'Free Agent'
+  }
+})
 const memoryTab = ref<MemoryTab>('blackboard')
 const taskOpenMobile = ref(true)
 const sheetOpenMobile = ref(false)

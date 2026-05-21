@@ -5,6 +5,9 @@ import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
+
+useDocumentTitle(() => 'Workflows')
 
 const router = useRouter()
 const store = useWorkflowStore()

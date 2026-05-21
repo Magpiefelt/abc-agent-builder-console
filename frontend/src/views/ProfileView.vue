@@ -4,6 +4,9 @@ import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserMemoryStore } from '@/stores/userMemory'
 import { useToast } from '@/composables/useToast'
+import { useDocumentTitle } from '@/composables/useDocumentTitle'
+
+useDocumentTitle(() => 'Profile')
 
 const auth = useAuthStore()
 const memory = useUserMemoryStore()
