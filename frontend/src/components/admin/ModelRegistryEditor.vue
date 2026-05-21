@@ -37,14 +37,14 @@ async function toggle(model: ModelRegistryEntry) {
   }
 }
 
-function classificationBadge(c: string): string {
+function classificationBadgeType(c: string): 'emergency' | 'important' | 'success' {
   switch (c) {
     case 'protected_b':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'emergency'
     case 'protected_a':
-      return 'bg-yellow-100 text-yellow-800'
+      return 'important'
     default:
-      return 'bg-green-100 text-[var(--goa-color-success)]'
+      return 'success'
   }
 }
 
@@ -66,66 +66,57 @@ onActivated(() => {
           Toggle approved LLMs. Inactive models cannot be selected in new sessions.
         </p>
       </div>
-      <button
-        @click="load"
-        class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded hover:bg-[var(--goa-color-primary-dark)]"
-      >
+      <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
         Refresh
-      </button>
+      </goa-button>
     </header>
 
-    <div v-if="error" class="p-3 bg-red-50 border border-[var(--goa-color-error)] text-[var(--goa-color-error)] text-sm rounded">
+    <goa-callout v-if="error" type="emergency" heading="Couldn't update model registry">
       {{ error }}
-    </div>
+    </goa-callout>
 
-    <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]">
-          <tr>
-            <th class="text-left px-3 py-2 font-semibold">Model</th>
-            <th class="text-left px-3 py-2 font-semibold">Provider</th>
-            <th class="text-left px-3 py-2 font-semibold">Residency</th>
-            <th class="text-left px-3 py-2 font-semibold">Max Classification</th>
-            <th class="text-left px-3 py-2 font-semibold">Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="5" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">Loading…</td>
-          </tr>
-          <tr v-else-if="models.length === 0">
-            <td colspan="5" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">No models registered. Seed `model_registry` to begin.</td>
-          </tr>
-          <tr v-for="m in models" :key="m.id" class="border-t border-[var(--goa-color-border)] hover:bg-gray-50">
-            <td class="px-3 py-2">
-              <div class="font-medium">{{ m.display_name }}</div>
-              <div class="font-mono text-xs text-[var(--goa-color-text-secondary)]">{{ m.model_id }}</div>
-            </td>
-            <td class="px-3 py-2 font-mono text-xs">{{ m.provider }}</td>
-            <td class="px-3 py-2 text-xs uppercase">{{ m.data_residency }}</td>
-            <td class="px-3 py-2">
-              <span :class="['px-2 py-0.5 rounded text-xs font-medium', classificationBadge(m.max_classification)]">
-                {{ m.max_classification }}
-              </span>
-            </td>
-            <td class="px-3 py-2">
-              <button
-                @click="toggle(m)"
-                :disabled="updatingId === m.id"
-                :class="[
-                  'px-3 py-1 rounded text-xs font-medium',
-                  m.is_active
-                    ? 'bg-[var(--goa-color-success)] text-white'
-                    : 'bg-gray-300 text-gray-700',
-                  updatingId === m.id ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80',
-                ]"
-              >
-                {{ updatingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive' }}
-              </button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <goa-table width="100%" variant="normal" version="2">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Provider</th>
+          <th>Residency</th>
+          <th>Max Classification</th>
+          <th>Active</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="loading">
+          <td colspan="5" class="text-center">Loading…</td>
+        </tr>
+        <tr v-else-if="models.length === 0">
+          <td colspan="5" class="text-center">No models registered. Seed `model_registry` to begin.</td>
+        </tr>
+        <tr v-for="m in models" :key="m.id">
+          <td>
+            <div class="font-medium">{{ m.display_name }}</div>
+            <div class="font-mono text-xs text-[var(--goa-color-text-secondary)]">{{ m.model_id }}</div>
+          </td>
+          <td class="font-mono text-xs">{{ m.provider }}</td>
+          <td class="text-xs uppercase">{{ m.data_residency }}</td>
+          <td>
+            <goa-badge
+              :type="classificationBadgeType(m.max_classification)"
+              :content="m.max_classification"
+            ></goa-badge>
+          </td>
+          <td>
+            <goa-button
+              :type="m.is_active ? 'primary' : 'secondary'"
+              size="compact"
+              :disabled="updatingId === m.id || undefined"
+              @_click="toggle(m)"
+            >
+              {{ updatingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive' }}
+            </goa-button>
+          </td>
+        </tr>
+      </tbody>
+    </goa-table>
   </div>
 </template>

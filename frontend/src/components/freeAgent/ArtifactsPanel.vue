@@ -65,21 +65,15 @@ function sizeLabel(bytes: number): string {
 <template>
   <div class="flex flex-col gap-3 h-full min-h-0" aria-label="Artifacts panel">
     <div class="flex flex-wrap gap-1">
-      <button
+      <goa-button
         v-for="t in knownTypes"
         :key="t"
-        type="button"
-        @click="toggleType(t)"
-        :aria-pressed="activeTypes.has(t)"
-        :class="[
-          'px-2 py-0.5 rounded-full text-xs font-medium border focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]',
-          activeTypes.has(t)
-            ? 'bg-[var(--goa-color-primary)] text-white border-[var(--goa-color-primary)]'
-            : 'bg-[var(--goa-color-surface)] text-[var(--goa-color-text)] border-[var(--goa-color-border)]',
-        ]"
+        :type="activeTypes.has(t) ? 'primary' : 'secondary'"
+        size="compact"
+        @_click="toggleType(t)"
       >
         {{ typeLabel(t) }}
-      </button>
+      </goa-button>
     </div>
 
     <div class="overflow-y-auto flex-1 min-h-0 flex flex-col gap-2">
@@ -118,20 +112,8 @@ function sizeLabel(bytes: number): string {
             {{ a.description }}
           </p>
         </div>
-        <span
-          v-if="a.id"
-          class="shrink-0 text-[10px] uppercase tracking-wide text-[var(--goa-color-text-secondary)] px-2 py-1"
-          title="Download arrives with Stream D's artifact content endpoint."
-        >
-          Persisted
-        </span>
-        <span
-          v-else
-          class="shrink-0 text-[10px] uppercase tracking-wide text-[var(--goa-color-warning)] px-2 py-1"
-          title="In-memory only — backend wasn't able to persist this artifact."
-        >
-          Transient
-        </span>
+        <goa-badge v-if="a.id" type="midtone" content="Persisted"></goa-badge>
+        <goa-badge v-else type="important" content="Transient"></goa-badge>
       </article>
     </div>
   </div>

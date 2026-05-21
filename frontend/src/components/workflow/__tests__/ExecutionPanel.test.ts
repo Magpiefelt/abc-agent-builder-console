@@ -86,8 +86,8 @@ describe("ExecutionPanel", () => {
     const wrapper = mount(ExecutionPanel);
     expect(wrapper.text()).toContain("Researcher");
     expect(wrapper.text()).toContain("Summarize");
-    expect(wrapper.text()).toContain("completed");
-    expect(wrapper.text()).toContain("running");
+    expect(wrapper.find('goa-badge[content="completed"]').exists()).toBe(true);
+    expect(wrapper.find('goa-badge[content="running"]').exists()).toBe(true);
     expect(wrapper.text()).toContain("1.2 s");
   });
 
@@ -159,7 +159,7 @@ describe("ExecutionPanel", () => {
     );
 
     const wrapper = mount(ExecutionPanel);
-    expect(wrapper.text()).toContain("2 PII blocked");
+    expect(wrapper.find('goa-badge[content="2 PII blocked"]').exists()).toBe(true);
   });
 
   it("disables the Clear button while execution is running", () => {
@@ -169,8 +169,9 @@ describe("ExecutionPanel", () => {
     ]);
 
     const wrapper = mount(ExecutionPanel);
-    const clear = wrapper.find('button[aria-label="Clear execution results"]');
-    expect(clear.attributes("disabled")).toBeDefined();
+    const clear = wrapper.findAll("goa-button").find((b) => b.text().trim() === "Clear");
+    expect(clear).toBeDefined();
+    expect(clear!.attributes("disabled")).toBeDefined();
   });
 
   it("clears execution state when the Clear button is clicked after completion", async () => {
@@ -181,7 +182,12 @@ describe("ExecutionPanel", () => {
     );
 
     const wrapper = mount(ExecutionPanel);
-    await wrapper.find('button[aria-label="Clear execution results"]').trigger("click");
+    const clear = wrapper.findAll("goa-button").find((b) => b.text().trim() === "Clear");
+    expect(clear).toBeDefined();
+    // GoA web components emit `_click` instead of `click`; the store handler is
+    // bound via @_click, so dispatch that on the underlying element.
+    clear!.element.dispatchEvent(new CustomEvent("_click", { bubbles: true }));
+    await wrapper.vm.$nextTick();
     expect(store.execution).toBeNull();
   });
 });

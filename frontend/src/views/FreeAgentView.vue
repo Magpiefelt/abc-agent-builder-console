@@ -71,37 +71,21 @@ function selectTab(tab: MemoryTab): void {
       class="hidden md:flex md:flex-col md:w-80 md:shrink-0 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] h-full"
       aria-label="Agent memory viewer"
     >
-      <div class="flex gap-1 p-2 border-b border-[var(--goa-color-border)]" role="tablist" aria-label="Memory views">
-        <button
-          v-for="tab in (['blackboard', 'scratchpad', 'artifacts'] as MemoryTab[])"
-          :key="tab"
-          type="button"
-          role="tab"
-          :aria-selected="memoryTab === tab"
-          @click="memoryTab = tab"
-          :class="[
-            'px-3 py-1.5 text-sm font-medium rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]',
-            memoryTab === tab
-              ? 'bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]'
-              : 'text-[var(--goa-color-text-secondary)] hover:bg-[var(--goa-color-background)]',
-          ]"
+      <goa-tabs initialtab="1" class="flex-1 min-h-0 flex flex-col">
+        <goa-tab
+          :heading="session.blackboard.length > 0 ? `Blackboard (${session.blackboard.length})` : 'Blackboard'"
         >
-          {{ tab === 'blackboard' ? 'Blackboard' : tab === 'scratchpad' ? 'Scratchpad' : 'Artifacts' }}
-          <span
-            v-if="tab === 'blackboard' && session.blackboard.length > 0"
-            class="ml-1 text-xs"
-          >({{ session.blackboard.length }})</span>
-          <span
-            v-else-if="tab === 'artifacts' && session.artifacts.length > 0"
-            class="ml-1 text-xs"
-          >({{ session.artifacts.length }})</span>
-        </button>
-      </div>
-      <div class="flex-1 min-h-0 p-3 overflow-hidden">
-        <BlackboardViewer v-if="memoryTab === 'blackboard'" />
-        <ScratchpadViewer v-else-if="memoryTab === 'scratchpad'" />
-        <ArtifactsPanel v-else />
-      </div>
+          <div class="p-3 h-full"><BlackboardViewer /></div>
+        </goa-tab>
+        <goa-tab heading="Scratchpad">
+          <div class="p-3 h-full"><ScratchpadViewer /></div>
+        </goa-tab>
+        <goa-tab
+          :heading="session.artifacts.length > 0 ? `Artifacts (${session.artifacts.length})` : 'Artifacts'"
+        >
+          <div class="p-3 h-full"><ArtifactsPanel /></div>
+        </goa-tab>
+      </goa-tabs>
     </aside>
 
     <!-- Mobile bottom-sheet -->

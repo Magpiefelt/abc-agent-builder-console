@@ -15,85 +15,44 @@ async function handleLogout(): Promise<void> {
 </script>
 
 <template>
-  <header
-    class="bg-[var(--goa-color-primary)] text-white px-6 py-3 flex items-center justify-between shadow-md"
-    role="banner"
+  <goa-app-header
+    version="v2"
+    heading="Agent Builder Console"
+    url="/"
+    maxcontentwidth="100%"
   >
-    <div class="flex items-center gap-4">
-      <RouterLink
-        to="/"
-        class="text-xl font-bold tracking-tight hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--goa-color-primary)] rounded"
-        aria-label="Agent Builder Console — home"
-      >
-        Agent Builder Console
-      </RouterLink>
-      <nav
-        v-if="auth.isAuthenticated"
-        class="hidden md:flex gap-1 ml-6"
-        aria-label="Primary navigation"
-      >
-        <RouterLink
-          to="/"
-          class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--goa-color-primary)]"
-          active-class="bg-white/20"
-        >
-          Free Agent
-        </RouterLink>
-        <RouterLink
-          to="/workflows"
-          class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-[var(--goa-color-primary)]"
-          active-class="bg-white/20"
-        >
-          Workflows
-        </RouterLink>
-        <RouterLink
-          v-if="auth.isAdmin"
-          to="/admin"
-          class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors"
-          active-class="bg-white/20"
-        >
-          Admin
-        </RouterLink>
-      </nav>
-    </div>
+    <template v-if="auth.isAuthenticated">
+      <RouterLink slot="navigation" to="/" active-class="current">Free Agent</RouterLink>
+      <RouterLink slot="navigation" to="/workflows" active-class="current">Workflows</RouterLink>
+      <RouterLink v-if="auth.isAdmin" slot="navigation" to="/admin" active-class="current">Admin</RouterLink>
+    </template>
 
-    <div v-if="auth.isAuthenticated && auth.user" class="flex items-center gap-3">
-      <span
+    <div v-if="auth.isAuthenticated && auth.user" slot="utilities" class="flex items-center gap-3">
+      <goa-badge
         v-if="auth.user.ministryCode"
-        class="hidden sm:inline-flex items-center px-2 py-0.5 text-xs font-semibold uppercase tracking-wide rounded bg-white/20"
-        :aria-label="`Ministry: ${auth.user.ministryCode}`"
-      >
-        {{ auth.user.ministryCode }}
-      </span>
+        type="information"
+        :content="auth.user.ministryCode"
+      ></goa-badge>
       <RouterLink
         :to="{ name: 'profile' }"
-        class="flex items-center gap-2 hover:opacity-90 focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70 rounded"
+        class="flex items-center gap-2 text-sm font-medium no-underline"
         :aria-label="`Open profile for ${auth.user.displayName}`"
       >
-        <span class="text-sm opacity-90 hidden sm:inline">{{ auth.user.displayName }}</span>
-        <div
-          class="w-8 h-8 rounded-full bg-white/20 flex items-center justify-center text-sm font-bold"
+        <span class="hidden sm:inline">{{ auth.user.displayName }}</span>
+        <span
+          class="inline-flex items-center justify-center w-8 h-8 rounded-full bg-[var(--goa-color-info-light)] text-[var(--goa-color-interactive-default)] text-sm font-bold"
           aria-hidden="true"
         >
           {{ auth.initials }}
-        </div>
+        </span>
       </RouterLink>
-      <button
-        type="button"
-        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-        aria-label="Sign out of the Agent Builder Console"
-        @click="handleLogout"
-      >
+      <goa-button type="tertiary" size="compact" @_click="handleLogout">
         Sign out
-      </button>
+      </goa-button>
     </div>
-    <div v-else class="flex items-center gap-3">
-      <RouterLink
-        :to="{ name: 'login' }"
-        class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
-      >
-        Sign in
-      </RouterLink>
+
+    <div v-else slot="utilities">
+      <RouterLink :to="{ name: 'login' }" class="text-sm font-medium">Sign in</RouterLink>
     </div>
-  </header>
+  </goa-app-header>
 </template>

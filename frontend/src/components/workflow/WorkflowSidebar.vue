@@ -92,12 +92,15 @@ function noteDefaults(): Partial<NodeData> {
 <template>
   <aside class="w-72 bg-[var(--goa-color-surface)] border-r border-[var(--goa-color-border)] flex flex-col overflow-hidden">
     <div class="p-3 border-b border-[var(--goa-color-border)]">
-      <input
-        v-model="search"
+      <goa-input
+        name="library-search"
         type="search"
+        :value="search"
         placeholder="Search library…"
-        class="w-full p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-      />
+        leadingicon="search"
+        width="100%"
+        @_change="(e: CustomEvent<{ value: string }>) => (search = e.detail.value)"
+      ></goa-input>
     </div>
 
     <div class="flex-1 overflow-y-auto">
@@ -137,10 +140,11 @@ function noteDefaults(): Partial<NodeData> {
               class="px-2 py-1 text-sm rounded cursor-grab hover:bg-[var(--goa-color-primary-light)] border border-transparent hover:border-[var(--goa-color-primary)] flex items-center gap-2"
             >
               <span class="font-mono text-xs flex-1 truncate">{{ f.name }}</span>
-              <span
+              <goa-badge
                 v-if="f.category === 'branch'"
-                class="text-[10px] uppercase px-1 py-0.5 rounded bg-[var(--goa-color-warning)] text-[var(--goa-color-text)] font-bold"
-              >branch</span>
+                type="important"
+                content="branch"
+              ></goa-badge>
             </div>
           </div>
         </div>

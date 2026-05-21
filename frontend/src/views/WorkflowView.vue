@@ -151,13 +151,14 @@ onBeforeRouteLeave((_to, _from, next) => {
       @toggle-history="toggleHistory"
     />
 
-    <div
+    <goa-callout
       v-if="saveError || runError || error"
-      class="px-4 py-2 bg-[var(--goa-color-error)]/10 border-b border-[var(--goa-color-error)] text-sm text-[var(--goa-color-error)]"
-      role="alert"
+      type="emergency"
+      heading="Workflow error"
+      class="mx-4 mt-2"
     >
       {{ saveError || runError || error }}
-    </div>
+    </goa-callout>
 
     <div class="flex-1 flex overflow-hidden relative">
       <WorkflowSidebar

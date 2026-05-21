@@ -42,13 +42,7 @@ function fmt(date: string | null): string {
           Your identity, ministry assignment, and saved work.
         </p>
       </div>
-      <button
-        type="button"
-        class="px-4 py-2 text-sm font-medium border border-[var(--goa-color-border)] text-[var(--goa-color-primary-dark)] rounded-md hover:bg-[var(--goa-color-primary-light)]"
-        @click="handleLogout"
-      >
-        Sign out
-      </button>
+      <goa-button type="secondary" @_click="handleLogout">Sign out</goa-button>
     </header>
 
     <div
@@ -101,13 +95,14 @@ function fmt(date: string | null): string {
               Updated {{ fmt(p.updatedAt) }}
             </p>
           </div>
-          <button
-            type="button"
-            class="text-sm text-[var(--goa-color-error)] hover:underline"
-            @click="memory.deletePrompt(p.id)"
+          <goa-button
+            type="tertiary"
+            variant="destructive"
+            size="compact"
+            @_click="memory.deletePrompt(p.id)"
           >
             Delete
-          </button>
+          </goa-button>
         </li>
       </ul>
     </div>
@@ -142,19 +137,20 @@ function fmt(date: string | null): string {
               Favorited {{ fmt(f.favoritedAt) }}
             </p>
           </div>
-          <button
-            type="button"
-            class="text-sm text-[var(--goa-color-error)] hover:underline"
-            @click="memory.unfavoriteWorkflow(f.workflowId)"
+          <goa-button
+            type="tertiary"
+            variant="destructive"
+            size="compact"
+            @_click="memory.unfavoriteWorkflow(f.workflowId)"
           >
             Remove
-          </button>
+          </goa-button>
         </li>
       </ul>
     </div>
 
-    <p v-if="memory.error" class="text-sm text-[var(--goa-color-error)]">
+    <goa-callout v-if="memory.error" type="emergency" heading="Couldn't load saved items">
       {{ memory.error }}
-    </p>
+    </goa-callout>
   </section>
 </template>
