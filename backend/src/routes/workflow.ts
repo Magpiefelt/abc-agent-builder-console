@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { authenticate } from "../middleware/auth.js";
 import { query, transaction } from "../config/database.js";
 import { scanForPII } from "../services/piiDetector.js";
+import type { PIIScanResult } from "../services/piiDetector.js";
 import { logAudit, AuditAction } from "../services/auditLogger.js";
 import { logger } from "../services/logger.js";
 import { isProviderConfigured } from "../services/llmProvider.js";
@@ -44,11 +45,30 @@ const toolsManifest = JSON.parse(
   readFileSync(resolve(__dirname, "../data/toolsManifest.json"), "utf-8")
 );
 
+/**
+ * Memory tools that read/write the agent-session-scoped blackboard,
+ * scratchpad, or attributes do not work in a workflow context — the executor
+ * runs each stage with empty memory and discards mutations. Only
+ * create_artifact persists meaningfully (via workflow_execution_id).
+ */
+const WORKFLOW_INCOMPATIBLE_TOOLS = new Set([
+  "read_blackboard",
+  "write_blackboard",
+  "read_scratchpad",
+  "write_scratchpad",
+  "read_attributes",
+  "write_attribute",
+]);
+
 router.get("/library", (_req: Request, res: Response) => {
+  interface ToolEntry { name: string; category: string }
+  const tools = (toolsManifest.tools as ToolEntry[]).filter(
+    (t) => !WORKFLOW_INCOMPATIBLE_TOOLS.has(t.name)
+  );
   res.json({
     agentTemplates: templates.templates,
     functionCatalog: getCatalog(),
-    tools: toolsManifest.tools,
+    tools,
   });
 });
 
@@ -88,12 +108,40 @@ function hashCanvas(canvas: unknown): string {
   return createHash("sha256").update(stableStringify(canvas)).digest("hex");
 }
 
-function piiBlockResponse(res: Response, scan: ReturnType<typeof scanForPII>): void {
+function piiBlockResponse(res: Response, scan: PIIScanResult): void {
   res.status(422).json({
     error: "Workflow content contains blocked data (potential PII or secrets).",
     detections: scan.detections
       .filter((d) => d.action === "blocked")
       .map((d) => ({ type: d.type, description: d.pattern })),
+  });
+}
+
+/**
+ * On save we audit PII detections but allow the write through. The user is
+ * still drafting — Note nodes may legitimately discuss PII categories. The
+ * execute endpoint blocks on the same scan so unsanitized workflows can't
+ * actually run.
+ */
+async function auditPIIOnSave(
+  scan: PIIScanResult,
+  userId: string,
+  ministryCode: string | undefined,
+  resourceId: string | undefined,
+  action: 'created' | 'updated'
+): Promise<void> {
+  if (scan.clean) return;
+  await logAudit({
+    userId,
+    ministryCode,
+    action: AuditAction.PII_DETECTED_OUTBOUND,
+    resourceType: "workflow",
+    resourceId,
+    details: {
+      stage: action,
+      blockedCount: scan.blockedCount,
+      detections: scan.detections.map((d) => ({ type: d.type, action: d.action })),
+    },
   });
 }
 
@@ -122,10 +170,9 @@ router.post("/", async (req: Request, res: Response) => {
 
   const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 };
 
+  // Save-time PII scan: audit but don't block. Execute will refuse to run
+  // workflows that still contain blocked PII patterns.
   const scan = scanForPII(JSON.stringify(canvas));
-  if (scan.blockedCount > 0) {
-    return piiBlockResponse(res, scan);
-  }
 
   try {
     const result = await transaction(async (client) => {
@@ -157,15 +204,19 @@ router.post("/", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_CREATED,
       resourceType: "workflow",
       resourceId: result,
-      details: { name: name.trim(), classification: resolvedClassification },
+      details: { name: name.trim(), classification: resolvedClassification, piiBlockedOnSave: scan.blockedCount },
     });
+    await auditPIIOnSave(scan, req.user!.id, req.user!.ministryCode || undefined, result, 'created');
 
     const row = await query(
       `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [result]
     );
-    res.status(201).json(row.rows[0]);
+    res.status(201).json({
+      ...row.rows[0],
+      piiWarning: scan.blockedCount > 0 ? { blockedCount: scan.blockedCount, message: 'Workflow saved but contains blocked PII patterns. It cannot be executed until they are removed.' } : undefined,
+    });
   } catch (err) {
     logger.error("Failed to create workflow", err, { userId: req.user!.id });
     res.status(500).json({ error: "Failed to create workflow." });
@@ -268,13 +319,11 @@ router.put("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    // PII scan if canvasData supplied
+    // PII scan if canvasData supplied. Save-time audits but doesn't block.
     let versionBumped = false;
+    let saveScan: PIIScanResult | null = null;
     if (canvasData !== undefined) {
-      const scan = scanForPII(JSON.stringify(canvasData));
-      if (scan.blockedCount > 0) {
-        return piiBlockResponse(res, scan);
-      }
+      saveScan = scanForPII(JSON.stringify(canvasData));
       versionBumped = hashCanvas(canvasData) !== hashCanvas(wf.canvas_data);
     }
 
@@ -325,15 +374,23 @@ router.put("/:id", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_UPDATED,
       resourceType: "workflow",
       resourceId: workflowId,
-      details: { versionBumped, newVersion: versionBumped ? wf.version + 1 : wf.version },
+      details: { versionBumped, newVersion: versionBumped ? wf.version + 1 : wf.version, piiBlockedOnSave: saveScan?.blockedCount ?? 0 },
     });
+    if (saveScan) {
+      await auditPIIOnSave(saveScan, req.user!.id, req.user!.ministryCode || undefined, workflowId, 'updated');
+    }
 
     const refreshed = await query(
       `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [workflowId]
     );
-    res.json(refreshed.rows[0]);
+    res.json({
+      ...refreshed.rows[0],
+      piiWarning: saveScan && saveScan.blockedCount > 0
+        ? { blockedCount: saveScan.blockedCount, message: 'Workflow saved but contains blocked PII patterns. It cannot be executed until they are removed.' }
+        : undefined,
+    });
   } catch (err) {
     logger.error("Failed to update workflow", err, { id: workflowId });
     res.status(500).json({ error: "Failed to update workflow." });
@@ -384,11 +441,7 @@ router.delete("/:id", async (req: Request, res: Response) => {
 // ============================================================================
 
 router.post("/:id/execute", async (req: Request, res: Response) => {
-  if (!isProviderConfigured()) {
-    res.status(503).json({ error: "LLM provider not configured." });
-    return;
-  }
-
+  const workflowId = req.params.id as string;
   const { continueOnError } = req.body ?? {};
 
   try {
@@ -403,7 +456,7 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
     }>(
       `SELECT id, user_id, ministry_code, name, classification, canvas_data, version
        FROM workflows WHERE id = $1`,
-      [req.params.id]
+      [workflowId]
     );
     if (result.rowCount === 0) {
       res.status(404).json({ error: "Workflow not found." });
@@ -420,7 +473,16 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
       return;
     }
 
-    // PII scan before streaming
+    // LLM provider only required when the canvas contains agent nodes.
+    const hasAgentNodes =
+      Array.isArray(wf.canvas_data?.nodes) &&
+      wf.canvas_data.nodes.some((n) => n.data?.kind === "agent");
+    if (hasAgentNodes && !isProviderConfigured()) {
+      res.status(503).json({ error: "LLM provider not configured. This workflow contains agent nodes." });
+      return;
+    }
+
+    // PII scan before streaming (blocks at execute time)
     const scan = scanForPII(JSON.stringify(wf.canvas_data));
     if (scan.blockedCount > 0) {
       return piiBlockResponse(res, scan);
@@ -433,7 +495,8 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
     res.setHeader("X-Accel-Buffering", "no");
     res.flushHeaders();
 
-    // Disconnect → abort
+    // Disconnect → abort. The executor calls back with the executionId
+    // once it has persisted the workflow_executions row.
     let executionId: string | null = null;
     req.on("close", () => {
       if (executionId) abortExecution(executionId);
@@ -453,9 +516,12 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
       userId: req.user!.id,
       ministryCode: req.user!.ministryCode,
       continueOnError: !!continueOnError,
+      onExecutionCreated: (id) => {
+        executionId = id;
+      },
     });
   } catch (err) {
-    logger.error("Failed to execute workflow", err, { id: req.params.id });
+    logger.error("Failed to execute workflow", err, { id: workflowId });
     if (!res.headersSent) {
       res.status(500).json({ error: "Failed to execute workflow." });
     } else {

@@ -13,6 +13,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'save'): void
   (e: 'run'): void
+  (e: 'stop'): void
   (e: 'update:classification', c: Classification): void
   (e: 'update:name', name: string): void
   (e: 'back'): void
@@ -82,11 +83,21 @@ const statusClass = computed(() => {
     </button>
 
     <button
+      v-if="executionStatus !== 'running'"
       @click="emit('run')"
-      :disabled="dirty || executionStatus === 'running'"
+      :disabled="dirty"
+      :title="dirty ? 'Save your changes before running' : 'Run the workflow'"
       class="text-sm py-1.5 px-3 bg-[var(--goa-color-primary)] text-white rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed"
     >
-      {{ executionStatus === 'running' ? 'Running…' : 'Run' }}
+      Run
+    </button>
+
+    <button
+      v-else
+      @click="emit('stop')"
+      class="text-sm py-1.5 px-3 bg-[var(--goa-color-error)] text-white rounded-md hover:bg-[var(--goa-color-error)]/90"
+    >
+      Stop
     </button>
   </div>
 </template>

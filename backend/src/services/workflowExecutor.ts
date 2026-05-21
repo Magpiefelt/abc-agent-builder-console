@@ -104,6 +104,8 @@ export interface ExecutionContext {
   userId: string;
   ministryCode: string | null;
   continueOnError: boolean;
+  /** Called with the newly created workflow_executions.id once persisted. */
+  onExecutionCreated?: (executionId: string) => void;
 }
 
 export interface SSEEvent {
@@ -310,9 +312,15 @@ function serializeForPrompt(value: unknown): string {
 }
 
 function truncateForSSE(value: unknown): unknown {
+  if (value === null || value === undefined) return value;
   const s = typeof value === "string" ? value : JSON.stringify(value);
   if (s.length <= MAX_SSE_VALUE_BYTES) return value;
-  return (typeof value === "string" ? value : s).slice(0, MAX_SSE_VALUE_BYTES) + "…[truncated]";
+  return {
+    __truncated: true,
+    originalType: typeof value,
+    originalLength: s.length,
+    preview: s.slice(0, MAX_SSE_VALUE_BYTES),
+  };
 }
 
 function mergedUpstream(
@@ -359,9 +367,12 @@ async function executeAgentStage(
     };
   }
 
+  const userMessage = parentIds.length > 0
+    ? "Continue the pipeline using the upstream context above."
+    : "Begin the workflow.";
   const response = await callLLM(node.data.modelId, {
     systemPrompt: fullSystemPrompt,
-    messages: [{ role: "user", content: "Continue the pipeline using the upstream context above." }],
+    messages: [{ role: "user", content: userMessage }],
     maxTokens: node.data.maxTokens,
     temperature: node.data.temperature,
   });
@@ -488,8 +499,23 @@ export async function runWorkflow(
   ctx: ExecutionContext
 ): Promise<void> {
   const canvas = workflow.canvas_data;
-  if (!canvas || canvas.version !== 1) {
-    sendSSE(res, { type: "error", error: "Invalid canvas_data version" });
+  if (!canvas || typeof canvas !== "object") {
+    sendSSE(res, { type: "error", error: "Workflow has no canvas data. Add nodes and save before running.", code: "no_canvas" });
+    res.end();
+    return;
+  }
+  if (canvas.version !== 1) {
+    sendSSE(res, { type: "error", error: `Unsupported canvas version: ${canvas.version}. Expected 1.`, code: "version" });
+    res.end();
+    return;
+  }
+  if (!Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) {
+    sendSSE(res, { type: "error", error: "Canvas data is malformed: nodes and edges must be arrays.", code: "malformed" });
+    res.end();
+    return;
+  }
+  if (canvas.nodes.length === 0) {
+    sendSSE(res, { type: "error", error: "Workflow is empty. Add at least one node before running.", code: "empty" });
     res.end();
     return;
   }
@@ -532,6 +558,7 @@ export async function runWorkflow(
   }
 
   activeExecutions.set(executionId, { abort: false });
+  ctx.onExecutionCreated?.(executionId);
 
   await logAudit({
     userId: ctx.userId,
@@ -563,6 +590,7 @@ export async function runWorkflow(
   const pruned: Set<string> = new Set();
   let finalStatus: "completed" | "error" | "aborted" = "completed";
   let finalError: string | undefined;
+  let sawStageError = false;
 
   try {
     for (let i = 0; i < topoOrder.length; i++) {
@@ -635,6 +663,7 @@ export async function runWorkflow(
       outputs.set(nodeId, stageOutput);
 
       if (stageOutput.status === "error") {
+        sawStageError = true;
         sendSSE(res, {
           type: "stage_error",
           executionId,
@@ -685,6 +714,12 @@ export async function runWorkflow(
   } finally {
     clearInterval(heartbeat);
     activeExecutions.delete(executionId);
+  }
+
+  // Promote to error status if continueOnError swallowed stage errors.
+  if (finalStatus === "completed" && sawStageError) {
+    finalStatus = "error";
+    finalError = finalError ?? "One or more stages failed";
   }
 
   try {

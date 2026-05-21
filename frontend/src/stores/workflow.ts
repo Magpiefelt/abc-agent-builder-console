@@ -36,6 +36,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const execution = ref<ExecutionState | null>(null)
   const events = ref<SSEEvent[]>([])
   const selectedNodeId = ref<string | null>(null)
+  let executionAbort: AbortController | null = null
 
   const selectedNode = computed(() => {
     if (!current.value || !selectedNodeId.value) return null
@@ -88,12 +89,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
   }
 
-  async function create(name: string, classification: Classification = 'unclassified'): Promise<Workflow> {
-    const empty: CanvasData = { nodes: [], edges: [], version: 1 }
+  async function create(
+    name: string,
+    classification: Classification = 'unclassified',
+    canvasData?: CanvasData
+  ): Promise<Workflow> {
+    const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 }
     const res = await fetch('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, classification, canvasData: empty }),
+      body: JSON.stringify({ name, classification, canvasData: canvas }),
     })
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: 'Failed to create' }))
@@ -155,6 +160,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
       if (idx >= 0) list.value[idx] = summary
       else list.value = [summary, ...list.value]
     }
+  }
+
+  async function duplicate(id: string, newName?: string): Promise<Workflow> {
+    const res = await fetch(`/api/workflows/${id}`)
+    if (!res.ok) throw new Error(`Failed to load workflow: ${res.status}`)
+    const src: Workflow = await res.json()
+    return create(newName ?? `${src.name} (copy)`, src.classification, src.canvas_data)
   }
 
   async function remove(id: string): Promise<void> {
@@ -253,20 +265,32 @@ export const useWorkflowStore = defineStore('workflow', () => {
     }
     events.value = []
 
+    executionAbort = new AbortController()
+
     await streamSSE(
       `/api/workflows/${current.value.id}/execute`,
       { continueOnError },
+      executionAbort.signal,
       (event) => {
         events.value.push(event)
         applyExecutionEvent(event)
       }
     ).catch((err) => {
       if (execution.value) {
-        execution.value.status = 'error'
-        execution.value.error = (err as Error).message
+        const aborted = (err as { name?: string }).name === 'AbortError'
+        execution.value.status = aborted ? 'aborted' : 'error'
+        if (!aborted) execution.value.error = (err as Error).message
         execution.value.completedAt = Date.now()
       }
+    }).finally(() => {
+      executionAbort = null
     })
+  }
+
+  function cancelExecution(): void {
+    if (executionAbort) {
+      executionAbort.abort()
+    }
   }
 
   function applyExecutionEvent(event: SSEEvent): void {
@@ -342,6 +366,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     loadList,
     load,
     create,
+    duplicate,
     save,
     remove,
     setNodes,
@@ -353,6 +378,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     setName,
     select,
     execute,
+    cancelExecution,
     clearExecution,
   }
 })
@@ -364,12 +390,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
 async function streamSSE(
   url: string,
   body: unknown,
+  signal: AbortSignal,
   onEvent: (e: SSEEvent) => void
 ): Promise<void> {
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
+    signal,
   })
   if (!res.ok || !res.body) {
     let msg = `Stream failed: ${res.status}`

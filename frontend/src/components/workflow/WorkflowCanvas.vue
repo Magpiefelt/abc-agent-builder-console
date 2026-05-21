@@ -74,10 +74,14 @@ const vueFlowEdges = computed<Edge[]>(() =>
 const { project } = useVueFlow()
 
 function onConnect(connection: Connection): void {
+  if (!connection.source || !connection.target) return
+  if (connection.source === connection.target) return // no self-loops
+  // Dedupe: a single edge per ordered pair (V1)
+  if (props.edges.some((e) => e.source === connection.source && e.target === connection.target)) return
   const newEdge: CanvasEdge = {
     id: `${connection.source}-${connection.target}-${Date.now()}`,
-    source: connection.source!,
-    target: connection.target!,
+    source: connection.source,
+    target: connection.target,
     sourceHandle: connection.sourceHandle ?? undefined,
     targetHandle: connection.targetHandle ?? undefined,
   }

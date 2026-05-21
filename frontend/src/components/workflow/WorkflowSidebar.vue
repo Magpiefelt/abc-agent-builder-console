@@ -133,9 +133,14 @@ function noteDefaults(): Partial<NodeData> {
               :key="f.name"
               draggable="true"
               @dragstart="dragStart($event, 'function', functionDefaults(f))"
-              class="px-2 py-1 text-sm rounded cursor-grab hover:bg-[var(--goa-color-primary-light)] border border-transparent hover:border-[var(--goa-color-primary)]"
+              :title="f.description"
+              class="px-2 py-1 text-sm rounded cursor-grab hover:bg-[var(--goa-color-primary-light)] border border-transparent hover:border-[var(--goa-color-primary)] flex items-center gap-2"
             >
-              <div class="font-mono text-xs">{{ f.name }}</div>
+              <span class="font-mono text-xs flex-1 truncate">{{ f.name }}</span>
+              <span
+                v-if="f.category === 'branch'"
+                class="text-[10px] uppercase px-1 py-0.5 rounded bg-[var(--goa-color-warning)] text-[var(--goa-color-text)] font-bold"
+              >branch</span>
             </div>
           </div>
         </div>

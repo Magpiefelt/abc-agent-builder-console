@@ -138,6 +138,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       :models="models"
       @save="onSave"
       @run="onRun"
+      @stop="store.cancelExecution"
       @update:classification="store.setClassification"
       @update:name="store.setName"
       @back="onBack"

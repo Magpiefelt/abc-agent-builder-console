@@ -41,21 +41,12 @@ async function createWorkflow(): Promise<void> {
 }
 
 async function duplicate(id: string): Promise<void> {
-  const src = list.value.find((w) => w.id === id)
-  if (!src) return
-  // Load full canvas, then create new
-  await store.load(id)
-  const canvas = store.current?.canvas_data
-  if (!canvas) return
-  const wf = await store.create(`${src.name} (copy)`, src.classification)
-  // Update the new workflow with the canvas
-  await store.load(wf.id)
-  if (store.current) {
-    store.setNodes(canvas.nodes)
-    store.setEdges(canvas.edges)
-    await store.save()
+  try {
+    const wf = await store.duplicate(id)
+    router.push(`/workflows/${wf.id}`)
+  } catch (e) {
+    createError.value = (e as Error).message
   }
-  router.push(`/workflows/${wf.id}`)
 }
 
 async function deleteWorkflow(id: string, name: string): Promise<void> {
