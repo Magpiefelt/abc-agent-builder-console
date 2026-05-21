@@ -133,8 +133,10 @@ export interface StageState {
   startedAt?: number;
   durationMs?: number;
   value?: unknown;
+  tokens?: number;
   error?: string;
   reason?: string;
+  piiBlockedCount?: number;
 }
 
 export type ExecutionStatus = 'idle' | 'running' | 'completed' | 'error' | 'aborted';
@@ -146,6 +148,7 @@ export interface ExecutionState {
   startedAt: number;
   completedAt?: number;
   error?: string;
+  piiBlockedTotal: number;
 }
 
 export interface WorkflowVersionSummary {

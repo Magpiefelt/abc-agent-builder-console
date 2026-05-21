@@ -716,6 +716,7 @@ VALUES
 ('workflow_sidebar', 'component', 'workflow', 'Draggable agent templates + function catalog + node library', 'frontend/src/components/workflow/WorkflowSidebar.vue', 'workflow', 'active', 'high', 5, NULL),
 ('workflow_properties_panel', 'component', 'workflow', 'Dynamic form editor for the selected node', 'frontend/src/components/workflow/PropertiesPanel.vue', 'workflow', 'active', 'high', 5, NULL),
 ('workflow_toolbar', 'component', 'workflow', 'Save / load / run / classification dropdown', 'frontend/src/components/workflow/WorkflowToolbar.vue', 'workflow', 'active', 'high', 5, NULL),
+('workflow_execution_panel', 'component', 'workflow', 'Live execution results drawer — per-stage status, timing, output (markdown/JSON), and PII-blocked counts', 'frontend/src/components/workflow/ExecutionPanel.vue', 'workflow', 'active', 'high', 5, 'Closes the Stream C gap where stage outputs were captured but never displayed'),
 ('node_agent', 'component', 'workflow', 'Custom Agent node (system prompt + model + tools)', 'frontend/src/components/workflow/nodes/AgentNode.vue', 'workflow', 'active', 'critical', 5, NULL),
 ('node_function', 'component', 'workflow', 'Custom Function node (deterministic transform from functionRegistry)', 'frontend/src/components/workflow/nodes/FunctionNode.vue', 'workflow', 'active', 'critical', 5, NULL),
 ('node_tool', 'component', 'workflow', 'Custom Tool node — delegates to toolDispatcher', 'frontend/src/components/workflow/nodes/ToolNode.vue', 'workflow', 'active', 'critical', 5, NULL),
