@@ -46,6 +46,7 @@ const emit = defineEmits<{
   (e: 'update:name', name: string): void
   (e: 'back'): void
   (e: 'toggle-history'): void
+  (e: 'export'): void
 }>()
 
 const statusLabel = computed(() => {
@@ -134,6 +135,16 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
       @_click="emit('toggle-history')"
     >
       History
+    </goa-button>
+
+    <goa-button
+      type="tertiary"
+      size="compact"
+      leadingicon="download"
+      title="Export workflow as JSON"
+      @_click="emit('export')"
+    >
+      Export
     </goa-button>
 
     <goa-button

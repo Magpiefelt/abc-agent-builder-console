@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useModelsStore } from '@/stores/models'
 import { useToast } from '@/composables/useToast'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
@@ -16,6 +17,7 @@ import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/wor
 const route = useRoute()
 const router = useRouter()
 const store = useWorkflowStore()
+const modelsStore = useModelsStore()
 const toast = useToast()
 const { current, library, dirty, selectedNode, execution, error } = storeToRefs(store)
 
@@ -26,12 +28,10 @@ useDocumentTitle(() => {
 })
 
 const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
-const models = [
-  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7' },
-  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
-  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
-]
+
+const models = computed(() =>
+  modelsStore.models.map((m) => ({ id: m.id, name: m.name })),
+)
 
 const runError = ref<string | null>(null)
 const saveError = ref<string | null>(null)
@@ -43,7 +43,7 @@ function toggleHistory(): void {
 
 onMounted(async () => {
   const id = route.params.id as string
-  await Promise.all([store.loadLibrary(), store.load(id)])
+  await Promise.all([store.loadLibrary(), store.load(id), modelsStore.ensureLoaded()])
 })
 
 watch(() => route.params.id, async (newId) => {
@@ -148,6 +148,15 @@ function onBack(): void {
   router.push('/workflows')
 }
 
+function onExport(): void {
+  try {
+    store.exportToFile()
+    toast.push({ kind: 'success', message: 'Workflow exported.' })
+  } catch (e) {
+    toast.push({ kind: 'error', message: `Couldn't export: ${(e as Error).message}` })
+  }
+}
+
 function beforeUnload(event: BeforeUnloadEvent): void {
   if (dirty.value) {
     event.preventDefault()
@@ -189,6 +198,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       @update:name="store.setName"
       @back="onBack"
       @toggle-history="toggleHistory"
+      @export="onExport"
     />
 
     <goa-callout
