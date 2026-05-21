@@ -213,3 +213,153 @@ describe('useWorkflowStore — clearHistory', () => {
     expect(store.historyKey).toBeNull()
   })
 })
+
+describe('useWorkflowStore — previewVersion', () => {
+  it('loads a version, computes a diff against current, and stores the preview', async () => {
+    const detail = {
+      workflowId: WORKFLOW_ID,
+      version: 2,
+      canvasData: {
+        nodes: [
+          {
+            id: 'a',
+            type: 'agent',
+            position: { x: 0, y: 0 },
+            data: {
+              kind: 'agent',
+              label: 'A',
+              modelId: 'claude-haiku-4-5',
+              classification: 'unclassified',
+              tools: [],
+            },
+          },
+        ],
+        edges: [],
+        version: 1 as const,
+      },
+      createdBy: 'u1',
+      createdAt: '2026-05-20T09:00:00Z',
+    }
+    apiFetchMock.mockResolvedValueOnce(detail)
+
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({
+      canvas_data: { nodes: [], edges: [], version: 1 },
+    })
+
+    const result = await store.previewVersion(2)
+
+    expect(apiFetchMock).toHaveBeenCalledWith(`/api/workflows/${WORKFLOW_ID}/versions/2`)
+    expect(result).not.toBeNull()
+    expect(store.versionPreview?.version).toBe(2)
+    expect(store.versionPreview?.summary.nodeAdded).toBe(1)
+    expect(store.versionPreview?.summary.hasChanges).toBe(true)
+    expect(store.previewLoading).toBe(false)
+    expect(store.previewError).toBeNull()
+  })
+
+  it('records an error when the version fetch fails', async () => {
+    apiFetchMock.mockRejectedValueOnce(new Error('not found'))
+    const store = useWorkflowStore()
+    store.current = makeWorkflow()
+    const result = await store.previewVersion(99)
+    expect(result).toBeNull()
+    expect(store.versionPreview).toBeNull()
+    expect(store.previewError).toBe('not found')
+  })
+
+  it('is a no-op when no workflow is loaded', async () => {
+    const store = useWorkflowStore()
+    const result = await store.previewVersion(2)
+    expect(result).toBeNull()
+    expect(apiFetchMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('useWorkflowStore — clearVersionPreview', () => {
+  it('drops the preview, loading and error state', () => {
+    const store = useWorkflowStore()
+    store.versionPreview = {
+      version: 2,
+      detail: {
+        workflowId: WORKFLOW_ID,
+        version: 2,
+        canvasData: { nodes: [], edges: [], version: 1 },
+        createdBy: 'u',
+        createdAt: '',
+      },
+      diff: {
+        addedNodes: [],
+        removedNodes: [],
+        modifiedNodes: [],
+        unchangedNodeCount: 0,
+        addedEdges: [],
+        removedEdges: [],
+        modifiedEdges: [],
+        unchangedEdgeCount: 0,
+      },
+      summary: {
+        nodeAdded: 0,
+        nodeRemoved: 0,
+        nodeModified: 0,
+        nodeUnchanged: 0,
+        edgeAdded: 0,
+        edgeRemoved: 0,
+        edgeModified: 0,
+        edgeUnchanged: 0,
+        hasChanges: false,
+      },
+    }
+    store.previewError = 'something'
+    store.clearVersionPreview()
+    expect(store.versionPreview).toBeNull()
+    expect(store.previewError).toBeNull()
+  })
+})
+
+describe('useWorkflowStore — restoreVersion clears preview', () => {
+  it('clears any open preview after a successful restore', async () => {
+    const restored = makeWorkflow({ version: 5 })
+    apiFetchMock
+      .mockResolvedValueOnce(restored)
+      .mockResolvedValueOnce({ currentVersion: 5, versions: [] })
+      .mockResolvedValueOnce({ executions: [], count: 0 })
+
+    const store = useWorkflowStore()
+    store.current = makeWorkflow()
+    store.versionPreview = {
+      version: 2,
+      detail: {
+        workflowId: WORKFLOW_ID,
+        version: 2,
+        canvasData: { nodes: [], edges: [], version: 1 },
+        createdBy: 'u',
+        createdAt: '',
+      },
+      diff: {
+        addedNodes: [],
+        removedNodes: [],
+        modifiedNodes: [],
+        unchangedNodeCount: 0,
+        addedEdges: [],
+        removedEdges: [],
+        modifiedEdges: [],
+        unchangedEdgeCount: 0,
+      },
+      summary: {
+        nodeAdded: 0,
+        nodeRemoved: 0,
+        nodeModified: 0,
+        nodeUnchanged: 0,
+        edgeAdded: 0,
+        edgeRemoved: 0,
+        edgeModified: 0,
+        edgeUnchanged: 0,
+        hasChanges: false,
+      },
+    }
+
+    await store.restoreVersion(2)
+    expect(store.versionPreview).toBeNull()
+  })
+})
