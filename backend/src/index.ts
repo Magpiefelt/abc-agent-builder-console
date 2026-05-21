@@ -19,6 +19,8 @@ import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
 import { authenticate } from "./middleware/auth.js";
 import { registerAllTools } from "./tools/register.js";
+import { validateConnectionAllowlist, closeDatabaseToolPools } from "./tools/database.js";
+import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
 import workflowRoutes from "./routes/workflow.js";
@@ -30,7 +32,13 @@ import userRoutes from "./routes/users.js";
 // ============================================================================
 
 installProcessMonitor(async () => {
-  // Graceful shutdown: close database pool
+  // Graceful shutdown order:
+  //   1. Drain the SQL tool pools (per-connection allowlist entries). Any
+  //      in-flight tool call dies cleanly; the dispatcher returns the error
+  //      to the agent.
+  //   2. Close the host pool LAST so audit/logger writes from step 1 still
+  //      have a working backend.
+  await closeDatabaseToolPools();
   await closePool();
 });
 
@@ -38,6 +46,8 @@ installProcessMonitor(async () => {
 // TOOL REGISTRATION (must happen before any agent session starts)
 // ============================================================================
 
+validateConnectionAllowlist();
+validateEmailAllowlist();
 registerAllTools();
 
 // ============================================================================
