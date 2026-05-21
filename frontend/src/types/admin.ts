@@ -125,3 +125,55 @@ export interface RetentionReport {
   byTable: RetentionTableReport[];
   errors: string[];
 }
+
+// ============================================================================
+// Operational dashboard
+// ============================================================================
+// Mirrors backend/src/routes/admin.ts GET /api/admin/dashboard payload. Keep in
+// sync. Numbers are pre-aggregated by SQL — no need for client-side reduce.
+
+export interface DashboardWindowCount {
+  windowLabel: "24h" | "7d" | "30d";
+  count: number;
+}
+
+export interface DashboardStatusBreakdown {
+  status: string;
+  count: number;
+}
+
+export interface DashboardClassificationBreakdown {
+  classification: string;
+  count: number;
+}
+
+export interface DashboardToolUsage {
+  tool: string;
+  calls: number;
+  successes: number;
+}
+
+export interface DashboardModelUsage {
+  modelId: string;
+  sessions: number;
+}
+
+export interface DashboardSummary {
+  generatedAt: string;
+  sessions: {
+    totals: DashboardWindowCount[];
+    byStatus: DashboardStatusBreakdown[];
+    byClassification: DashboardClassificationBreakdown[];
+  };
+  workflowExecutions: {
+    totals: DashboardWindowCount[];
+    byStatus: DashboardStatusBreakdown[];
+  };
+  tools: DashboardToolUsage[];
+  models: DashboardModelUsage[];
+  pii: {
+    last7Days: number;
+    byType: { detectionType: string; count: number }[];
+    byAction: { action: string; count: number }[];
+  };
+}

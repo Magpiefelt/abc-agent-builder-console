@@ -14,6 +14,7 @@ import type {
   SessionSummary,
   HealthDetailed,
   RetentionReport,
+  DashboardSummary,
 } from "@/types/admin";
 
 // Same-origin in production; Vite proxies /api to localhost:3000 in dev.
@@ -107,6 +108,8 @@ export const api = {
       fetchJson<{ report: RetentionReport }>("/api/admin/retention/run", {
         method: "POST",
       }),
+
+    dashboard: () => fetchJson<DashboardSummary>("/api/admin/dashboard"),
   },
 
   health: {
