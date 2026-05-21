@@ -1,18 +1,43 @@
 {
-  "name": "Loop detection — repeated tool calls escalate",
-  "description": "Forces the mock LLM to repeat the same tool call so the loop detector trips a loop_warning event before the iteration limit.",
-  "request": {
-    "prompt": "Repeat the same brave_search query exactly each iteration until intervention.",
-    "modelId": "claude-haiku-4-5",
-    "classification": "unclassified",
-    "maxIterations": 8
-  },
-  "llmMock": "1",
-  "expect": {
-    "creationStatus": 200,
-    "events": {
-      "mustContain": ["session_start", "loop_warning"]
+  "name": "02 — Loop detection + intervention",
+  "description": "Agent repeats the same exact thinking + tool call across 4 iterations; the loop detector should fire an intervention and the orchestrator should surface a loop_warning SSE event.",
+  "prompt": "Look up the same thing over and over without making progress.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [
+    {
+      "thinking": "Repeat searching for the same answer over and over.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "alberta capital", "numResults": 5 } }],
+      "status": "running"
     },
-    "piiDetected": false
+    {
+      "thinking": "Repeat searching for the same answer over and over.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "alberta capital", "numResults": 5 } }],
+      "status": "running"
+    },
+    {
+      "thinking": "Repeat searching for the same answer over and over.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "alberta capital", "numResults": 5 } }],
+      "status": "running"
+    },
+    {
+      "thinking": "Repeat searching for the same answer over and over.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "alberta capital", "numResults": 5 } }],
+      "status": "running"
+    },
+    {
+      "thinking": "I see the warning. Let me try a different approach. Answering directly.",
+      "blackboardUpdates": [
+        { "category": "summary", "title": "Capital", "content": "Edmonton is the capital of Alberta." }
+      ],
+      "status": "completed",
+      "userMessage": "Done after intervention."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": ["session_start", "loop_warning", "session_complete"],
+    "finalStatus": "completed"
   }
 }

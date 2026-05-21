@@ -1,84 +1,140 @@
 import { describe, it, expect, vi } from "vitest";
-import { requireRole, requireMinistry, type AuthUser } from "../auth.js";
+import type { Request, Response, NextFunction } from "express";
 
-const mockRes = () => {
-  const res: { statusCode: number; body?: unknown; status: (n: number) => typeof res; json: (b: unknown) => typeof res } = {
-    statusCode: 200,
-    status(code: number) {
-      this.statusCode = code;
-      return this;
+vi.mock("../../config/env.js", () => ({
+  env: {
+    NODE_ENV: "development",
+    PORT: 3000,
+    DATABASE_URL: undefined,
+    DB_SCHEMA: "test",
+    SESSION_SECRET: "test",
+    VERTEX_AI_REGION: "northamerica-northeast1",
+    MAX_ITERATIONS_LIMIT: 100,
+    LLM_TIMEOUT_MS: 120000,
+    TOOL_TIMEOUT_MS: 30000,
+    MAX_CONCURRENT_SESSIONS: 3,
+    FRONTEND_URL: "http://localhost:5173",
+    ENTRA_CLIENT_ID: undefined,
+  },
+}));
+
+// Stream A's auth pulls entraAuth helpers; stub the module so we don't need
+// the full JWKS / DB infrastructure to test the dev-mode bypass.
+vi.mock("../../services/entraAuth.js", () => ({
+  COOKIE_SESSION: "abc_session",
+  InvalidSignatureError: class extends Error {},
+  SessionExpiredError: class extends Error {},
+  loadUserById: vi.fn(),
+  upsertUser: vi.fn(),
+  verifyEntraToken: vi.fn(),
+  verifySessionToken: vi.fn(),
+  extractMinistry: vi.fn(),
+}));
+
+vi.mock("../../services/auditLogger.js", () => ({
+  logAudit: vi.fn().mockResolvedValue(undefined),
+  AuditAction: { AUTH_FAILED: "auth.failed" },
+}));
+
+import { authenticate, requireRole, requireMinistry } from "../auth.js";
+
+function makeReq(opts: { headers?: Record<string, string>; cookies?: Record<string, string>; user?: unknown } = {}): Request {
+  return {
+    headers: opts.headers ?? {},
+    cookies: opts.cookies ?? {},
+    user: opts.user,
+    ip: "127.0.0.1",
+    socket: { remoteAddress: "127.0.0.1" },
+  } as unknown as Request;
+}
+
+function makeRes(): Response & { _status: number; _body: unknown } {
+  const res = {
+    _status: 200,
+    _body: null as unknown,
+    status(this: { _status: number }, code: number) {
+      this._status = code;
+      return this as unknown as Response;
     },
-    json(body: unknown) {
-      this.body = body;
-      return this;
+    json(this: { _body: unknown }, body: unknown) {
+      this._body = body;
+      return this as unknown as Response;
     },
   };
-  return res as unknown as import("express").Response & { statusCode: number; body?: unknown };
-};
+  return res as unknown as Response & { _status: number; _body: unknown };
+}
 
-const baseUser = (overrides: Partial<AuthUser> = {}): AuthUser => ({
-  id: "u-1",
-  entraId: "oid-1",
-  email: "user@gov.ab.ca",
-  displayName: "User",
-  ministryCode: "INFRA",
-  role: "user",
-  ...overrides,
-});
-
-describe("requireRole", () => {
-  it("401s when no user is attached to the request", () => {
+describe("auth.authenticate — dev mock fallback", () => {
+  it("attaches the DEV_USER when ENTRA_CLIENT_ID is unset and no credentials are presented", async () => {
+    const req = makeReq();
+    const res = makeRes();
     const next = vi.fn();
-    const res = mockRes();
-    const req = {} as import("express").Request;
-    requireRole("admin")(req, res, next);
-    expect(res.statusCode).toBe(401);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("403s when the user lacks the required role", () => {
-    const next = vi.fn();
-    const res = mockRes();
-    const req = { user: baseUser({ role: "user" }) } as unknown as import("express").Request;
-    requireRole("admin")(req, res, next);
-    expect(res.statusCode).toBe(403);
-    expect(next).not.toHaveBeenCalled();
-  });
-
-  it("calls next() when the user has one of the required roles", () => {
-    const next = vi.fn();
-    const res = mockRes();
-    const req = { user: baseUser({ role: "admin" }) } as unknown as import("express").Request;
-    requireRole("admin", "viewer")(req, res, next);
-    expect(next).toHaveBeenCalledTimes(1);
-    expect(res.statusCode).toBe(200);
+    await authenticate(req, res, next as unknown as NextFunction);
+    expect(next).toHaveBeenCalledOnce();
+    expect(req.user).toBeDefined();
+    expect(req.user?.email).toBe("cohen.mcleod@gov.ab.ca");
+    expect(req.user?.ministryCode).toBe("INFRA");
+    expect(req.user?.role).toBe("admin");
   });
 });
 
-describe("requireMinistry", () => {
-  it("401s when no user is attached", () => {
+describe("auth.requireRole", () => {
+  it("calls next() when user has the required role", () => {
+    const req = makeReq({ user: { role: "admin" } });
+    const res = makeRes();
     const next = vi.fn();
-    const res = mockRes();
-    const req = {} as import("express").Request;
-    requireMinistry(req, res, next);
-    expect(res.statusCode).toBe(401);
-    expect(next).not.toHaveBeenCalled();
+    requireRole("admin")(req, res, next as unknown as NextFunction);
+    expect(next).toHaveBeenCalledOnce();
   });
 
-  it("403s when user has no ministry assigned", () => {
+  it("returns 403 when user does not have the required role", () => {
+    const req = makeReq({ user: { role: "viewer" } });
+    const res = makeRes();
     const next = vi.fn();
-    const res = mockRes();
-    const req = { user: baseUser({ ministryCode: null }) } as unknown as import("express").Request;
-    requireMinistry(req, res, next);
-    expect(res.statusCode).toBe(403);
+    requireRole("admin")(req, res, next as unknown as NextFunction);
     expect(next).not.toHaveBeenCalled();
+    expect(res._status).toBe(403);
   });
 
-  it("calls next() when user has a ministry", () => {
+  it("returns 401 when no user is attached", () => {
+    const req = makeReq();
+    const res = makeRes();
     const next = vi.fn();
-    const res = mockRes();
-    const req = { user: baseUser({ ministryCode: "EDU" }) } as unknown as import("express").Request;
-    requireMinistry(req, res, next);
-    expect(next).toHaveBeenCalledTimes(1);
+    requireRole("admin")(req, res, next as unknown as NextFunction);
+    expect(res._status).toBe(401);
+  });
+
+  it("accepts a role list (one of several)", () => {
+    const req = makeReq({ user: { role: "user" } });
+    const res = makeRes();
+    const next = vi.fn();
+    requireRole("admin", "user")(req, res, next as unknown as NextFunction);
+    expect(next).toHaveBeenCalledOnce();
+  });
+});
+
+describe("auth.requireMinistry", () => {
+  it("calls next when user has a ministry code", () => {
+    const req = makeReq({ user: { ministryCode: "INFRA" } });
+    const res = makeRes();
+    const next = vi.fn();
+    requireMinistry(req, res, next as unknown as NextFunction);
+    expect(next).toHaveBeenCalledOnce();
+  });
+
+  it("returns 403 when user is missing ministry", () => {
+    const req = makeReq({ user: { ministryCode: null } });
+    const res = makeRes();
+    const next = vi.fn();
+    requireMinistry(req, res, next as unknown as NextFunction);
+    expect(res._status).toBe(403);
+  });
+
+  it("returns 401 when no user is attached", () => {
+    const req = makeReq();
+    const res = makeRes();
+    const next = vi.fn();
+    requireMinistry(req, res, next as unknown as NextFunction);
+    expect(res._status).toBe(401);
   });
 });

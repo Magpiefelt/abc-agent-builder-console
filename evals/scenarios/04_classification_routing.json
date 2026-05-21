@@ -1,0 +1,13 @@
+{
+  "name": "04 — Classification routing rejects US-residency model for Protected B data",
+  "description": "User submits a Protected B task and tries to route it to the US-residency mock model. The classification gate must reject the create with 400 before any LLM call is made.",
+  "prompt": "Analyse the attached protected B file (we say 'attached' but mock-llm doesn't actually fetch one).",
+  "modelId": "mock-llm-us",
+  "classification": "protected_b",
+  "llmResponses": [],
+  "expectations": {
+    "expectCreateRejection": true,
+    "createStatus": 400,
+    "errorMatches": "protected_b|residency|approved|unclassified"
+  }
+}

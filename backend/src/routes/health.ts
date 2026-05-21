@@ -7,13 +7,13 @@
  *                                 token usage, uptime, memory, node version)
  */
 
-import express, { Router, Request, Response } from "express";
+import { Router, type Router as RouterType, Request, Response } from "express";
 import { checkConnection, getPoolStats } from "../config/database.js";
 import { env } from "../config/env.js";
 import { authenticate, requireRole } from "../middleware/auth.js";
 import { getTokenUsageStats } from "../services/llmProvider.js";
 
-const router: express.Router = Router();
+const router: RouterType = Router();
 
 const APP_VERSION = "1.0.0";
 

@@ -1,18 +1,13 @@
 {
-  "name": "PII blocking — Luhn-valid SIN is redacted before the LLM call",
-  "description": "Sends a Luhn-valid SIN in the prompt and asserts the orchestrator emits a pii_warning event. The LLM call must still occur (PII is redacted, not aborted) — but the warning is the durable evidence the chokepoint fired.",
-  "request": {
-    "prompt": "My SIN is 046 454 286. Please confirm receipt and summarize the data classification policy.",
-    "modelId": "claude-haiku-4-5",
-    "classification": "unclassified",
-    "maxIterations": 2
-  },
-  "llmMock": "1",
-  "expect": {
-    "creationStatus": 200,
-    "events": {
-      "mustContain": ["session_start", "pii_warning"]
-    },
-    "piiDetected": true
+  "name": "03 — PII blocking on prompt",
+  "description": "User submits a prompt containing a Social Insurance Number; the route must reject the request with HTTP 422 and the orchestrator must never run. An audit row of type pii.blocked.prompt is also recorded server-side.",
+  "prompt": "Please research the population of Edmonton; my SIN for verification is 046-454-286.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [],
+  "expectations": {
+    "expectCreateRejection": true,
+    "createStatus": 422,
+    "errorMatches": "social_insurance_number|blocked|PII"
   }
 }

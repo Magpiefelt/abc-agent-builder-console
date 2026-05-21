@@ -9,8 +9,14 @@
     "dev:frontend": "pnpm --filter frontend run dev",
     "build": "pnpm --parallel run build",
     "lint": "pnpm --parallel run lint",
-    "test": "pnpm --recursive --workspace-concurrency=1 run test",
-    "type-check": "pnpm --recursive run type-check"
+    "type-check": "pnpm --filter backend run type-check && pnpm --filter frontend run type-check",
+    "test": "pnpm --filter backend run test && pnpm --filter frontend run test",
+    "test:backend": "pnpm --filter backend run test",
+    "test:backend:integration": "pnpm --filter backend run test:integration",
+    "test:frontend": "pnpm --filter frontend run test",
+    "test:evals": "pnpm --filter evals run test",
+    "test:coverage": "pnpm --filter backend run test:coverage && pnpm --filter frontend run test:coverage",
+    "test:all": "pnpm run test:backend && pnpm run test:frontend && pnpm run test:evals"
   },
   "engines": {
     "node": ">=22.0.0",

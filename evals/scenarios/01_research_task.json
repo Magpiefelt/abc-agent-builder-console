@@ -1,0 +1,44 @@
+{
+  "name": "01 — Research two-city summary",
+  "description": "Agent researches the populations of Edmonton and Calgary, summarizes in ~100 words, then completes.",
+  "prompt": "Find the population of Edmonton and Calgary; summarize in 100 words.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [
+    {
+      "thinking": "I should start by searching for Edmonton's population.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "Edmonton population 2024", "numResults": 5 } }],
+      "status": "running"
+    },
+    {
+      "thinking": "Now Calgary's population.",
+      "toolCalls": [{ "name": "brave_search", "arguments": { "query": "Calgary population 2024", "numResults": 5 } }],
+      "blackboardUpdates": [
+        { "category": "research", "title": "Edmonton population", "content": "Edmonton (City of) population was approximately 1,010,899 (2024)." }
+      ],
+      "status": "running"
+    },
+    {
+      "thinking": "I have both numbers. Time to summarize.",
+      "blackboardUpdates": [
+        { "category": "research", "title": "Calgary population", "content": "Calgary (City of) population was approximately 1,396,000 (2024)." },
+        { "category": "summary", "title": "Two-city summary", "content": "Edmonton, the provincial capital, has approximately 1,010,899 residents as of 2024, making it the second-largest city in Alberta. Calgary, the largest city, has approximately 1,396,000 residents in the same period. Both cities are economic hubs of the Prairie region; Calgary anchors the energy sector while Edmonton serves as the seat of government and a major centre for petroleum refining, advanced research, and post-secondary education. Combined, their populations make up the majority of Alberta's urban concentration." }
+      ],
+      "status": "completed",
+      "userMessage": "Summary complete."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "finalStatus": "completed",
+    "blackboardCategories": ["research", "summary"],
+    "blackboardCount": { "min": 3 }
+  }
+}
