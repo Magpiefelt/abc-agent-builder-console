@@ -5,8 +5,14 @@ import ToastContainer from '@/components/ui/ToastContainer.vue'
 </script>
 
 <template>
+  <a
+    href="#main-content"
+    class="sr-only focus:not-sr-only focus:fixed focus:top-2 focus:left-2 focus:z-50 focus:bg-white focus:text-black focus:px-3 focus:py-1.5 focus:rounded focus:ring-2 focus:ring-black"
+  >
+    Skip to main content
+  </a>
   <AppHeader />
-  <main class="flex-1 overflow-hidden">
+  <main id="main-content" tabindex="-1" class="flex-1 overflow-hidden">
     <RouterView />
   </main>
   <ToastContainer />

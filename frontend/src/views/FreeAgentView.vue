@@ -30,7 +30,7 @@ function selectTab(tab: MemoryTab): void {
 <template>
   <div class="h-full flex flex-col md:flex-row min-h-0">
     <!-- Desktop: left panel -->
-    <aside class="hidden md:flex md:w-80 md:shrink-0 h-full">
+    <aside class="hidden md:flex md:w-80 md:shrink-0 h-full" aria-label="Task configuration">
       <TaskPanel class="w-full" />
     </aside>
 
@@ -51,7 +51,7 @@ function selectTab(tab: MemoryTab): void {
     </div>
 
     <!-- Center column -->
-    <section class="flex-1 flex flex-col min-w-0 min-h-0">
+    <section class="flex-1 flex flex-col min-w-0 min-h-0" aria-label="Agent execution canvas">
       <ControlBar />
       <div class="flex-1 flex flex-col min-h-0 p-3 gap-3 overflow-hidden">
         <FinalReportPanel v-if="showFinalReport" class="flex-1 min-h-[180px]" />
@@ -67,8 +67,11 @@ function selectTab(tab: MemoryTab): void {
     </section>
 
     <!-- Desktop: right memory column -->
-    <aside class="hidden md:flex md:flex-col md:w-80 md:shrink-0 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] h-full">
-      <div class="flex gap-1 p-2 border-b border-[var(--goa-color-border)]" role="tablist">
+    <aside
+      class="hidden md:flex md:flex-col md:w-80 md:shrink-0 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] h-full"
+      aria-label="Agent memory viewer"
+    >
+      <div class="flex gap-1 p-2 border-b border-[var(--goa-color-border)]" role="tablist" aria-label="Memory views">
         <button
           v-for="tab in (['blackboard', 'scratchpad', 'artifacts'] as MemoryTab[])"
           :key="tab"

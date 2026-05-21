@@ -56,9 +56,13 @@ export const extractMinistry = extractMinistryFromEntra;
 /**
  * Development mock user. Injected only when Entra is unconfigured AND no
  * credentials are presented (no cookie, no Bearer header).
+ *
+ * The id is a fixed UUID so the dev mock can be persisted into the real
+ * users.id (UUID) column without a per-boot gen_random_uuid(). Integration
+ * tests and the evals harness both seed this exact value.
  */
 export const DEV_USER: AuthUser = {
-  id: "dev-user-001",
+  id: "00000000-0000-0000-0000-000000000001",
   entraId: "dev-entra-id",
   email: "cohen.mcleod@gov.ab.ca",
   displayName: "Cohen McLeod",

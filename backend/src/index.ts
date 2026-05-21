@@ -6,7 +6,7 @@
  * Port: 3000
  */
 
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import cookieParser from "cookie-parser";
@@ -66,7 +66,7 @@ startRetentionScheduler();
 // EXPRESS APP
 // ============================================================================
 
-const app: express.Application = express();
+const app: Express = express();
 
 // ============================================================================
 // SECURITY MIDDLEWARE (order matters)
@@ -131,6 +131,13 @@ app.use("/api/agent", agentRateLimit, agentRoutes);
 
 // Workflow canvas routes (Stream C)
 app.use("/api/workflows", agentRateLimit, workflowRoutes);
+
+// Test-only routes (evals harness uses these). Only mounted when MOCK_LLM=1.
+if (process.env.MOCK_LLM === "1") {
+  const { default: testRoutes } = await import("./routes/test.js");
+  app.use("/api/test", testRoutes);
+  logger.warn("Test routes mounted at /api/test (MOCK_LLM=1).");
+}
 
 // Admin routes (authenticate + requireRole('admin') + auditAdminAccess applied inside the router)
 app.use("/api/admin", adminRoutes);

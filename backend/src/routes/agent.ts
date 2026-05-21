@@ -14,7 +14,7 @@
  * - GET  /api/agent/models             — List available models
  */
 
-import express, { Router, Request, Response } from "express";
+import { Router, type Router as RouterType, Request, Response } from "express";
 import { authenticate } from "../middleware/auth.js";
 import { logAudit, auditAgentEvent, AuditAction } from "../services/auditLogger.js";
 import { logger } from "../services/logger.js";
@@ -32,7 +32,7 @@ import { getTemplateSections } from "../services/promptBuilder.js";
 import { scanForPII } from "../services/piiDetector.js";
 import { query } from "../config/database.js";
 
-const router: express.Router = Router();
+const router: RouterType = Router();
 
 // All agent routes require authentication
 router.use(authenticate);

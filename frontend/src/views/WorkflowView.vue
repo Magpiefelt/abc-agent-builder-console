@@ -128,7 +128,7 @@ onBeforeRouteLeave((_to, _from, next) => {
 </script>
 
 <template>
-  <div class="h-full flex flex-col">
+  <div class="h-full flex flex-col" aria-label="Workflow canvas">
     <WorkflowToolbar
       v-if="current"
       :workflow="current"
@@ -144,7 +144,11 @@ onBeforeRouteLeave((_to, _from, next) => {
       @back="onBack"
     />
 
-    <div v-if="saveError || runError || error" class="px-4 py-2 bg-[var(--goa-color-error)]/10 border-b border-[var(--goa-color-error)] text-sm text-[var(--goa-color-error)]">
+    <div
+      v-if="saveError || runError || error"
+      class="px-4 py-2 bg-[var(--goa-color-error)]/10 border-b border-[var(--goa-color-error)] text-sm text-[var(--goa-color-error)]"
+      role="alert"
+    >
       {{ saveError || runError || error }}
     </div>
 
@@ -167,7 +171,12 @@ onBeforeRouteLeave((_to, _from, next) => {
           @select="onSelect"
           @drop-node="onDrop"
         />
-        <div v-else class="absolute inset-0 flex items-center justify-center text-[var(--goa-color-text-secondary)]">
+        <div
+          v-else
+          class="absolute inset-0 flex items-center justify-center text-[var(--goa-color-text-secondary)]"
+          role="status"
+          aria-live="polite"
+        >
           Loading workflow…
         </div>
       </div>
