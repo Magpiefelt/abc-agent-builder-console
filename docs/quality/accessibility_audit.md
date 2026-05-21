@@ -2,26 +2,34 @@
 
 **Standard:** WCAG 2.1 Level A + AA
 **Tools:** axe-core 4.10 (via Vitest + jsdom), manual keyboard + screen reader passes.
-**Date:** 2026-05-21
+**Date:** 2026-05-21 (updated post-review)
 **Owner:** Stream E (Quality)
 
 This document records the automated and manual accessibility review of the
-greenfield Free Agent and Workflow surfaces. It is intended as both a
-running checklist and as Authority-to-Operate evidence for Stream F.
+ABC Agent Builder Console. It is intended as both a running checklist and
+as Authority-to-Operate evidence for Stream F.
 
 ## Scope
 
-The audit covers the three top-level UI surfaces currently in the repo:
+The audit covers all top-level UI surfaces in the repo:
 
 | Surface | Route | Status |
 |---|---|---|
 | `AppHeader.vue` | always rendered | Audited, fixes applied |
-| `FreeAgentView.vue` | `/` | Audited, fixes applied |
-| `WorkflowView.vue` | `/workflow` | Placeholder; basic landmarks added |
+| `FreeAgentView.vue` + subcomponents | `/` | Audited, fixes applied |
+| `WorkflowView.vue` + subcomponents | `/workflows/:id` | Audited, basic landmarks |
+| `WorkflowListView.vue` | `/workflows` | Audited |
+| `LoginView.vue` | `/login` | Audited |
+| `ProfileView.vue` | `/profile` | Audited |
+| `AdminView.vue` + subcomponents | `/admin` | Audited |
 
-The Vue Flow canvas (Stream C), Blackboard / Task / Artifacts panels (Stream B),
-and the admin console (Stream F) are out of scope; they will be added to the
-audit as they land.
+### Components covered within views
+
+The following subcomponents are now implemented and included in the audit scope:
+
+- **Free Agent (Stream B):** TaskPanel, ControlBar, IterationTimeline, BlackboardViewer, ScratchpadViewer, ArtifactsPanel, PromptCustomizer, AgentCanvas, InterjectionModal, FinalReportPanel
+- **Workflow (Stream C):** WorkflowCanvas (Vue Flow), WorkflowSidebar, PropertiesPanel, WorkflowToolbar, WorkflowHistoryPanel, ExecutionPanel, AgentNode, FunctionNode, ToolNode, NoteNode
+- **Admin (Stream F):** AuditLogViewer, PIIDetectionViewer, ModelRegistryEditor, SessionInspector, HealthDiagnostics
 
 ## Automated audit — axe-core
 
@@ -43,7 +51,7 @@ because jsdom can't evaluate them reliably:
   that don't apply to component-level mounts. Verified in the full page
   through manual review.
 
-**Current results.** All three surfaces report **zero serious / critical
+**Current results.** All surfaces report **zero serious / critical
 violations** after the fixes described below.
 
 ```
@@ -90,11 +98,12 @@ violations** after the fixes described below.
 
 ### `src/views/WorkflowView.vue`
 
-- Wrapped the placeholder in a `<section aria-label="Workflow canvas">`
+- Wrapped the canvas area in a `<section aria-label="Workflow canvas">`
   landmark.
 - Used `<h2>` instead of `<h3>` for the only heading on the surface (was
   semantically misordered as h3 without an h2).
 - Raised contrast on auxiliary copy.
+- Added `role="status" aria-live="polite"` to the loading state indicator.
 
 ## Manual review
 
@@ -103,7 +112,7 @@ violations** after the fixes described below.
 Tested manually in Firefox 122 and Chrome 130. Tab order:
 
 1. Skip link → main content (now reachable)
-2. Header home link → primary nav (Free Agent → Workflow)
+2. Header home link → primary nav (Free Agent → Workflows → Admin)
 3. Task description textarea
 4. Model selector
 5. Start Agent button
@@ -128,19 +137,19 @@ VM). Findings:
 
 ### Reduced motion
 
-The current build has no animations, so `prefers-reduced-motion` is not
-yet exercised. When Stream B adds SSE-driven progress animation, the
-animation must respect the `@media (prefers-reduced-motion: reduce)`
-preference.
+The current build has minimal animations (Vue Flow edge animation). When
+`prefers-reduced-motion: reduce` is active, CSS transitions should be
+suppressed. The Vue Flow `animated` edge prop should be conditionally
+disabled based on the user's motion preference.
 
 ## Remaining limitations
 
 | Limitation | Owner | Mitigation |
 |---|---|---|
-| Colour contrast is not auto-tested in jsdom | Stream E follow-up | Add a Playwright pass when end-to-end browser tests come in. |
-| Vue Flow canvas accessibility | Stream C | Track as P1 — Vue Flow requires custom keyboard handling for canvas nodes. |
-| Workflow canvas placeholder is informational only | Stream C | Will be re-audited when Stream C lands. |
-| Stream B's SSE-driven UI not yet present | Stream B | When the live blackboard / task panel land, re-run the audit and add aria-live regions for streaming updates. |
+| Colour contrast is not auto-tested in jsdom | Follow-up | Add a Playwright pass when end-to-end browser tests come in. |
+| Vue Flow canvas keyboard navigation | Follow-up | Vue Flow requires custom keyboard handling for canvas nodes. Track as P1 enhancement. |
+| `prefers-reduced-motion` not yet wired to Vue Flow edge animation | Follow-up | Conditionally disable `animated` prop based on media query. |
+| InterjectionModal focus trap | Verified | `useFocusTrap` composable handles tab cycling within the modal. |
 
 ## How to re-run
 

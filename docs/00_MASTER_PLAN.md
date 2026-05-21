@@ -3,9 +3,9 @@
 **Owner:** Cohen McLeod (`cohen.mcleod@gov.ab.ca`)
 **Schema:** `cohen_mcleod`
 **Branch:** `claude/review-repo-prep-63MAr`
-**Status as of:** 2026-05-21
+**Status as of:** 2026-05-21 (updated post-review)
 
-This document is the **single source of truth** for the remaining ABC build. It consolidates and supersedes:
+This document is the **single source of truth** for the ABC build. It consolidates and supersedes:
 
 - `01_ABC_Rebuild_Plan.md`
 - `03_ABC_Deep_Architecture_Review.md`
@@ -40,26 +40,30 @@ ABC is a greenfield rebuild of the Agent Builder Console for the Government of A
 
 | Layer | Files | Status |
 |-------|-------|--------|
-| Entry + middleware stack | `index.ts`, `middleware/requestValidation.ts`, `middleware/agentRateLimit.ts` | Complete |
-| Config | `config/env.ts` (Zod), `config/database.ts` (pool + transactions + slow-query logging) | Complete |
-| Auth | `middleware/auth.ts` | **Dev mock only** — real Entra ID JWT validation is a TODO |
-| Privacy | `services/piiDetector.ts` (12 patterns), `services/auditLogger.ts` (`AuditAction` enum + query helpers) | Complete |
-| Logging | `services/logger.ts`, `services/processMonitor.ts` (SIGTERM/SIGINT, unhandled rejections) | Complete |
-| LLM | `services/llmProvider.ts` (AnthropicProvider + GoogleGeminiProvider, retry, streaming, classification gating) | Complete |
-| Orchestration | `services/agentOrchestrator.ts` (SSE iteration loop, heartbeat, interjection, abort), `services/promptBuilder.ts`, `services/loopDetector.ts` (5 levels), `services/toolDispatcher.ts` (registration pattern + memory tools) | Complete |
-| Edge tools (15/20) | `tools/webSearch.ts`, `tools/webScrape.ts` (SSRF-protected), `tools/github.ts`, `tools/documents.ts` (PDF/ZIP), `tools/apiProxy.ts`, `tools/utilities.ts` (time/weather) | Mostly complete |
-| Routes | `routes/health.ts`, `routes/agent.ts` (6 endpoints + models registry) | Complete |
-| Routes — stubbed | `/api/workflows` and `/api/admin` return placeholder JSON | Not started |
+| Entry + middleware stack | `index.ts`, `middleware/requestValidation.ts`, `middleware/agentRateLimit.ts` | **Complete** |
+| Config | `config/env.ts` (Zod), `config/database.ts` (pool + transactions + slow-query logging) | **Complete** |
+| Auth | `middleware/auth.ts`, `services/entraAuth.ts` | **Complete** — JWKS + PKCE + session cookies + dev mock fallback |
+| Privacy | `services/piiDetector.ts` (Luhn-gated), `services/auditLogger.ts`, `services/secretsVault.ts`, `services/retentionJob.ts` | **Complete** |
+| Logging | `services/logger.ts`, `services/processMonitor.ts` (SIGTERM/SIGINT, unhandled rejections) | **Complete** |
+| LLM | `services/llmProvider.ts` (AnthropicProvider + GoogleGeminiProvider, retry, streaming, classification gating) | **Complete** |
+| Orchestration | `services/agentOrchestrator.ts`, `services/promptBuilder.ts`, `services/loopDetector.ts`, `services/toolDispatcher.ts` | **Complete** |
+| Workflow | `services/workflowExecutor.ts`, `services/functionRegistry.ts` (44 functions) | **Complete** |
+| Edge tools (20/20) | `tools/webSearch.ts`, `tools/webScrape.ts`, `tools/github.ts`, `tools/documents.ts`, `tools/apiProxy.ts`, `tools/utilities.ts`, `tools/database.ts`, `tools/generation.ts`, `tools/communication.ts` | **Complete** |
+| Routes | `routes/health.ts`, `routes/agent.ts`, `routes/workflow.ts`, `routes/auth.ts`, `routes/users.ts`, `routes/admin.ts` | **Complete** |
 
 ### Frontend (`frontend/src/`)
 
 | Layer | Files | Status |
 |-------|-------|--------|
-| App shell | `App.vue`, `main.ts`, `router/index.ts`, `assets/main.css` (Alberta DS tokens) | Complete |
-| Header | `components/AppHeader.vue` | **Hardcoded user** — no auth flow |
-| Free Agent view | `views/FreeAgentView.vue` | Layout only — no SSE consumer, no memory viewers, no model fetch from registry |
-| Workflow view | `views/WorkflowView.vue` | Placeholder text only |
-| State | `stores/counter.ts` | Vue scaffold leftover; no real stores |
+| App shell | `App.vue`, `main.ts`, `router/index.ts`, `assets/main.css` (Alberta DS tokens) | **Complete** |
+| Header | `components/AppHeader.vue` | **Complete** — auth-aware, shows real user + ministry |
+| Free Agent view | `views/FreeAgentView.vue` + 10 subcomponents | **Complete** — SSE consumer, memory viewers, prompt customizer, Vue Flow canvas |
+| Workflow view | `views/WorkflowView.vue` + 8 subcomponents | **Complete** — Vue Flow editor, sidebar, properties, history, execution panel |
+| Admin view | `views/AdminView.vue` + 5 subcomponents | **Complete** — Audit, PII, models, sessions, health diagnostics |
+| Auth/Profile | `views/LoginView.vue`, `views/ProfileView.vue` | **Complete** — SSO redirect, identity display, saved prompts |
+| Workflow List | `views/WorkflowListView.vue` | **Complete** — CRUD, duplicate, search |
+| State | `stores/agentSession.ts`, `stores/workflow.ts`, `stores/auth.ts`, `stores/models.ts`, `stores/userMemory.ts` | **Complete** |
+| Composables | `useSSEStream.ts`, `useApiFetch.ts`, `useAuthGuard.ts`, `useMarkdown.ts`, `useToast.ts`, `useFocusTrap.ts` | **Complete** |
 
 ### Database (`docs/02_database_migrations.sql`)
 
@@ -69,7 +73,7 @@ Schema + seed (idempotent):
 - **Application tables (9):** `users`, `model_registry`, `workflows`, `agent_sessions`, `agent_iterations`, `artifacts`, `audit_log`, `pii_detections`
 - **Triggers:** `update_timestamp()` on all `updated_at` columns
 - **Seed data:** 35 rows in `plan`, 35 in `migration`, 10 in `vulnerabilities`, 10 in `privacy_controls`
-- **Missing seed:** `features` table (schema exists, no INSERTs), `model_registry` (no INSERTs — provider factory falls back to hard-coded defaults)
+- **Seed data:** 103 rows in `features`, 4 rows in `model_registry` (Claude Opus/Sonnet/Haiku + Gemini Flash)
 
 ---
 
@@ -79,17 +83,17 @@ The exercise (AI Garage — Application Remediation and Migration) requires more
 
 | Brief Section | Requirement | State |
 |---------------|-------------|-------|
-| 3.1 Features mapping | Populate `features` table from 100% coverage of spec app | **Missing data** — table empty |
-| 3.2 Vulnerabilities + Blue/Red agents | 10 vulns identified; Red/Blue agent runs not yet executed | Partial — table seeded, agent runs pending |
-| 3.3 Target architecture + `migration` table | Done; diagrams in `docs/` | Complete |
-| 3.4 Plan table | 35 tasks across 6 phases | Complete |
-| 3.5 Privacy controls | 10 controls planned; PII detector + ministry scoping built; classification routing done in LLM factory | Partial — controls planned not yet all implemented |
-| 4.1 Harness | 8-phase Velocity approach | Phases 1–3 substantially complete; 4–6 pending |
-| 5.1 Evals + trust | Eval scripts, visual presentation, SOAR/STRA evidence | **Not started** |
-| 6.1 Review | Faithful port + functional verification | **Not started** |
-| Step 4 Completion: Nexus host, Red/Blue runs, SSO | All pending | **Not started** |
-| Enterprise Tools (Ent Tools APIs) | Wire in via `ent-tools.sandbox.aim.int.gov.ab.ca` | **Not started** — direct Brave / Image calls today |
-| User memory / accounts (whitepaper extras) | Saved prompts, favourite workflows, recent sessions | **Not started** |
+| 3.1 Features mapping | Populate `features` table from 100% coverage of spec app | **COMPLETE** — 103 features seeded in migration script |
+| 3.2 Vulnerabilities + Blue/Red agents | 10 vulns identified; Red/Blue agent runs executed | **COMPLETE** — 10 vulns seeded, Red/Blue report in `docs/security/red_blue_report.md` |
+| 3.3 Target architecture + `migration` table | Done; diagrams in `docs/` | **COMPLETE** |
+| 3.4 Plan table | 35 tasks across 6 phases | **COMPLETE** — 36 rows seeded |
+| 3.5 Privacy controls | 10 controls planned; PII detector + ministry scoping built; classification routing done in LLM factory | **COMPLETE** — 10 controls seeded, all implemented |
+| 4.1 Harness | 8-phase Velocity approach | **COMPLETE** — All phases implemented |
+| 5.1 Evals + trust | Eval scripts, visual presentation, SOAR/STRA evidence | **COMPLETE** — 4 eval scenarios, CI workflow, STRIDE/PIA/controls docs |
+| 6.1 Review | Faithful port + functional verification | **IN PROGRESS** — Code review complete (see `docs/review/`), real LLM verification pending |
+| Step 4 Completion: Nexus host, Red/Blue runs, SSO | Nexus manifest + deploy workflow ready | **PENDING DEPLOYMENT** — SSO code complete, Entra callback registration needed |
+| Enterprise Tools (Ent Tools APIs) | Wire in via `ent-tools.sandbox.aim.int.gov.ab.ca` | **COMPLETE** — `entToolsClient.ts` routes Brave + Image when `ENT_TOOLS_API_KEY` set |
+| User memory / accounts (whitepaper extras) | Saved prompts, favourite workflows, recent sessions | **COMPLETE** — Full user memory API + frontend integration |
 
 ---
 
@@ -97,14 +101,14 @@ The exercise (AI Garage — Application Remediation and Migration) requires more
 
 Streams are sized to be picked up independently. The only hard cross-stream dependency is the **Stream A → Stream B/C** handoff for replacing the dev auth mock; until then B and C run against the mock user.
 
-| Stream | Title | Primary owner concern | Surface area |
-|--------|-------|----------------------|--------------|
-| **A** | Identity, SSO & User Memory | Real Entra ID auth, user-scoped data | Backend auth + new tables + Vue auth store/header |
-| **B** | Free Agent UX & Real-Time Streaming | Consume SSE, render iteration progress + memory | Vue components, Pinia, EventSource |
-| **C** | Workflow Canvas (Vue Flow + Executor) | Visual builder + backend graph executor | Vue Flow, custom nodes, workflowExecutor service |
-| **D** | Tool Ecosystem Completion + Ent Tools | Finish 5 remaining tools, route via Ent Tools | `backend/src/tools/*`, secret injection |
-| **E** | Quality: Tests, Evals, Accessibility, Red/Blue | Confidence, ATO evidence, peer-review | Vitest harnesses, axe-core, eval scripts, agent run reports |
-| **F** | Compliance, Privacy Hardening & Nexus Deployment | SOAR/STRA package, deploy artifacts, audit dashboards | `docs/security/*`, `.github/workflows/*`, retention jobs, admin UI |
+| Stream | Title | Status | Surface area |
+|--------|-------|--------|--------------|
+| **A** | Identity, SSO & User Memory | **COMPLETE** | Backend auth + new tables + Vue auth store/header |
+| **B** | Free Agent UX & Real-Time Streaming | **COMPLETE** | Vue components, Pinia, SSE consumer |
+| **C** | Workflow Canvas (Vue Flow + Executor) | **COMPLETE** | Vue Flow, custom nodes, workflowExecutor service |
+| **D** | Tool Ecosystem Completion + Ent Tools | **COMPLETE** | `backend/src/tools/*`, Ent Tools client, secrets vault |
+| **E** | Quality: Tests, Evals, Accessibility, Red/Blue | **COMPLETE** | 392+43 tests, 4 eval scenarios, Red/Blue report, CI |
+| **F** | Compliance, Privacy Hardening & Nexus Deployment | **DEPLOYMENT PENDING** | SOAR/STRA docs, admin UI, retention job, Nexus manifest |
 
 Each stream below specifies: **Goal**, **Scope**, **Files to create/modify**, **Tasks**, **Dependencies**, **Acceptance criteria**, **Database migrations needed**.
 

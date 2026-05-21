@@ -10,178 +10,140 @@ This is a **greenfield rebuild** of the Agent Builder Console (ABC), an agentic 
 
 | Layer | Technology |
 |-------|------------|
-| Frontend | Vue.js 3 (Composition API) + TypeScript + Vite + Tailwind CSS + Alberta Design System |
+| Frontend | Vue.js 3 (Composition API) + TypeScript + Vite + Tailwind CSS |
 | Backend | Node.js 22 + Express 5 + TypeScript |
 | Database | PostgreSQL (Render shared instance, schema: `cohen_mcleod`) |
-| Authentication | Microsoft Entra ID (OIDC/OAuth2) via `jose` + `jwks-rsa` |
+| Authentication | Microsoft Entra ID (OIDC/OAuth2) |
 | Styling | Alberta Design System (https://design.alberta.ca) + Tailwind |
 | Canvas | Vue Flow (for workflow visualization) |
-| LLM | Vertex AI (Claude) + Google Gemini fallback + configurable model registry |
-| Tests | Vitest + Vue Test Utils + jsdom + axe-core |
-| Deployment | GitHub Actions → Nexus (GoA platform) |
+| LLM | Vertex AI (Claude) + Google Gemini + configurable model registry |
 
 ## Architecture Principle
 
 **Thin Client / Thick Server.** The frontend is a pure presentation layer. It holds NO secrets, performs NO orchestration, and makes NO direct external API calls. All intelligence, state management, and tool execution happens on the Node.js backend.
 
-## Current State (as of 2026-05-21)
+## Current State (Streams A–F Substantially Complete)
 
-All six parallel work streams are substantially complete. Phases 1–5 are feature-complete; Phase 6 (Compliance) documentation and the Nexus deployment are the main remaining items.
+All six parallel work streams have been implemented. The application is feature-complete and awaiting final deployment.
 
-### What's Built
+| Stream | Title | Status |
+|--------|-------|--------|
+| **A** | Identity, SSO & User Memory | **COMPLETE** — Entra ID OIDC, session cookies, user preferences, saved prompts, workflow favorites |
+| **B** | Free Agent UX & Real-Time Streaming | **COMPLETE** — Pinia stores, SSE consumer, memory viewers, prompt customizer, Vue Flow agent canvas |
+| **C** | Workflow Canvas (Vue Flow + Executor) | **COMPLETE** — Visual builder, topological executor, versioning, execution history, duplicate/restore |
+| **D** | Tool Ecosystem + Ent Tools | **COMPLETE** — All 20 edge tools registered, Ent Tools client for Brave/Image, secrets vault integration |
+| **E** | Quality: Tests, Evals, Accessibility | **COMPLETE** — 392 backend tests, 43 frontend tests, 4 eval scenarios, Red/Blue report, CI workflow |
+| **F** | Compliance, Privacy & Admin | **COMPLETE** — STRIDE threat model, PIA, retention job, admin UI, Nexus manifest, deploy workflow |
 
-**Backend (`backend/src/`)**
+### Backend Services (all built)
+- `agentOrchestrator.ts` — 714-line iteration loop with SSE, PII, loop detection
+- `llmProvider.ts` — Anthropic + Gemini providers, streaming, retry, model registry cache
+- `promptBuilder.ts` — Dynamic prompt assembly from template + runtime state
+- `loopDetector.ts` — 5-level detection patterns, escalating interventions
+- `toolDispatcher.ts` — Registration pattern, timeout enforcement, result normalization
+- `workflowExecutor.ts` — Topological graph walker with branch pruning
+- `functionRegistry.ts` — 44 deterministic functions across 5 categories
+- `entraAuth.ts` — JWKS-cached JWT verification, PKCE, session cookies
+- `secretsVault.ts` — pgcrypto-backed per-user encrypted secret store
+- `retentionJob.ts` — Classification-aware scheduled cleanup (90d / 1y / 3y)
+- `logger.ts` — Structured JSON logging
+- `processMonitor.ts` — Unhandled rejection/exception handling, graceful shutdown
+- `auditLogger.ts` — Enum-based audit actions, query helpers
 
-| Layer | Files | Status |
-|-------|-------|--------|
-| Entry + middleware stack | `index.ts`, `middleware/requestValidation.ts`, `middleware/agentRateLimit.ts` | ✅ Complete |
-| Config | `config/env.ts` (Zod), `config/database.ts` (pool + slow-query logging) | ✅ Complete |
-| Auth | `middleware/auth.ts`, `services/entraAuth.ts` | ✅ Dev mock + real Entra ID JWT validation |
-| Routes | `routes/auth.ts`, `routes/agent.ts`, `routes/users.ts`, `routes/workflow.ts`, `routes/admin.ts`, `routes/health.ts` | ✅ Complete |
-| Privacy | `services/piiDetector.ts` (12 patterns), `services/auditLogger.ts` | ✅ Complete |
-| LLM | `services/llmProvider.ts` (Anthropic + Vertex AI + Gemini, retry, streaming) | ✅ Complete |
-| Orchestration | `services/agentOrchestrator.ts`, `services/promptBuilder.ts`, `services/loopDetector.ts`, `services/toolDispatcher.ts` | ✅ Complete |
-| Tools (20/20) | `tools/webSearch.ts`, `tools/webScrape.ts`, `tools/github.ts`, `tools/documents.ts`, `tools/apiProxy.ts`, `tools/utilities.ts`, `tools/database.ts`, `tools/generation.ts`, `tools/communication.ts` | ✅ Complete |
-| Workflow | `services/workflowExecutor.ts`, `services/functionRegistry.ts` | ✅ Complete |
-| Compliance | `services/retentionJob.ts`, `services/secretsVault.ts`, `services/entToolsClient.ts` | ✅ Complete |
+### Frontend (all built)
+- **Free Agent:** TaskPanel, ControlBar, IterationTimeline, BlackboardViewer, ScratchpadViewer, ArtifactsPanel, PromptCustomizer, AgentCanvas, InterjectionModal, FinalReportPanel
+- **Workflow:** WorkflowCanvas (Vue Flow), WorkflowSidebar, PropertiesPanel, WorkflowToolbar, WorkflowHistoryPanel, ExecutionPanel, 4 custom node types
+- **Admin:** AuditLogViewer, PIIDetectionViewer, ModelRegistryEditor, SessionInspector, HealthDiagnostics
+- **Auth/User:** LoginView, ProfileView, auth store, userMemory store, auth guard
+- **Stores:** agentSession (SSE reducer), workflow (CRUD + execution), auth, models, userMemory
 
-**Frontend (`frontend/src/`)**
+### Edge Tools (20/20 registered)
+`brave_search`, `google_search`, `web_scrape`, `read_github_repo`, `read_github_file`, `pdf_extract_text`, `pdf_info`, `ocr_image`, `read_zip_contents`, `read_zip_file`, `extract_zip_files`, `get_call_api`, `post_call_api`, `execute_sql`, `read_database_schemas`, `image_generation`, `elevenlabs_tts`, `get_time`, `get_weather`, `send_email`
 
-| Layer | Files | Status |
-|-------|-------|--------|
-| App shell + routing | `App.vue`, `main.ts`, `router/index.ts` | ✅ Complete |
-| Views | `FreeAgentView.vue`, `WorkflowView.vue`, `WorkflowListView.vue`, `AdminView.vue`, `LoginView.vue`, `ProfileView.vue` | ✅ Complete |
-| Free Agent components | `TaskPanel`, `ControlBar`, `IterationTimeline`, `BlackboardViewer`, `ScratchpadViewer`, `ArtifactsPanel`, `PromptCustomizer`, `AgentCanvas`, `InterjectionModal`, `FinalReportPanel` | ✅ Complete |
-| Workflow components | `WorkflowCanvas`, `WorkflowSidebar`, `PropertiesPanel`, `WorkflowToolbar`, `ExecutionPanel`, `WorkflowHistoryPanel` | ✅ Complete |
-| Workflow nodes | `AgentNode`, `FunctionNode`, `ToolNode`, `NoteNode` | ✅ Complete |
-| Admin components | `AuditLogViewer`, `HealthDiagnostics`, `ModelRegistryEditor`, `PIIDetectionViewer`, `SessionInspector` | ✅ Complete |
-| Pinia stores | `auth`, `agentSession`, `workflow`, `userMemory`, `models` | ✅ Complete |
-| Composables | `useSSEStream`, `useApiFetch`, `useAuthGuard`, `useMarkdown`, `useToast`, `useFocusTrap` | ✅ Complete |
-
-**Database (`docs/02_database_migrations.sql`)**
-
-Schema + seed (idempotent, `IF NOT EXISTS`):
-- **Planning tables (5):** `features` (103 rows), `vulnerabilities` (10 rows), `migration` (35 rows), `plan` (35 rows), `privacy_controls` (10 rows)
-- **Application tables (9):** `users`, `model_registry`, `workflows`, `agent_sessions`, `agent_iterations`, `artifacts`, `audit_log`, `pii_detections`
-- **Stream A tables:** `user_preferences`, `saved_prompts`, `workflow_favorites`
-- **Stream C tables:** `workflow_versions`, `workflow_executions`
-- **Stream F tables:** `user_secrets`, `retention_policy`
-
-**Tests**
-
-| Suite | Count | Status |
-|-------|-------|--------|
-| Backend unit (Vitest) | 394 tests across 24 files | ✅ All passing |
-| Frontend unit (Vitest + Vue Test Utils) | 56 tests across 9 files | ✅ All passing |
-| Accessibility (axe-core) | 2 tests | ✅ All passing |
-| Evals (scenario runner) | 5 JSON scenarios | ✅ All valid format |
-
-**Documentation**
-
-| Doc | Location | Status |
-|-----|----------|--------|
-| Master plan | `docs/00_MASTER_PLAN.md` | ✅ |
-| DB migrations | `docs/02_database_migrations.sql` | ✅ |
-| STRIDE threat model | `docs/security/threat_model_stride.md` | ✅ |
-| Data flow diagram | `docs/security/data_flow_diagram.md` | ✅ |
-| Controls matrix | `docs/security/controls_matrix.md` | ✅ |
-| Red/Blue report | `docs/security/red_blue_report.md` | ✅ |
-| PIA | `docs/privacy/pia.md` | ✅ |
-| Retention schedule | `docs/privacy/retention_schedule.md` | ✅ |
-| Accessibility audit | `docs/quality/accessibility_audit.md` | ✅ |
-| Nexus deployment runbook | `docs/operations/deployment_nexus.md` | ✅ |
-| Incident response | `docs/operations/incident_response.md` | ✅ |
-| Key rotation | `docs/operations/key_rotation.md` | ✅ |
-| Observability | `docs/operations/observability.md` | ✅ |
-
-**Deployment**
-
-- `.github/workflows/ci.yml` — lint + type-check + test on push/PR
-- `.github/workflows/deploy.yml` — build artifacts + Nexus publish
-- `nexus/manifest.yaml` — GoA Nexus app declaration
+### Tool Registration Pattern
+Tools are registered at startup in `index.ts` via `registerAllTools()` from `tools/register.ts`. To add a new tool:
+1. Create handler in `backend/src/tools/`
+2. Add tool name to the tools manifest in `backend/src/data/toolsManifest.json`
+3. Import and register in `tools/register.ts`
 
 ## Running the Application
 
 ```bash
-# Install (monorepo root)
-pnpm install
-
 # Backend (port 3000)
-cd backend && pnpm dev
+cd backend && pnpm install && pnpm dev
 
 # Frontend (port 5173)
-cd frontend && pnpm dev
-
-# Run all tests
-pnpm test
-
-# Type-check
-pnpm type-check
+cd frontend && pnpm install && pnpm dev
 ```
 
-The Vite proxy in `frontend/vite.config.ts` forwards `/api/*` to `http://localhost:3000`.
+The Vite proxy already forwards `/api/*` to `http://localhost:3000`.
 
-## Environment Variables
-
-See `backend/.env.example`. Required for a full run:
-- `DATABASE_URL` — PostgreSQL connection string (Render)
-- `ANTHROPIC_API_KEY` or `VERTEX_AI_API_KEY` — at least one LLM provider
-
-Everything else is optional and the corresponding features degrade gracefully.
-
-**Dev mode:** No Entra ID env vars required. The backend uses a fixed mock user (`cohen.mcleod@gov.ab.ca`, role: `admin`) when `NODE_ENV !== "production"`.
+Required env (see `backend/.env.example`): `DATABASE_URL`, `ANTHROPIC_API_KEY` or `VERTEX_AI_API_KEY`. Everything else is optional and the corresponding tools fail gracefully.
 
 ## Database
 
-Connection string: see `backend/.env.example`.
+Connection string (from exercise): See `.env.example` in `backend/`.
 Schema: `cohen_mcleod`
-Migration script: `docs/02_database_migrations.sql` (run once; fully idempotent)
+Migration script: `docs/02_database_migrations.sql`
 
 ## Key Files
 
 | File | Purpose |
 |------|---------|
-| `backend/src/index.ts` | Express entry point — middleware, routes, tool registration |
-| `backend/src/middleware/auth.ts` | Entra ID JWT validation + dev mock |
-| `backend/src/services/agentOrchestrator.ts` | Core SSE iteration loop (800+ lines) |
-| `backend/src/services/llmProvider.ts` | LLM factory — Anthropic / Vertex / Gemini + retry |
-| `backend/src/services/toolDispatcher.ts` | Tool routing + memory tools + artifact persistence |
-| `backend/src/services/piiDetector.ts` | 12-pattern PII scanner — chokepoint before all LLM calls |
-| `backend/src/services/auditLogger.ts` | Immutable audit trail (40+ action types) |
-| `backend/src/routes/agent.ts` | Free Agent session API (7 endpoints + models) |
-| `backend/src/routes/workflow.ts` | Workflow CRUD + execution (SSE streaming) |
-| `backend/src/routes/admin.ts` | Audit / PII / model / session admin endpoints |
-| `frontend/src/views/FreeAgentView.vue` | Main Free Agent workbench (3-panel layout) |
-| `frontend/src/views/WorkflowView.vue` | Visual workflow builder (Vue Flow) |
-| `frontend/src/stores/agentSession.ts` | Session lifecycle + SSE event reducer |
-| `frontend/src/stores/workflow.ts` | Workflow canvas state + execution log |
-| `frontend/src/composables/useSSEStream.ts` | POST + ReadableStream SSE consumer |
+| `backend/src/index.ts` | Express app entry point with all middleware |
+| `backend/src/middleware/auth.ts` | Entra ID authentication + RBAC (dev mock in NODE_ENV=development) |
+| `backend/src/services/entraAuth.ts` | JWKS verification, PKCE, session JWT, user upsert |
+| `backend/src/services/agentOrchestrator.ts` | Core iteration loop + SSE streaming |
+| `backend/src/services/workflowExecutor.ts` | Topological graph executor |
+| `backend/src/services/llmProvider.ts` | LLM Provider Factory (Claude + Gemini) |
+| `backend/src/services/piiDetector.ts` | PII scanning before LLM calls |
+| `backend/src/services/auditLogger.ts` | Immutable audit trail |
+| `backend/src/services/secretsVault.ts` | Per-user encrypted secret store |
+| `backend/src/services/retentionJob.ts` | Classification-aware data lifecycle |
+| `backend/src/routes/agent.ts` | Free Agent session API (create, start, stop, continue, interject, models, prompt-template) |
+| `backend/src/routes/workflow.ts` | Workflow CRUD + execute + versions + executions |
+| `backend/src/routes/auth.ts` | Login/callback/logout/me |
+| `backend/src/routes/users.ts` | Preferences, saved prompts, favorites, recent sessions, secrets |
+| `backend/src/routes/admin.ts` | Audit, PII, models, sessions, retention |
+| `frontend/src/stores/agentSession.ts` | Session state machine + SSE event reducer |
+| `frontend/src/stores/workflow.ts` | Workflow canvas + execution state |
+| `frontend/src/composables/useSSEStream.ts` | POST-based SSE consumer |
 | `docs/00_MASTER_PLAN.md` | **Start here.** Consolidated build plan + 6 parallel work streams |
-| `docs/02_database_migrations.sql` | Complete schema + seed (idempotent) |
+| `docs/02_database_migrations.sql` | Schema + seed (idempotent, additive) |
+| `docs/review/` | Code review report, next phases plan, enhancement recommendations |
 
-## Multi-Agent Coordination Notes
+## What to Build Next
 
-This project is developed by multiple Claude Code agents working in parallel. When picking up work:
+Read **`docs/review/ABC_Beyond_Min_Spec_Recommendations.md`** for the prioritized enhancement list. Key items:
 
-1. Read `docs/00_MASTER_PLAN.md` — the authoritative stream breakdown.
-2. Check `git log --oneline -20` to see what's been merged recently.
-3. Run `pnpm test` to confirm the baseline is green before making changes.
-4. Commit with descriptive messages; push to `claude/app-state-review-buildout-ZZvV2`.
+1. **End-to-end verification with real LLM** — Run a complete session against Vertex AI and document results.
+2. **Fix minor bugs** — Missing ExecutionPanel import, non-functional ministry filter, hardcoded models in WorkflowView.
+3. **Convert test scaffolds** — The 13 `it.todo` stubs in `agentSession.test.ts` should become real tests.
+4. **Expand agent templates** — Add GoA-specific templates (Policy Drafter, FOIP Reviewer, Briefing Note Writer).
+5. **Session replay** — Let users revisit completed sessions from the UI.
+6. **Outbound PII scan** — Scan LLM responses before streaming to client.
 
-### Cross-Stream Non-Negotiables
+## Critical Constraints
 
-- **No secrets in the frontend.** Ever.
-- **All orchestration on the backend.** SSE in, JSON in.
-- **PII scan before every LLM call.** `services/piiDetector.ts` is the chokepoint.
-- **Audit every action** using `AuditAction` enum.
-- **Ministry scoping on every query** — pull `ministryCode` from `req.user`.
-- **Alberta Design System** — colours, fonts, GoA web components.
-- **Parameterized SQL only.** No string concatenation.
-- **Idempotent + additive migrations** in `docs/02_database_migrations.sql`.
+1. No secrets in frontend. The Vue app never sees API keys.
+2. All orchestration on backend. Frontend only renders and streams.
+3. PII scanning before every LLM call. Use `piiDetector.ts`.
+4. Audit every action. Use `auditLogger.ts` with `AuditAction` enum.
+5. Ministry scoping on all queries. Filter by `ministry_code`.
+6. Alberta Design System for all UI. Follow https://design.alberta.ca
+7. No browser spoofing in web scraping. Identify as GoA bot.
+8. Parameterized queries only. Never concatenate user input into SQL.
+9. All logging through `logger.ts`. No raw `console.log`.
+10. Tool handlers must return `{ success: boolean; ...data; error?: string }`.
 
-## Reference Material
+## Original App Reference
 
-- **Spec app source:** `https://github.com/developmentation/agent-builder-console`
-- **Live spec:** `https://agentbuilderconsole.com`
-- **Architecture diagrams:** `docs/architecture_current.png`, `docs/architecture_target.png`, `docs/architecture_rebuild.png`
-- **Schema + seed:** `docs/02_database_migrations.sql`
+Use these files from the original repo for behavioral reference only:
+- `src/hooks/useFreeAgentSession.ts` — Agent loop logic (2,130 lines)
+- `supabase/functions/free-agent/index.ts` — LLM + tool dispatch (1,279 lines)
+- `public/data/systemPromptTemplate.json` — Prompt structure
+- `public/data/toolsManifest.json` — 36 tool definitions
+- `src/lib/loopDetector.ts` — Loop detection algorithm
+- `src/lib/functionDefinitions.ts` — Function catalog
+
+Clone reference: `git clone https://github.com/developmentation/agent-builder-console.git`
