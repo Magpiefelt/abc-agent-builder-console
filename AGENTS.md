@@ -67,22 +67,31 @@ Migration script: `docs/02_database_migrations.sql`
 | File | Purpose |
 |------|---------|
 | `backend/src/index.ts` | Express app entry point with all middleware |
-| `backend/src/middleware/auth.ts` | Entra ID authentication + RBAC |
+| `backend/src/middleware/auth.ts` | Entra ID authentication + RBAC (dev mock active) |
 | `backend/src/services/piiDetector.ts` | PII scanning before LLM calls |
 | `backend/src/services/auditLogger.ts` | Immutable audit trail |
 | `backend/src/routes/agent.ts` | Free Agent session API (6 endpoints + models) |
 | `backend/src/services/llmProvider.ts` | LLM Provider Factory (Claude + Gemini) |
 | `backend/src/services/agentOrchestrator.ts` | Core iteration loop + SSE streaming |
 | `backend/src/services/promptBuilder.ts` | Dynamic system prompt assembly |
-| `backend/src/services/loopDetector.ts` | 4-level loop detection |
+| `backend/src/services/loopDetector.ts` | 5-level loop detection |
 | `backend/src/services/toolDispatcher.ts` | Tool call routing + memory tools |
-| `frontend/src/views/FreeAgentView.vue` | Main agent interface |
-| `frontend/src/components/AppHeader.vue` | GoA-branded navigation |
-| `docs/01_ABC_Rebuild_Plan.md` | Full build-out plan |
-| `docs/03_ABC_Deep_Architecture_Review.md` | Deep review of original app |
+| `backend/src/tools/*` | 15/20 edge tools implemented (search, scrape, github, pdf, zip, api, time/weather) |
+| `frontend/src/views/FreeAgentView.vue` | Main agent interface (layout only, no SSE consumer yet) |
+| `frontend/src/components/AppHeader.vue` | GoA-branded navigation (hardcoded user) |
+| `docs/00_MASTER_PLAN.md` | **Start here.** Consolidated build plan + 6 parallel work streams |
+| `docs/02_database_migrations.sql` | Schema + seed (idempotent, additive) |
+| `docs/architecture_*.png` | Current / target / rebuild architecture diagrams |
 
-## Remaining Build Phases
+## Next Steps
 
-See `docs/PHASE_INSTRUCTIONS.md` for detailed instructions for each phase.
+Read **`docs/00_MASTER_PLAN.md`** before picking up work. It describes the remaining build as six independently runnable streams:
 
-**Next: Phase 3 (Tool Ecosystem)** — Implement the 19 edge tools as real handlers in `backend/src/tools/`. The dispatcher is ready to route to them.
+- **Stream A** — Identity, SSO & User Memory (real Entra ID JWT, saved prompts, favorites)
+- **Stream B** — Free Agent UX & Real-Time Streaming (Pinia + SSE + memory viewers + Vue Flow canvas)
+- **Stream C** — Workflow Canvas (Vue Flow nodes + backend executor + CRUD)
+- **Stream D** — Tool Ecosystem Completion + Ent Tools Integration (SQL, image gen, TTS, email, OCR)
+- **Stream E** — Quality: Tests, Evals, Accessibility & Red/Blue Agent reports
+- **Stream F** — Compliance, Privacy Hardening & Nexus Deployment (STRA/SOAR, admin UI, retention)
+
+Each stream lists files to create / modify, tasks, dependencies, and acceptance criteria.
