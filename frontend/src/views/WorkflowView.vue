@@ -7,6 +7,7 @@ import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
 import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
 import WorkflowToolbar from '@/components/workflow/WorkflowToolbar.vue'
+import WorkflowHistoryPanel from '@/components/workflow/WorkflowHistoryPanel.vue'
 import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/workflow'
 
 const route = useRoute()
@@ -24,6 +25,11 @@ const models = [
 
 const runError = ref<string | null>(null)
 const saveError = ref<string | null>(null)
+const historyOpen = ref(false)
+
+function toggleHistory(): void {
+  historyOpen.value = !historyOpen.value
+}
 
 onMounted(async () => {
   const id = route.params.id as string
@@ -142,6 +148,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       @update:classification="store.setClassification"
       @update:name="store.setName"
       @back="onBack"
+      @toggle-history="toggleHistory"
     />
 
     <goa-callout
@@ -153,7 +160,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       {{ saveError || runError || error }}
     </goa-callout>
 
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 flex overflow-hidden relative">
       <WorkflowSidebar
         v-if="library"
         :agent-templates="library.agentTemplates"
@@ -161,25 +168,31 @@ onBeforeRouteLeave((_to, _from, next) => {
         :tools="library.tools"
       />
 
-      <div class="flex-1 relative bg-gray-50">
-        <WorkflowCanvas
-          v-if="current"
-          :nodes="current.canvas_data.nodes"
-          :edges="current.canvas_data.edges"
-          :execution-stages="stageMap"
-          @update:nodes="onNodesUpdate"
-          @update:edges="onEdgesUpdate"
-          @select="onSelect"
-          @drop-node="onDrop"
-        />
-        <div
-          v-else
-          class="absolute inset-0 flex items-center justify-center text-[var(--goa-color-text-secondary)]"
-          role="status"
-          aria-live="polite"
-        >
-          Loading workflow…
+      <div class="flex-1 flex flex-col min-w-0">
+        <div class="flex-1 relative bg-gray-50 min-h-0">
+          <WorkflowCanvas
+            v-if="current"
+            :nodes="current.canvas_data.nodes"
+            :edges="current.canvas_data.edges"
+            :execution-stages="stageMap"
+            @update:nodes="onNodesUpdate"
+            @update:edges="onEdgesUpdate"
+            @select="onSelect"
+            @drop-node="onDrop"
+          />
+          <div
+            v-else
+            class="absolute inset-0 flex items-center justify-center text-[var(--goa-color-text-secondary)]"
+            role="status"
+            aria-live="polite"
+          >
+            Loading workflow…
+          </div>
         </div>
+        <ExecutionPanel
+          v-if="execution"
+          class="max-h-[45%] min-h-[140px] shrink-0"
+        />
       </div>
 
       <PropertiesPanel
@@ -191,6 +204,13 @@ onBeforeRouteLeave((_to, _from, next) => {
         :models="models"
         @update:node="onPropertyUpdate"
         @remove="onPropertyRemove"
+      />
+
+      <WorkflowHistoryPanel
+        v-if="current"
+        :open="historyOpen"
+        :workflow-id="current.id"
+        @close="historyOpen = false"
       />
     </div>
   </div>

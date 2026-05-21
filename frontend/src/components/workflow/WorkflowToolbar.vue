@@ -17,6 +17,7 @@ const emit = defineEmits<{
   (e: 'update:classification', c: Classification): void
   (e: 'update:name', name: string): void
   (e: 'back'): void
+  (e: 'toggle-history'): void
 }>()
 
 const statusLabel = computed(() => {
@@ -77,6 +78,16 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
     </goa-form-item>
 
     <goa-badge v-if="statusLabel" :type="statusBadgeType[executionStatus]" :content="statusLabel"></goa-badge>
+
+    <goa-button
+      type="tertiary"
+      size="compact"
+      leadingicon="time-outline"
+      title="Versions and runs"
+      @_click="emit('toggle-history')"
+    >
+      History
+    </goa-button>
 
     <goa-button
       type="secondary"

@@ -94,3 +94,100 @@ export function validatePublicHttpUrl(url: string): UrlValidationResult {
 
   return { valid: true, parsed };
 }
+
+/**
+ * Maximum number of redirect hops `safeFetch` will follow before giving up.
+ * The native fetch default is 20; we choose a tighter ceiling because every
+ * additional hop is another opportunity for an SSRF redirect.
+ */
+const MAX_SAFE_FETCH_REDIRECTS = 5;
+
+export interface SafeFetchOptions {
+  /** HTTP method. Default GET. */
+  method?: string;
+  headers?: Record<string, string>;
+  /** Pre-serialized body (string) or undefined. */
+  body?: string;
+  /** Abort signal — typically derived from an AbortController + setTimeout. */
+  signal?: AbortSignal;
+  /** Override the redirect cap. */
+  maxRedirects?: number;
+}
+
+/**
+ * SSRF-safe fetch wrapper. Walks redirects manually so each hop is
+ * re-validated against `isPrivateOrReservedHost` — the native `redirect:
+ * "follow"` only checks the initial URL, allowing a public host to bounce
+ * the request to `169.254.169.254` (cloud metadata) or an RFC 1918 address.
+ *
+ * Cross-origin redirects strip the Authorization header to avoid leaking
+ * credentials to a different host.
+ */
+export async function safeFetch(initialUrl: string, options: SafeFetchOptions = {}): Promise<Response> {
+  const validation = validatePublicHttpUrl(initialUrl);
+  if (!validation.valid || !validation.parsed) {
+    throw new Error(validation.error || "URL validation failed.");
+  }
+
+  const maxRedirects = options.maxRedirects ?? MAX_SAFE_FETCH_REDIRECTS;
+  let currentUrl = validation.parsed.toString();
+  let currentOrigin = validation.parsed.origin;
+  let headers: Record<string, string> = { ...(options.headers ?? {}) };
+  let method = options.method ?? "GET";
+  let body = options.body;
+
+  for (let hop = 0; hop <= maxRedirects; hop++) {
+    const response = await fetch(currentUrl, {
+      method,
+      headers,
+      body,
+      signal: options.signal,
+      redirect: "manual",
+    });
+
+    // 3xx with a Location header → walk one hop after re-validating.
+    const status = response.status;
+    const location = response.headers.get("location");
+    if (status >= 300 && status < 400 && location) {
+      if (hop >= maxRedirects) {
+        throw new Error(`Too many redirects (>${maxRedirects}).`);
+      }
+
+      let nextUrl: URL;
+      try {
+        nextUrl = new URL(location, currentUrl);
+      } catch {
+        throw new Error(`Redirect target is not a valid URL: "${location}"`);
+      }
+
+      const reval = validatePublicHttpUrl(nextUrl.toString());
+      if (!reval.valid) {
+        throw new Error(`Redirect blocked: ${reval.error}`);
+      }
+
+      // Cross-origin redirects must not carry the Authorization header.
+      if (nextUrl.origin !== currentOrigin) {
+        headers = { ...headers };
+        for (const k of Object.keys(headers)) {
+          if (k.toLowerCase() === "authorization") delete headers[k];
+        }
+      }
+
+      // 303 → always GET. 301/302 → most clients downgrade POST to GET as well.
+      if (status === 303 || ((status === 301 || status === 302) && method !== "HEAD")) {
+        method = "GET";
+        body = undefined;
+      }
+
+      currentUrl = nextUrl.toString();
+      currentOrigin = nextUrl.origin;
+      continue;
+    }
+
+    return response;
+  }
+
+  // Should be unreachable — the loop either returns a non-redirect response
+  // or throws on excess hops.
+  throw new Error(`Too many redirects (>${maxRedirects}).`);
+}

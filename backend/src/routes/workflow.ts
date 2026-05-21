@@ -13,6 +13,13 @@
  *   PUT    /api/workflows/:id      update (bump version only on canvas_data change)
  *   DELETE /api/workflows/:id      hard delete (CASCADE)
  *   POST   /api/workflows/:id/execute  SSE stream of stage progress
+ *
+ *   GET    /api/workflows/:id/versions                       list version history
+ *   GET    /api/workflows/:id/versions/:version              load a specific version's canvas
+ *   POST   /api/workflows/:id/versions/:version/restore      copy a past version into current
+ *
+ *   GET    /api/workflows/:id/executions                     list past executions (paginated)
+ *   GET    /api/workflows/:id/executions/:executionId        load a single execution
  */
 
 import { Router, Request, Response } from "express";
@@ -107,6 +114,31 @@ function stableStringify(value: unknown): string {
 function hashCanvas(canvas: unknown): string {
   return createHash("sha256").update(stableStringify(canvas)).digest("hex");
 }
+
+/**
+ * Returns the workflow row when the caller has read access (owner or same
+ * ministry), or null if the workflow doesn't exist. Throws on infrastructure
+ * errors. Callers handle the response when null is returned.
+ */
+async function loadWorkflowForRead(
+  workflowId: string,
+  userId: string,
+  ministryCode: string | null,
+): Promise<{ user_id: string; ministry_code: string | null; access: "owner" | "ministry" } | null> {
+  const result = await query<{ user_id: string; ministry_code: string | null }>(
+    `SELECT user_id, ministry_code FROM workflows WHERE id = $1`,
+    [workflowId],
+  );
+  if (result.rowCount === 0) return null;
+  const wf = result.rows[0];
+  const isOwner = wf.user_id === userId;
+  const sameMinistry =
+    wf.ministry_code !== null && ministryCode !== null && wf.ministry_code === ministryCode;
+  if (!isOwner && !sameMinistry) return null;
+  return { ...wf, access: isOwner ? "owner" : "ministry" };
+}
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function piiBlockResponse(res: Response, scan: PIIScanResult): void {
   res.status(422).json({
@@ -532,6 +564,370 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
         /* ignore */
       }
     }
+  }
+});
+
+// ============================================================================
+// VERSIONS
+// ============================================================================
+
+/**
+ * GET /:id/versions
+ *
+ * Lists the workflow's version history (newest first). canvas_data is omitted
+ * to keep the payload small — clients can pull a specific version via
+ * /:id/versions/:version. The current workflow.version is included so the UI
+ * can flag which row is live.
+ */
+router.get("/:id/versions", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    const current = await query<{ version: number }>(
+      `SELECT version FROM workflows WHERE id = $1`,
+      [workflowId],
+    );
+    const versions = await query<{
+      version: number;
+      created_by: string;
+      created_at: Date;
+      created_by_email: string | null;
+      created_by_display_name: string | null;
+    }>(
+      `SELECT v.version, v.created_by, v.created_at,
+              u.email AS created_by_email,
+              u.display_name AS created_by_display_name
+       FROM workflow_versions v
+       LEFT JOIN users u ON u.id = v.created_by
+       WHERE v.workflow_id = $1
+       ORDER BY v.version DESC
+       LIMIT 100`,
+      [workflowId],
+    );
+    res.json({
+      currentVersion: current.rows[0]?.version ?? null,
+      versions: versions.rows.map((r) => ({
+        version: r.version,
+        createdBy: r.created_by,
+        createdByEmail: r.created_by_email,
+        createdByDisplayName: r.created_by_display_name,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    logger.error("Failed to list workflow versions", err, { id: workflowId });
+    res.status(500).json({ error: "Failed to list workflow versions." });
+  }
+});
+
+/**
+ * GET /:id/versions/:version
+ *
+ * Returns the canvas_data for a specific historical version so the UI can
+ * preview or diff it before restoring.
+ */
+router.get("/:id/versions/:version", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const versionParam = req.params.version as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+  const version = Number.parseInt(versionParam, 10);
+  if (!Number.isInteger(version) || version <= 0) {
+    res.status(400).json({ error: "Version must be a positive integer." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    const result = await query<{
+      version: number;
+      canvas_data: CanvasData;
+      created_by: string;
+      created_at: Date;
+    }>(
+      `SELECT version, canvas_data, created_by, created_at
+       FROM workflow_versions
+       WHERE workflow_id = $1 AND version = $2`,
+      [workflowId, version],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Version not found." });
+      return;
+    }
+    const row = result.rows[0];
+    res.json({
+      workflowId,
+      version: row.version,
+      canvasData: row.canvas_data,
+      createdBy: row.created_by,
+      createdAt: row.created_at,
+    });
+  } catch (err) {
+    logger.error("Failed to load workflow version", err, { id: workflowId, version });
+    res.status(500).json({ error: "Failed to load workflow version." });
+  }
+});
+
+/**
+ * POST /:id/versions/:version/restore
+ *
+ * Copies the canvas_data from a historical version into the live workflow row
+ * and bumps the version forward (never overwrites an existing version row).
+ * The new snapshot is recorded in workflow_versions so the restore itself is
+ * visible in history.
+ */
+router.post("/:id/versions/:version/restore", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const versionParam = req.params.version as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+  const version = Number.parseInt(versionParam, 10);
+  if (!Number.isInteger(version) || version <= 0) {
+    res.status(400).json({ error: "Version must be a positive integer." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+
+    const newVersion = await transaction(async (client) => {
+      const target = await client.query<{ canvas_data: CanvasData }>(
+        `SELECT canvas_data FROM workflow_versions
+         WHERE workflow_id = $1 AND version = $2`,
+        [workflowId, version],
+      );
+      if (target.rowCount === 0) {
+        return null;
+      }
+      const current = await client.query<{ version: number }>(
+        `SELECT version FROM workflows WHERE id = $1 FOR UPDATE`,
+        [workflowId],
+      );
+      const next = (current.rows[0]?.version ?? 0) + 1;
+      const canvas = target.rows[0].canvas_data;
+      await client.query(
+        `UPDATE workflows SET canvas_data = $1, version = $2 WHERE id = $3`,
+        [JSON.stringify(canvas), next, workflowId],
+      );
+      await client.query(
+        `INSERT INTO workflow_versions (workflow_id, version, canvas_data, created_by)
+         VALUES ($1, $2, $3, $4)`,
+        [workflowId, next, JSON.stringify(canvas), req.user!.id],
+      );
+      return next;
+    });
+
+    if (newVersion === null) {
+      res.status(404).json({ error: "Version not found." });
+      return;
+    }
+
+    await logAudit({
+      userId: req.user!.id,
+      ministryCode: req.user!.ministryCode || undefined,
+      action: AuditAction.WORKFLOW_UPDATED,
+      resourceType: "workflow",
+      resourceId: workflowId,
+      details: { restoredFromVersion: version, newVersion },
+    });
+
+    const refreshed = await query(
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+       FROM workflows WHERE id = $1`,
+      [workflowId],
+    );
+    res.json({ ...refreshed.rows[0], restoredFromVersion: version });
+  } catch (err) {
+    logger.error("Failed to restore workflow version", err, { id: workflowId, version });
+    res.status(500).json({ error: "Failed to restore workflow version." });
+  }
+});
+
+// ============================================================================
+// EXECUTIONS
+// ============================================================================
+
+/**
+ * GET /:id/executions
+ *
+ * Lists past executions for a workflow (newest first). stage_results is
+ * omitted to keep the payload bounded; callers fetch detail via
+ * /:id/executions/:executionId. Query params:
+ *   - status: filter by execution status
+ *   - limit:  1-100, default 50
+ */
+router.get("/:id/executions", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+
+  const allowedStatuses = new Set(["running", "completed", "error", "aborted"]);
+  const status = typeof req.query.status === "string" ? req.query.status : undefined;
+  if (status !== undefined && !allowedStatuses.has(status)) {
+    res.status(400).json({
+      error: `status must be one of: ${[...allowedStatuses].join(", ")}`,
+    });
+    return;
+  }
+
+  const rawLimit = Number.parseInt(String(req.query.limit ?? "50"), 10);
+  const limit = Number.isInteger(rawLimit) ? Math.min(Math.max(rawLimit, 1), 100) : 50;
+
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+
+    const params: unknown[] = [workflowId];
+    let statusClause = "";
+    if (status) {
+      params.push(status);
+      statusClause = `AND status = $${params.length}`;
+    }
+    params.push(limit);
+
+    const result = await query<{
+      id: string;
+      workflow_id: string;
+      user_id: string;
+      classification: string;
+      status: string;
+      error: string | null;
+      started_at: Date;
+      completed_at: Date | null;
+      stage_count: string;
+      user_email: string | null;
+      user_display_name: string | null;
+    }>(
+      `SELECT e.id, e.workflow_id, e.user_id, e.classification, e.status, e.error,
+              e.started_at, e.completed_at,
+              jsonb_array_length(e.stage_results) AS stage_count,
+              u.email AS user_email, u.display_name AS user_display_name
+       FROM workflow_executions e
+       LEFT JOIN users u ON u.id = e.user_id
+       WHERE e.workflow_id = $1 ${statusClause}
+       ORDER BY e.started_at DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+
+    res.json({
+      executions: result.rows.map((r) => ({
+        id: r.id,
+        workflowId: r.workflow_id,
+        userId: r.user_id,
+        userEmail: r.user_email,
+        userDisplayName: r.user_display_name,
+        classification: r.classification,
+        status: r.status,
+        error: r.error,
+        stageCount: Number.parseInt(r.stage_count, 10),
+        durationMs:
+          r.completed_at && r.started_at
+            ? new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()
+            : null,
+        startedAt: r.started_at,
+        completedAt: r.completed_at,
+      })),
+      count: result.rowCount,
+    });
+  } catch (err) {
+    logger.error("Failed to list workflow executions", err, { id: workflowId });
+    res.status(500).json({ error: "Failed to list workflow executions." });
+  }
+});
+
+/**
+ * GET /:id/executions/:executionId
+ *
+ * Returns a single execution with full stage_results JSON. Scoped to the
+ * parent workflow so a leaked execution id can't be queried in isolation
+ * against a workflow the user can't see.
+ */
+router.get("/:id/executions/:executionId", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const executionId = req.params.executionId as string;
+  if (!UUID_RE.test(workflowId) || !UUID_RE.test(executionId)) {
+    res.status(400).json({ error: "Invalid id." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    const result = await query<{
+      id: string;
+      workflow_id: string;
+      user_id: string;
+      classification: string;
+      status: string;
+      stage_results: unknown;
+      error: string | null;
+      started_at: Date;
+      completed_at: Date | null;
+      user_email: string | null;
+      user_display_name: string | null;
+    }>(
+      `SELECT e.id, e.workflow_id, e.user_id, e.classification, e.status,
+              e.stage_results, e.error, e.started_at, e.completed_at,
+              u.email AS user_email, u.display_name AS user_display_name
+       FROM workflow_executions e
+       LEFT JOIN users u ON u.id = e.user_id
+       WHERE e.id = $1 AND e.workflow_id = $2`,
+      [executionId, workflowId],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Execution not found." });
+      return;
+    }
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      workflowId: row.workflow_id,
+      userId: row.user_id,
+      userEmail: row.user_email,
+      userDisplayName: row.user_display_name,
+      classification: row.classification,
+      status: row.status,
+      stageResults: row.stage_results,
+      error: row.error,
+      durationMs:
+        row.completed_at && row.started_at
+          ? new Date(row.completed_at).getTime() - new Date(row.started_at).getTime()
+          : null,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+    });
+  } catch (err) {
+    logger.error("Failed to load workflow execution", err, {
+      id: workflowId,
+      executionId,
+    });
+    res.status(500).json({ error: "Failed to load workflow execution." });
   }
 });
 

@@ -133,8 +133,10 @@ export interface StageState {
   startedAt?: number;
   durationMs?: number;
   value?: unknown;
+  tokens?: number;
   error?: string;
   reason?: string;
+  piiBlockedCount?: number;
 }
 
 export type ExecutionStatus = 'idle' | 'running' | 'completed' | 'error' | 'aborted';
@@ -146,6 +148,65 @@ export interface ExecutionState {
   startedAt: number;
   completedAt?: number;
   error?: string;
+  piiBlockedTotal: number;
+}
+
+export interface WorkflowVersionSummary {
+  version: number;
+  createdBy: string;
+  createdByEmail: string | null;
+  createdByDisplayName: string | null;
+  createdAt: string;
+}
+
+export interface WorkflowVersionListResponse {
+  currentVersion: number | null;
+  versions: WorkflowVersionSummary[];
+}
+
+export interface WorkflowVersionDetail {
+  workflowId: string;
+  version: number;
+  canvasData: CanvasData;
+  createdBy: string;
+  createdAt: string;
+}
+
+export type ExecutionRecordStatus = 'running' | 'completed' | 'error' | 'aborted';
+
+export interface WorkflowExecutionSummary {
+  id: string;
+  workflowId: string;
+  userId: string;
+  userEmail: string | null;
+  userDisplayName: string | null;
+  classification: Classification;
+  status: ExecutionRecordStatus;
+  error: string | null;
+  stageCount: number;
+  durationMs: number | null;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface WorkflowExecutionListResponse {
+  executions: WorkflowExecutionSummary[];
+  count: number;
+}
+
+export interface WorkflowExecutionStageResult {
+  nodeId: string;
+  kind: NodeKind;
+  status: 'completed' | 'skipped' | 'error';
+  value?: unknown;
+  durationMs?: number;
+  tokens?: number;
+  error?: string;
+  reason?: string;
+}
+
+export interface WorkflowExecutionDetail extends WorkflowExecutionSummary {
+  stageResults: WorkflowExecutionStageResult[];
 }
 
 export type SSEEvent =

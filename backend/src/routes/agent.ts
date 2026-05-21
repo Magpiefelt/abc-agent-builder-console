@@ -241,9 +241,15 @@ router.post("/sessions/:id/continue", async (req: Request, res: Response) => {
   // Update session for continuation
   session.prompt = prompt.trim();
   session.status = "running";
-  if (additionalIterations) {
-    session.maxIterations = session.currentIteration + Math.min(additionalIterations, 100);
-  }
+
+  // Extend the iteration cap so the orchestrator actually has room to run.
+  // Without this, a session that previously hit its limit (or used all its
+  // iterations) would re-enter `runOrchestrator`, find currentIteration >=
+  // maxIterations, and immediately emit `session_complete` with no work done.
+  const requested = typeof additionalIterations === "number" && additionalIterations > 0
+    ? Math.min(Math.floor(additionalIterations), 100)
+    : 25; // Sensible default when the caller doesn't specify.
+  session.maxIterations = session.currentIteration + requested;
 
   // SSE headers
   res.setHeader("Content-Type", "text/event-stream");

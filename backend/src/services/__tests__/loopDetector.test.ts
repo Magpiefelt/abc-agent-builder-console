@@ -21,6 +21,24 @@ function uniqueThinking(seed: number): string {
   return `${slot(1)} ${slot(2)} ${slot(3)} ${slot(4)} ${slot(5)}`;
 }
 
+/**
+ * Record N iterations that trigger every detection level simultaneously
+ * (exact repetition, tool pattern, n-gram, semantic similarity, progress
+ * stall). Used to verify that detect() only counts ONE intervention per
+ * call even when multiple levels fire.
+ */
+function recordIdentical(detector: LoopDetector, count: number): void {
+  for (let i = 1; i <= count; i++) {
+    detector.recordIteration({
+      iteration: i,
+      thinking: "Trying the same approach again with the same parameters and the same reasoning.",
+      toolCalls: [{ tool: "web_scrape", params: { url: "https://example.com" } }],
+      blackboardUpdates: 0,
+      status: "running",
+    });
+  }
+}
+
 describe("loopDetector — utility", () => {
   it("produces a stable hash regardless of whitespace and case", () => {
     expect(hashContent("Hello world")).toBe(hashContent("hello   world"));
@@ -281,5 +299,38 @@ describe("loopDetector — metrics", () => {
     const m = detector.getMetrics();
     expect(m.totalIterationsAnalyzed).toBe(4);
     expect(m.detectionsTriggered).toBeGreaterThan(0);
+  });
+});
+
+describe("loopDetector — intervention counter regression", () => {
+  // Regression tests for the bug where each per-level detector mutated
+  // interventionCount, so simultaneous multi-level detection inflated the
+  // counter and force-stopped sessions after a single real detection.
+  it("only counts one intervention per detect() call even when every level fires", () => {
+    const detector = new LoopDetector({ maxInterventionsBeforeStop: 4 });
+    recordIdentical(detector, 6);
+
+    const first = detector.detect();
+    expect(first.detected).toBe(true);
+    expect(first.shouldForceStop).toBe(false);
+    expect(first.intervention.length).toBeGreaterThan(0);
+    expect(detector.getMetrics().interventionsSent).toBe(1);
+  });
+
+  it("force-stops after exactly maxInterventionsBeforeStop detect() calls, not earlier", () => {
+    const detector = new LoopDetector({ maxInterventionsBeforeStop: 4 });
+    recordIdentical(detector, 6);
+
+    // Without the fix, every level firing on the first call would advance
+    // the counter to ~5 and force-stop immediately.
+    detector.detect();
+    detector.detect();
+    detector.detect();
+    detector.detect();
+    const fifth = detector.detect();
+
+    expect(fifth.detected).toBe(true);
+    expect(fifth.shouldForceStop).toBe(true);
+    expect(detector.getMetrics().interventionsSent).toBe(5);
   });
 });

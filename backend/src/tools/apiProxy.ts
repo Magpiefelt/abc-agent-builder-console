@@ -15,7 +15,7 @@
 import { env } from "../config/env.js";
 import { logger } from "../services/logger.js";
 import { auditSecurityEvent, AuditAction } from "../services/auditLogger.js";
-import { isPrivateOrReservedHost, validatePublicHttpUrl } from "./_shared/ssrf.js";
+import { isPrivateOrReservedHost, safeFetch, validatePublicHttpUrl } from "./_shared/ssrf.js";
 
 // ============================================================================
 // CONFIGURATION
@@ -110,7 +110,7 @@ export async function getCallApi(params: Record<string, unknown>): Promise<ApiPr
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch(validation.parsed!.toString(), {
+    const response = await safeFetch(validation.parsed!.toString(), {
       method: "GET",
       headers: {
         "User-Agent": USER_AGENT,
@@ -118,7 +118,6 @@ export async function getCallApi(params: Record<string, unknown>): Promise<ApiPr
         ...customHeaders,
       },
       signal: controller.signal,
-      redirect: "follow",
     });
 
     clearTimeout(timeout);
@@ -210,7 +209,7 @@ export async function postCallApi(params: Record<string, unknown>): Promise<ApiP
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
-    const response = await fetch(validation.parsed!.toString(), {
+    const response = await safeFetch(validation.parsed!.toString(), {
       method: "POST",
       headers: {
         "User-Agent": USER_AGENT,
@@ -220,7 +219,6 @@ export async function postCallApi(params: Record<string, unknown>): Promise<ApiP
       },
       body: bodyString || undefined,
       signal: controller.signal,
-      redirect: "follow",
     });
 
     clearTimeout(timeout);

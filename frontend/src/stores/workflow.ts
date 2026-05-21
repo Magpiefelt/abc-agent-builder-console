@@ -15,6 +15,12 @@ import type {
   Workflow,
   WorkflowLibrary,
   WorkflowSummary,
+  WorkflowVersionDetail,
+  WorkflowVersionListResponse,
+  WorkflowVersionSummary,
+  WorkflowExecutionDetail,
+  WorkflowExecutionListResponse,
+  WorkflowExecutionSummary,
 } from '@/types/workflow'
 
 /**
@@ -35,6 +41,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const execution = ref<ExecutionState | null>(null)
   const events = ref<SSEEvent[]>([])
   const selectedNodeId = ref<string | null>(null)
+
+  // History side-panel state. `historyKey` is the workflow id the lists below
+  // were last fetched for — when it diverges from `current.value.id` the panel
+  // refetches.
+  const versions = ref<WorkflowVersionSummary[]>([])
+  const currentVersion = ref<number | null>(null)
+  const executions = ref<WorkflowExecutionSummary[]>([])
+  const historyKey = ref<string | null>(null)
+  const historyLoading = ref(false)
+  const historyError = ref<string | null>(null)
 
   // Stream B's reusable SSE consumer. We instantiate once per store; the
   // composable handles abort + reconnect + line-buffer parsing.
@@ -251,6 +267,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       status: 'running',
       stages,
       startedAt: Date.now(),
+      piiBlockedTotal: 0,
     }
     events.value = []
 
@@ -288,6 +305,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
           s.status = 'completed'
           s.durationMs = event.durationMs
           s.value = event.value
+          s.tokens = event.tokens
         }
         break
       }
@@ -307,6 +325,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
         }
         break
       }
+      case 'pii_warning': {
+        const s = execution.value.stages.get(event.nodeId)
+        if (s) {
+          s.piiBlockedCount = (s.piiBlockedCount ?? 0) + event.blockedCount
+        }
+        execution.value.piiBlockedTotal += event.blockedCount
+        break
+      }
       case 'workflow_complete':
         execution.value.status = event.status
         execution.value.completedAt = Date.now()
@@ -323,6 +349,75 @@ export const useWorkflowStore = defineStore('workflow', () => {
   function clearExecution(): void {
     execution.value = null
     events.value = []
+  }
+
+  // ============================================================================
+  // HISTORY (versions + executions)
+  // ============================================================================
+
+  async function loadHistory(workflowId: string): Promise<void> {
+    historyLoading.value = true
+    historyError.value = null
+    try {
+      const [v, e] = await Promise.all([
+        apiFetch<WorkflowVersionListResponse>(
+          `/api/workflows/${encodeURIComponent(workflowId)}/versions`,
+        ),
+        apiFetch<WorkflowExecutionListResponse>(
+          `/api/workflows/${encodeURIComponent(workflowId)}/executions?limit=50`,
+        ),
+      ])
+      versions.value = v.versions
+      currentVersion.value = v.currentVersion
+      executions.value = e.executions
+      historyKey.value = workflowId
+    } catch (err) {
+      historyError.value = (err as Error).message
+    } finally {
+      historyLoading.value = false
+    }
+  }
+
+  async function loadVersionCanvas(
+    workflowId: string,
+    version: number,
+  ): Promise<WorkflowVersionDetail> {
+    return apiFetch<WorkflowVersionDetail>(
+      `/api/workflows/${encodeURIComponent(workflowId)}/versions/${version}`,
+    )
+  }
+
+  async function restoreVersion(version: number): Promise<void> {
+    if (!current.value) return
+    const id = current.value.id
+    const refreshed = await apiFetch<Workflow>(
+      `/api/workflows/${encodeURIComponent(id)}/versions/${version}/restore`,
+      { method: 'POST' },
+    )
+    current.value = refreshed
+    dirty.value = false
+    const idx = list.value.findIndex((w) => w.id === id)
+    const summary = summarize(refreshed)
+    if (idx >= 0) list.value[idx] = summary
+    // Refresh history so the new snapshot row appears immediately.
+    await loadHistory(id)
+  }
+
+  async function loadExecutionDetail(
+    workflowId: string,
+    executionId: string,
+  ): Promise<WorkflowExecutionDetail> {
+    return apiFetch<WorkflowExecutionDetail>(
+      `/api/workflows/${encodeURIComponent(workflowId)}/executions/${encodeURIComponent(executionId)}`,
+    )
+  }
+
+  function clearHistory(): void {
+    versions.value = []
+    executions.value = []
+    currentVersion.value = null
+    historyKey.value = null
+    historyError.value = null
   }
 
   return {
@@ -354,6 +449,17 @@ export const useWorkflowStore = defineStore('workflow', () => {
     execute,
     cancelExecution,
     clearExecution,
+    versions,
+    currentVersion,
+    executions,
+    historyKey,
+    historyLoading,
+    historyError,
+    loadHistory,
+    loadVersionCanvas,
+    restoreVersion,
+    loadExecutionDetail,
+    clearHistory,
   }
 })
 
