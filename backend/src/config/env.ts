@@ -144,7 +144,15 @@ const envSchema = z
     }
   });
 
-const parsed = envSchema.safeParse(process.env);
+// Treat empty strings in process.env as "unset" for optional secrets so a developer who
+// copies .env.example with placeholder lines like `SECRETS_VAULT_KEY=` doesn't trip
+// downstream min-length / URL validators. Real values still validate normally.
+const rawEnv: Record<string, string | undefined> = {};
+for (const [key, value] of Object.entries(process.env)) {
+  rawEnv[key] = value === "" ? undefined : value;
+}
+
+const parsed = envSchema.safeParse(rawEnv);
 
 if (!parsed.success) {
   console.error("╔══════════════════════════════════════════════════════╗");

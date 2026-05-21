@@ -677,3 +677,148 @@ VALUES
   ('claude-haiku-4-5','Claude Haiku 4.5 (Vertex AI)','vertex_ai','claude-haiku-4-5-20251001',8192,true,true,'canada','protected_a',true),
   ('gemini-2.5-flash','Gemini 2.5 Flash','google','gemini-2.5-flash-preview-05-20',8192,true,true,'us','unclassified',true)
 ON CONFLICT (model_id) DO NOTHING;
+
+-- ============================================================================
+-- SEED DATA: Features (exercise requirement — maps the spec app's capabilities
+--                     to what the rebuild ports / replaces / drops)
+-- ============================================================================
+-- Spec app source: https://github.com/developmentation/agent-builder-console
+-- Each row records intent only; no code from the spec was copied.
+-- A unique index on `name` makes the bulk INSERT idempotent across re-runs.
+
+CREATE UNIQUE INDEX IF NOT EXISTS uq_features_name ON cohen_mcleod.features(name);
+
+INSERT INTO cohen_mcleod.features
+  (name, category, subcategory, description, source_file, mode, status, build_priority, build_phase, notes)
+VALUES
+-- ----- Screens / top-level views (spec → rebuild) -----
+('login_screen', 'screen', 'auth', 'SSO entry page; redirects unauthenticated users to Entra ID', 'frontend/src/views/LoginView.vue', 'shared', 'active', 'critical', 1, 'Spec had no auth at all'),
+('profile_screen', 'screen', 'auth', 'Identity + ministry display + saved-prompt management', 'frontend/src/views/ProfileView.vue', 'shared', 'active', 'high', 1, 'New surface — spec had no user accounts'),
+('free_agent_screen', 'screen', 'agent', 'Three-panel Free Agent workbench (task / canvas / memory)', 'frontend/src/views/FreeAgentView.vue', 'freeAgent', 'active', 'critical', 4, NULL),
+('workflow_canvas_screen', 'screen', 'workflow', 'Visual Vue Flow editor for chaining Agent/Function/Tool/Note nodes', 'frontend/src/views/WorkflowView.vue', 'workflow', 'active', 'critical', 5, NULL),
+('workflow_list_screen', 'screen', 'workflow', 'List of saved workflows with search + ministry scoping', 'frontend/src/views/WorkflowListView.vue', 'workflow', 'active', 'high', 5, NULL),
+('admin_screen', 'screen', 'admin', 'Audit / PII / model-registry / session inspector tabs', 'frontend/src/views/AdminView.vue', 'shared', 'active', 'high', 6, 'Stream F'),
+
+-- ----- Core Free Agent UI components -----
+('task_panel', 'component', 'freeAgent', 'Prompt + model + classification + max iterations input', 'frontend/src/components/freeAgent/TaskPanel.vue', 'freeAgent', 'active', 'critical', 4, NULL),
+('control_bar', 'component', 'freeAgent', 'Stop / continue / interject + iteration counter', 'frontend/src/components/freeAgent/ControlBar.vue', 'freeAgent', 'active', 'critical', 4, NULL),
+('iteration_timeline', 'component', 'freeAgent', 'Per-iteration cards with status, thinking, and tool calls', 'frontend/src/components/freeAgent/IterationTimeline.vue', 'freeAgent', 'active', 'critical', 4, NULL),
+('blackboard_viewer', 'component', 'freeAgent', 'Categorized entries with iteration badges + search', 'frontend/src/components/freeAgent/BlackboardViewer.vue', 'freeAgent', 'active', 'high', 4, NULL),
+('scratchpad_viewer', 'component', 'freeAgent', 'Markdown-rendered scratchpad (DOMPurify-sanitized)', 'frontend/src/components/freeAgent/ScratchpadViewer.vue', 'freeAgent', 'active', 'high', 4, NULL),
+('artifacts_panel', 'component', 'freeAgent', 'Artifact list with type filtering + download', 'frontend/src/components/freeAgent/ArtifactsPanel.vue', 'freeAgent', 'active', 'high', 4, NULL),
+('prompt_customizer', 'component', 'freeAgent', 'Section enable/disable + content edit modal for the system prompt', 'frontend/src/components/freeAgent/PromptCustomizer.vue', 'freeAgent', 'active', 'medium', 4, NULL),
+('agent_canvas', 'component', 'freeAgent', 'Vue Flow visualization of execution graph (live as iterations stream)', 'frontend/src/components/freeAgent/AgentCanvas.vue', 'freeAgent', 'active', 'medium', 4, NULL),
+('interjection_modal', 'component', 'freeAgent', '"Inject guidance" modal — sends user message into a running iteration', 'frontend/src/components/freeAgent/InterjectionModal.vue', 'freeAgent', 'active', 'medium', 4, NULL),
+('final_report_panel', 'component', 'freeAgent', 'Renders final_report from a completed session', 'frontend/src/components/freeAgent/FinalReportPanel.vue', 'freeAgent', 'active', 'high', 4, NULL),
+
+-- ----- Workflow canvas components -----
+('workflow_canvas', 'component', 'workflow', 'Vue Flow wrapper hosting the editor', 'frontend/src/components/workflow/WorkflowCanvas.vue', 'workflow', 'active', 'critical', 5, NULL),
+('workflow_sidebar', 'component', 'workflow', 'Draggable agent templates + function catalog + node library', 'frontend/src/components/workflow/WorkflowSidebar.vue', 'workflow', 'active', 'high', 5, NULL),
+('workflow_properties_panel', 'component', 'workflow', 'Dynamic form editor for the selected node', 'frontend/src/components/workflow/PropertiesPanel.vue', 'workflow', 'active', 'high', 5, NULL),
+('workflow_toolbar', 'component', 'workflow', 'Save / load / run / classification dropdown', 'frontend/src/components/workflow/WorkflowToolbar.vue', 'workflow', 'active', 'high', 5, NULL),
+('node_agent', 'component', 'workflow', 'Custom Agent node (system prompt + model + tools)', 'frontend/src/components/workflow/nodes/AgentNode.vue', 'workflow', 'active', 'critical', 5, NULL),
+('node_function', 'component', 'workflow', 'Custom Function node (deterministic transform from functionRegistry)', 'frontend/src/components/workflow/nodes/FunctionNode.vue', 'workflow', 'active', 'critical', 5, NULL),
+('node_tool', 'component', 'workflow', 'Custom Tool node — delegates to toolDispatcher', 'frontend/src/components/workflow/nodes/ToolNode.vue', 'workflow', 'active', 'critical', 5, NULL),
+('node_note', 'component', 'workflow', 'Custom Note node (commentary only; skipped at execution)', 'frontend/src/components/workflow/nodes/NoteNode.vue', 'workflow', 'active', 'low', 5, NULL),
+
+-- ----- Frontend state stores -----
+('store_auth', 'component', 'state', 'Pinia auth store — user, login(), logout(), fetchMe()', 'frontend/src/stores/auth.ts', 'shared', 'active', 'critical', 1, NULL),
+('store_agent_session', 'component', 'state', 'Pinia store — session lifecycle + SSE event reducer', 'frontend/src/stores/agentSession.ts', 'freeAgent', 'active', 'critical', 4, NULL),
+('store_workflow', 'component', 'state', 'Pinia store — current workflow + saved list + execution log', 'frontend/src/stores/workflow.ts', 'workflow', 'active', 'critical', 5, NULL),
+('store_user_memory', 'component', 'state', 'Pinia store — saved prompts, favorite workflows, recent sessions', 'frontend/src/stores/userMemory.ts', 'shared', 'active', 'high', 1, NULL),
+('store_models', 'component', 'state', 'Pinia store — cached /api/agent/models registry', 'frontend/src/stores/models.ts', 'shared', 'active', 'high', 4, NULL),
+
+-- ----- Composables / utilities (rebuild-only) -----
+('composable_sse_stream', 'utility', 'streaming', 'POST + ReadableStream consumer for SSE (EventSource cannot POST JSON bodies)', 'frontend/src/composables/useSSEStream.ts', 'shared', 'active', 'critical', 4, NULL),
+('composable_api_fetch', 'utility', 'http', 'fetch wrapper with credentials + JSON shaping + ApiError thrown on non-2xx', 'frontend/src/composables/useApiFetch.ts', 'shared', 'active', 'high', 1, NULL),
+('composable_markdown', 'utility', 'rendering', 'marked + DOMPurify pipeline — every v-html call must go through this', 'frontend/src/composables/useMarkdown.ts', 'shared', 'active', 'high', 4, 'Defense-in-depth against LLM-emitted XSS'),
+('composable_toast', 'utility', 'ui', 'Global lightweight toast queue with TTL auto-dismiss', 'frontend/src/composables/useToast.ts', 'shared', 'active', 'medium', 4, NULL),
+('composable_auth_guard', 'utility', 'auth', 'Router guard hook — redirects unauthenticated users to /login', 'frontend/src/composables/useAuthGuard.ts', 'shared', 'active', 'critical', 1, NULL),
+('composable_focus_trap', 'utility', 'a11y', 'Tab-cycling focus trap for modals (a11y baseline)', 'frontend/src/composables/useFocusTrap.ts', 'shared', 'active', 'medium', 4, 'WCAG 2.1 AA'),
+
+-- ----- Backend endpoints (Free Agent) -----
+('endpoint_agent_create', 'endpoint', 'agent', 'POST /api/agent/sessions — create a new session', 'backend/src/routes/agent.ts', 'backend', 'active', 'critical', 2, NULL),
+('endpoint_agent_start_sse', 'endpoint', 'agent', 'POST /api/agent/sessions/:id/start — open SSE stream and run the iteration loop', 'backend/src/routes/agent.ts', 'backend', 'active', 'critical', 2, NULL),
+('endpoint_agent_stop', 'endpoint', 'agent', 'POST /api/agent/sessions/:id/stop — abort an in-flight session', 'backend/src/routes/agent.ts', 'backend', 'active', 'critical', 2, NULL),
+('endpoint_agent_interject', 'endpoint', 'agent', 'POST /api/agent/sessions/:id/interject — inject user guidance mid-run', 'backend/src/routes/agent.ts', 'backend', 'active', 'high', 2, NULL),
+('endpoint_agent_get', 'endpoint', 'agent', 'GET /api/agent/sessions/:id — fetch session state + memory snapshot', 'backend/src/routes/agent.ts', 'backend', 'active', 'critical', 2, NULL),
+('endpoint_agent_models', 'endpoint', 'agent', 'GET /api/agent/models — return approved model registry rows', 'backend/src/routes/agent.ts', 'backend', 'active', 'critical', 2, NULL),
+('endpoint_agent_prompt_template', 'endpoint', 'agent', 'GET /api/agent/prompt-template — sections for the prompt customizer', 'backend/src/routes/agent.ts', 'backend', 'active', 'medium', 2, NULL),
+
+-- ----- Backend endpoints (Workflow) -----
+('endpoint_workflow_list', 'endpoint', 'workflow', 'GET /api/workflows — list workflows scoped to user/ministry', 'backend/src/routes/workflow.ts', 'backend', 'active', 'critical', 5, NULL),
+('endpoint_workflow_crud', 'endpoint', 'workflow', 'POST/GET/PUT/DELETE /api/workflows/:id — CRUD on canvas_data', 'backend/src/routes/workflow.ts', 'backend', 'active', 'critical', 5, NULL),
+('endpoint_workflow_execute', 'endpoint', 'workflow', 'POST /api/workflows/:id/execute — run the graph; streams stage progress via SSE', 'backend/src/routes/workflow.ts', 'backend', 'active', 'critical', 5, NULL),
+
+-- ----- Backend endpoints (Auth / User memory) -----
+('endpoint_auth_login', 'endpoint', 'auth', 'GET /api/auth/login — PKCE redirect to Entra ID', 'backend/src/routes/auth.ts', 'backend', 'active', 'critical', 1, NULL),
+('endpoint_auth_callback', 'endpoint', 'auth', 'GET /api/auth/callback — token exchange + user upsert + session cookie', 'backend/src/routes/auth.ts', 'backend', 'active', 'critical', 1, NULL),
+('endpoint_auth_logout', 'endpoint', 'auth', 'POST /api/auth/logout — clear session cookie', 'backend/src/routes/auth.ts', 'backend', 'active', 'critical', 1, NULL),
+('endpoint_auth_me', 'endpoint', 'auth', 'GET /api/auth/me — return current AuthUser', 'backend/src/routes/auth.ts', 'backend', 'active', 'critical', 1, NULL),
+('endpoint_users_preferences', 'endpoint', 'user', 'GET/PUT /api/users/me/preferences', 'backend/src/routes/users.ts', 'backend', 'active', 'medium', 1, NULL),
+('endpoint_users_saved_prompts', 'endpoint', 'user', 'GET/POST/DELETE /api/users/me/saved-prompts', 'backend/src/routes/users.ts', 'backend', 'active', 'medium', 1, NULL),
+('endpoint_users_favorites', 'endpoint', 'user', 'GET/POST/DELETE /api/users/me/workflow-favorites', 'backend/src/routes/users.ts', 'backend', 'active', 'medium', 1, NULL),
+('endpoint_users_recent', 'endpoint', 'user', 'GET /api/users/me/recent-sessions', 'backend/src/routes/users.ts', 'backend', 'active', 'medium', 1, NULL),
+
+-- ----- Backend endpoints (Admin / Health) -----
+('endpoint_health', 'endpoint', 'observability', 'GET /api/health — pool stats + LLM/SMTP/Ent Tools readiness', 'backend/src/routes/health.ts', 'backend', 'active', 'critical', 1, NULL),
+('endpoint_admin_audit', 'endpoint', 'admin', 'GET /api/admin/audit — filter + export audit entries', 'backend/src/routes/admin.ts', 'backend', 'active', 'high', 6, NULL),
+('endpoint_admin_pii', 'endpoint', 'admin', 'GET /api/admin/pii-detections — forensic PII viewer', 'backend/src/routes/admin.ts', 'backend', 'active', 'high', 6, NULL),
+('endpoint_admin_models', 'endpoint', 'admin', 'GET/PATCH /api/admin/models — toggle / re-classify models', 'backend/src/routes/admin.ts', 'backend', 'active', 'high', 6, NULL),
+('endpoint_admin_retention_run', 'endpoint', 'admin', 'POST /api/admin/retention/run — manual retention pass', 'backend/src/routes/admin.ts', 'backend', 'active', 'medium', 6, NULL),
+
+-- ----- Backend services -----
+('service_llm_provider', 'feature', 'orchestration', 'LLM provider factory — Anthropic via Vertex + Google Gemini', 'backend/src/services/llmProvider.ts', 'backend', 'active', 'critical', 2, NULL),
+('service_agent_orchestrator', 'feature', 'orchestration', 'SSE iteration loop with heartbeat / interject / abort', 'backend/src/services/agentOrchestrator.ts', 'backend', 'active', 'critical', 2, NULL),
+('service_prompt_builder', 'feature', 'orchestration', 'Dynamic system prompt assembly from template + runtime state', 'backend/src/services/promptBuilder.ts', 'backend', 'active', 'critical', 2, NULL),
+('service_loop_detector', 'feature', 'safety', '5-level loop detection with escalating interventions', 'backend/src/services/loopDetector.ts', 'backend', 'active', 'high', 2, NULL),
+('service_tool_dispatcher', 'feature', 'orchestration', 'Central tool routing — registration pattern + per-call audit + timeouts', 'backend/src/services/toolDispatcher.ts', 'backend', 'active', 'critical', 2, NULL),
+('service_workflow_executor', 'feature', 'orchestration', 'Topological graph walker + stage runner with SSE event emitter', 'backend/src/services/workflowExecutor.ts', 'backend', 'active', 'critical', 5, NULL),
+('service_function_registry', 'feature', 'orchestration', 'Deterministic function catalog used by Workflow Function nodes', 'backend/src/services/functionRegistry.ts', 'backend', 'active', 'high', 5, NULL),
+('service_pii_detector', 'feature', 'privacy', '12-pattern PII scanner — Luhn-gated SIN/PHN/CC + Alberta-specific IDs', 'backend/src/services/piiDetector.ts', 'backend', 'active', 'critical', 1, 'Defense-in-depth chokepoint before every LLM call'),
+('service_audit_logger', 'feature', 'security', 'Immutable audit trail keyed on AuditAction enum', 'backend/src/services/auditLogger.ts', 'backend', 'active', 'critical', 1, NULL),
+('service_entra_auth', 'feature', 'security', 'JWKS-cached Entra ID JWT verification + claim→AuthUser mapping', 'backend/src/services/entraAuth.ts', 'backend', 'active', 'critical', 1, NULL),
+('service_secrets_vault', 'feature', 'security', 'pgcrypto-backed per-user secret store with key fingerprint logging', 'backend/src/services/secretsVault.ts', 'backend', 'active', 'high', 6, NULL),
+('service_retention_job', 'feature', 'privacy', 'Classification-aware scheduled cleanup (90d / 1y / 3y)', 'backend/src/services/retentionJob.ts', 'backend', 'active', 'high', 6, NULL),
+('service_logger', 'feature', 'observability', 'Structured JSON logger (info/warn/error/debug)', 'backend/src/services/logger.ts', 'backend', 'active', 'high', 1, NULL),
+('service_process_monitor', 'feature', 'observability', 'SIGTERM/SIGINT + unhandled rejection trap with graceful shutdown', 'backend/src/services/processMonitor.ts', 'backend', 'active', 'medium', 1, NULL),
+('service_ent_tools_client', 'feature', 'integration', 'Shared HTTP client for GoA Enterprise Tools (Brave + image gen)', 'backend/src/services/entToolsClient.ts', 'backend', 'active', 'high', 3, NULL),
+
+-- ----- Edge tools (the 20 the agent can call) -----
+('tool_brave_search', 'feature', 'tools', 'Brave Search — direct or via Ent Tools proxy when configured', 'backend/src/tools/webSearch.ts', 'backend', 'active', 'high', 3, NULL),
+('tool_google_search', 'feature', 'tools', 'Google CSE search', 'backend/src/tools/webSearch.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_web_scrape', 'feature', 'tools', 'Content fetch with SSRF protection, no browser spoofing', 'backend/src/tools/webScrape.ts', 'backend', 'active', 'high', 3, NULL),
+('tool_github', 'feature', 'tools', 'List + read GitHub repo files (optional GITHUB_TOKEN)', 'backend/src/tools/github.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_pdf', 'feature', 'tools', 'PDF text + metadata extraction (pdf-parse)', 'backend/src/tools/documents.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_zip', 'feature', 'tools', 'ZIP listing + safe per-file extract (adm-zip)', 'backend/src/tools/documents.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_ocr', 'feature', 'tools', 'Tesseract.js image-to-text', 'backend/src/tools/documents.ts', 'backend', 'active', 'low', 3, NULL),
+('tool_api_proxy', 'feature', 'tools', 'GET/POST HTTP proxy with SSRF block and optional host allowlist', 'backend/src/tools/apiProxy.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_time_weather', 'feature', 'tools', 'Time and weather utility tools', 'backend/src/tools/utilities.ts', 'backend', 'active', 'low', 3, NULL),
+('tool_sql', 'feature', 'tools', 'execute_sql with parameterized queries + connection allowlist', 'backend/src/tools/database.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_image_generation', 'feature', 'tools', 'Image generation via Ent Tools OpenAI or Gemini Image fallback', 'backend/src/tools/generation.ts', 'backend', 'active', 'medium', 3, NULL),
+('tool_tts', 'feature', 'tools', 'ElevenLabs text-to-speech with per-user size limits', 'backend/src/tools/generation.ts', 'backend', 'active', 'low', 3, NULL),
+('tool_send_email', 'feature', 'tools', 'Nodemailer send with recipient domain allowlist', 'backend/src/tools/communication.ts', 'backend', 'active', 'medium', 3, NULL),
+
+-- ----- Middleware / cross-cutting -----
+('middleware_auth', 'feature', 'security', 'Cookie/Bearer → AuthUser with dev mock fallback', 'backend/src/middleware/auth.ts', 'backend', 'active', 'critical', 1, NULL),
+('middleware_request_validation', 'feature', 'security', 'Path traversal / XSS / SQLi shape checks + payload limits', 'backend/src/middleware/requestValidation.ts', 'backend', 'active', 'high', 1, NULL),
+('middleware_agent_rate_limit', 'feature', 'security', 'Per-user, per-endpoint rate limiting for agent + workflow routes', 'backend/src/middleware/agentRateLimit.ts', 'backend', 'active', 'high', 1, NULL),
+('middleware_helmet_cors', 'feature', 'security', 'Helmet CSP/HSTS + tight CORS allowlist (FRONTEND_URL only in prod)', 'backend/src/index.ts', 'backend', 'active', 'critical', 1, NULL),
+
+-- ----- Compliance / docs -----
+('doc_threat_model', 'feature', 'compliance', 'STRIDE per component for ATO', 'docs/security/threat_model_stride.md', 'shared', 'active', 'high', 6, NULL),
+('doc_data_flow', 'feature', 'compliance', 'Mermaid DFDs for login / free agent / workflow / PII block', 'docs/security/data_flow_diagram.md', 'shared', 'active', 'high', 6, NULL),
+('doc_controls_matrix', 'feature', 'compliance', 'Controls vs GoA categorization tied to source files', 'docs/security/controls_matrix.md', 'shared', 'active', 'high', 6, NULL),
+('doc_pia', 'feature', 'compliance', 'Privacy Impact Assessment (FOIP s.33, third-party processors, residual risks)', 'docs/privacy/pia.md', 'shared', 'active', 'high', 6, NULL),
+('doc_retention_schedule', 'feature', 'compliance', 'Per-classification retention windows', 'docs/privacy/retention_schedule.md', 'shared', 'active', 'high', 6, NULL),
+('doc_incident_response', 'feature', 'operations', 'Detect / contain / eradicate / recover playbook', 'docs/operations/incident_response.md', 'shared', 'active', 'medium', 6, NULL),
+('doc_key_rotation', 'feature', 'operations', 'SECRETS_VAULT_KEY rotation procedure', 'docs/operations/key_rotation.md', 'shared', 'active', 'medium', 6, NULL),
+('doc_observability', 'feature', 'operations', 'Logs / metrics / alerts / manual queries', 'docs/operations/observability.md', 'shared', 'active', 'medium', 6, NULL),
+('doc_deploy_nexus', 'feature', 'operations', 'Nexus host runbook + SSO callback registration', 'docs/operations/deployment_nexus.md', 'shared', 'active', 'high', 6, NULL),
+
+-- ----- Spec-app features we intentionally do NOT port -----
+('spec_browser_spoofing_dropped', 'feature', 'dropped', 'Spec impersonated browsers in web_scrape — rebuild identifies as a transparent GoA bot', NULL, 'backend', 'deprecated', 'high', 3, 'Tracked as V-005 in vulnerabilities'),
+('spec_client_secrets_dropped', 'feature', 'dropped', 'Spec stored API keys in sessionStorage — rebuild never sends keys to the browser', NULL, 'shared', 'deprecated', 'critical', 1, 'Tracked as V-004 in vulnerabilities'),
+('spec_open_cors_dropped', 'feature', 'dropped', 'Spec used Access-Control-Allow-Origin: * everywhere — rebuild restricts CORS to FRONTEND_URL', NULL, 'backend', 'deprecated', 'high', 1, 'Tracked as V-003 in vulnerabilities')
+
+ON CONFLICT (name) DO NOTHING;

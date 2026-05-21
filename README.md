@@ -93,7 +93,11 @@ This rebuild is engineered against the GoA Security Categorization Standard for 
 - Develop on a stream branch (`claude/<stream>-<focus>`). Do not push directly to `main`.
 - Migrations are append-only and idempotent (`CREATE TABLE IF NOT EXISTS`, `ON CONFLICT DO NOTHING`).
 - Every new endpoint must call `auditAction` or one of its wrappers.
-- Run `pnpm type-check` in both workspaces before opening a PR.
+- Before opening a PR:
+  - `pnpm --recursive run type-check` — backend `tsc --noEmit` + frontend `vue-tsc --build`
+  - `pnpm --recursive run test` — Vitest in both packages (CI gates on this via `.github/workflows/ci.yml`)
+- Scenario evals live under `evals/`. Run one with
+  `BASE_URL=http://localhost:3000 npx tsx evals/runners/scenarioRunner.ts evals/scenarios/01_smoke.json`.
 
 ## Contact
 
