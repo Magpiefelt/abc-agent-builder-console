@@ -6,7 +6,7 @@
  * Port: 3000
  */
 
-import express from "express";
+import express, { type Express } from "express";
 import cors from "cors";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
@@ -39,7 +39,7 @@ registerAllTools();
 // EXPRESS APP
 // ============================================================================
 
-const app = express();
+const app: Express = express();
 
 // ============================================================================
 // SECURITY MIDDLEWARE (order matters)
@@ -92,6 +92,13 @@ app.use("/api/health", healthRoutes);
 
 // Agent routes with granular per-endpoint rate limiting
 app.use("/api/agent", agentRateLimit, agentRoutes);
+
+// Test-only routes (evals harness uses these). Only mounted when MOCK_LLM=1.
+if (process.env.MOCK_LLM === "1") {
+  const { default: testRoutes } = await import("./routes/test.js");
+  app.use("/api/test", testRoutes);
+  logger.warn("Test routes mounted at /api/test (MOCK_LLM=1).");
+}
 
 // Placeholder routes for future phases
 app.use("/api/workflows", (_req, res) => {

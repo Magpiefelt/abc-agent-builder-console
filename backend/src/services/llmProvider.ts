@@ -237,9 +237,16 @@ export async function getActiveModels(): Promise<ModelRegistryEntry[]> {
     const result = await query<ModelRegistryEntry>(
       "SELECT * FROM model_registry WHERE is_active = true ORDER BY display_name"
     );
-    registryCache = result.rows;
+    if (result.rows.length === 0) {
+      // Empty registry — fall back to defaults so dev/test environments work
+      // without a manual seed. In production, model_registry should always be
+      // populated.
+      registryCache = getDefaultModels();
+    } else {
+      registryCache = result.rows;
+    }
     registryCacheTime = now;
-    logger.debug("Model registry refreshed", { count: result.rows.length });
+    logger.debug("Model registry refreshed", { count: registryCache.length });
     return registryCache;
   } catch (err) {
     logger.error("Failed to fetch model registry", err as Error);
@@ -300,6 +307,19 @@ function getDefaultModels(): ModelRegistryEntry[] {
       supports_tools: true,
       data_residency: "canada",
       max_classification: "protected_b",
+      is_active: true,
+    },
+    {
+      id: 100,
+      model_id: "mock-llm-us",
+      display_name: "Mock LLM (US)",
+      provider: "anthropic",
+      api_model_name: "mock-model-us",
+      max_output_tokens: 8192,
+      supports_streaming: true,
+      supports_tools: true,
+      data_residency: "us",
+      max_classification: "unclassified",
       is_active: true,
     },
   ];
@@ -781,12 +801,33 @@ class GoogleGeminiProvider implements LLMProvider {
  * carries provider="anthropic" so the union type stays untouched; this
  * provider is only swapped in when MOCK_LLM=1 AND the model id is "mock-llm".
  */
+// Path computed at runtime so the TypeScript compiler does not pull the
+// test/ tree under rootDir. The MockProvider is only ever instantiated when
+// MOCK_LLM=1 is set, which is never the case in a production build.
+const MOCK_HELPER_PATH = "../" + "../test/helpers/mockLLM.js";
+
+interface MockHelperModule {
+  consumeMockResponse: (sessionId: string) => {
+    thinking?: string;
+    toolCalls?: Array<{ name: string; arguments: Record<string, unknown> }>;
+    blackboardUpdates?: Array<{ category: string; title: string; content: string }>;
+    scratchpad?: string | null;
+    attributeUpdates?: Record<string, unknown> | null;
+    status?: "running" | "completed" | "needs_assistance" | "error";
+    userMessage?: string;
+    error?: string;
+    usage?: { promptTokens: number; completionTokens: number };
+  };
+  renderMockResponse: (modelName: string, startTime: number, input: unknown) => LLMResponse;
+  emitMockStream: (response: LLMResponse, onEvent: LLMStreamCallback) => void;
+}
+
 class MockProvider implements LLMProvider {
   name = "mock";
 
   async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
     const startTime = Date.now();
-    const helper = await import("../../test/helpers/mockLLM.js");
+    const helper = (await import(MOCK_HELPER_PATH)) as MockHelperModule;
     const sessionId = request.sessionId || "default";
     const canned = helper.consumeMockResponse(sessionId);
     return helper.renderMockResponse(modelName, startTime, canned);
@@ -794,7 +835,7 @@ class MockProvider implements LLMProvider {
 
   async stream(request: LLMRequest, modelName: string, onEvent: LLMStreamCallback): Promise<LLMResponse> {
     const response = await this.call(request, modelName);
-    const helper = await import("../../test/helpers/mockLLM.js");
+    const helper = (await import(MOCK_HELPER_PATH)) as MockHelperModule;
     helper.emitMockStream(response, onEvent);
     return response;
   }

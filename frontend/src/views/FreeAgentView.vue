@@ -38,7 +38,10 @@ async function startAgent() {
 <template>
   <div class="h-full flex">
     <!-- Left Panel: Task Configuration -->
-    <aside class="w-80 bg-[var(--goa-color-surface)] border-r border-[var(--goa-color-border)] p-4 flex flex-col gap-4 overflow-y-auto">
+    <aside
+      class="w-80 bg-[var(--goa-color-surface)] border-r border-[var(--goa-color-border)] p-4 flex flex-col gap-4 overflow-y-auto"
+      aria-label="Task configuration"
+    >
       <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">Task Configuration</h2>
 
       <!-- Prompt Input -->
@@ -47,9 +50,13 @@ async function startAgent() {
         <textarea
           id="prompt"
           v-model="prompt"
+          aria-describedby="prompt-help"
           placeholder="Describe what you want the agent to do..."
-          class="w-full h-32 p-3 border border-[var(--goa-color-border)] rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)] text-sm"
+          class="w-full h-32 p-3 border border-[var(--goa-color-border)] rounded-md resize-none focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] text-sm"
         />
+        <p id="prompt-help" class="text-xs text-gray-500">
+          Describe the research, summary, or analysis task in plain English.
+        </p>
       </div>
 
       <!-- Model Selection -->
@@ -58,7 +65,7 @@ async function startAgent() {
         <select
           id="model"
           v-model="selectedModel"
-          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
         >
           <option v-for="model in models" :key="model.id" :value="model.id">
             {{ model.name }} ({{ model.provider }})
@@ -68,37 +75,60 @@ async function startAgent() {
 
       <!-- Start Button -->
       <button
+        type="button"
         @click="startAgent"
         :disabled="!prompt.trim() || isRunning"
-        class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+        :aria-busy="isRunning"
+        class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
       >
         {{ isRunning ? 'Running...' : 'Start Agent' }}
       </button>
     </aside>
 
     <!-- Center: Execution Canvas (placeholder) -->
-    <div class="flex-1 flex items-center justify-center bg-gray-50">
-      <div class="text-center text-gray-400">
-        <div class="text-5xl mb-4">🤖</div>
+    <section
+      class="flex-1 flex items-center justify-center bg-gray-50"
+      aria-label="Agent execution canvas"
+    >
+      <div class="text-center text-gray-500" role="status" aria-live="polite">
+        <div class="text-5xl mb-4" aria-hidden="true">🤖</div>
         <h3 class="text-lg font-medium">No Active Session</h3>
         <p class="text-sm mt-1">Enter a task and click "Start Agent" to begin.</p>
       </div>
-    </div>
+    </section>
 
     <!-- Right Panel: Memory Viewer -->
-    <aside class="w-80 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] p-4 flex flex-col overflow-y-auto">
-      <div class="flex gap-2 mb-4">
-        <button class="px-3 py-1 text-sm font-medium bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)] rounded">
+    <aside
+      class="w-80 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] p-4 flex flex-col overflow-y-auto"
+      aria-label="Agent memory viewer"
+    >
+      <div class="flex gap-2 mb-4" role="tablist" aria-label="Memory views">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="true"
+          class="px-3 py-1 text-sm font-medium bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)] rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        >
           Blackboard
         </button>
-        <button class="px-3 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 rounded">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          class="px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        >
           Artifacts
         </button>
-        <button class="px-3 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 rounded">
+        <button
+          type="button"
+          role="tab"
+          aria-selected="false"
+          class="px-3 py-1 text-sm font-medium text-gray-700 hover:bg-gray-100 rounded focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        >
           Raw
         </button>
       </div>
-      <div class="flex-1 flex items-center justify-center text-gray-400 text-sm">
+      <div class="flex-1 flex items-center justify-center text-gray-500 text-sm" aria-live="polite">
         No blackboard entries yet
       </div>
     </aside>

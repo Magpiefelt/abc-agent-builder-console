@@ -24,19 +24,22 @@ function makeReq(
   } as unknown as Request;
 }
 
-function makeRes(): Response & { _status: number; _body: unknown } {
-  return {
+type MockRes = Response & { _status: number; _body: unknown };
+
+function makeRes(): MockRes {
+  const res = {
     _status: 200,
-    _body: null,
-    status(code: number) {
+    _body: null as unknown,
+    status(this: MockRes, code: number): MockRes {
       this._status = code;
       return this;
     },
-    json(body: unknown) {
+    json(this: MockRes, body: unknown): MockRes {
       this._body = body;
       return this;
     },
-  } as unknown as Response & { _status: number; _body: unknown };
+  };
+  return res as unknown as MockRes;
 }
 
 beforeEach(() => {

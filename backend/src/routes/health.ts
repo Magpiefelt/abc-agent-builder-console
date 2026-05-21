@@ -3,11 +3,11 @@
  * Provides system status information for monitoring and deployment verification.
  */
 
-import { Router, Request, Response } from "express";
+import { Router, type Router as RouterType, Request, Response } from "express";
 import { checkConnection } from "../config/database.js";
 import { env } from "../config/env.js";
 
-const router = Router();
+const router: RouterType = Router();
 
 router.get("/", async (_req: Request, res: Response) => {
   const dbConnected = await checkConnection();
