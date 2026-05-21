@@ -193,6 +193,104 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return create(newName ?? `${src.name} (copy)`, src.classification, src.canvas_data)
   }
 
+  // ============================================================================
+  // EXPORT / IMPORT (portable JSON)
+  // ============================================================================
+
+  const EXPORT_SCHEMA_VERSION = 1
+
+  interface WorkflowExportPayload {
+    schemaVersion: number
+    exportedAt: string
+    name: string
+    description: string | null
+    classification: Classification
+    canvasData: CanvasData
+  }
+
+  /**
+   * Build a portable representation of the current workflow. Strips owner,
+   * server-side IDs, and timestamps so the file can be imported by any user.
+   */
+  function buildExportPayload(): WorkflowExportPayload | null {
+    if (!current.value) return null
+    return {
+      schemaVersion: EXPORT_SCHEMA_VERSION,
+      exportedAt: new Date().toISOString(),
+      name: current.value.name,
+      description: current.value.description ?? null,
+      classification: current.value.classification,
+      canvasData: current.value.canvas_data,
+    }
+  }
+
+  function downloadExport(): boolean {
+    const payload = buildExportPayload()
+    if (!payload) return false
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const safeName = payload.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '') || 'workflow'
+    a.download = `${safeName}.workflow.json`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+    URL.revokeObjectURL(url)
+    return true
+  }
+
+  function isValidImportPayload(raw: unknown): raw is WorkflowExportPayload {
+    if (!raw || typeof raw !== 'object') return false
+    const r = raw as Record<string, unknown>
+    if (typeof r.schemaVersion !== 'number' || r.schemaVersion !== 1) return false
+    if (typeof r.name !== 'string' || !r.name.trim()) return false
+    const allowed: readonly Classification[] = ['unclassified', 'protected_a', 'protected_b']
+    if (typeof r.classification !== 'string' || !allowed.includes(r.classification as Classification)) {
+      return false
+    }
+    const canvas = r.canvasData as { nodes?: unknown; edges?: unknown; version?: unknown } | undefined
+    if (!canvas || typeof canvas !== 'object') return false
+    if (canvas.version !== 1) return false
+    if (!Array.isArray(canvas.nodes) || !Array.isArray(canvas.edges)) return false
+    return true
+  }
+
+  /**
+   * Parse a JSON export and create it as a new workflow owned by the current
+   * user. Throws if the file is malformed; the server still enforces ministry
+   * scoping + classification rules on the create call.
+   */
+  function readFileAsText(file: File): Promise<string> {
+    // Prefer the modern blob.text() when available; fall back to FileReader so
+    // jsdom-based test environments (which don't implement blob.text) work too.
+    if (typeof (file as Blob).text === 'function') {
+      return (file as Blob).text()
+    }
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(String(reader.result ?? ''))
+      reader.onerror = () => reject(new Error('Failed to read file.'))
+      reader.readAsText(file)
+    })
+  }
+
+  async function importFromFile(file: File): Promise<Workflow> {
+    const text = await readFileAsText(file)
+    let raw: unknown
+    try {
+      raw = JSON.parse(text)
+    } catch {
+      throw new Error('Selected file is not valid JSON.')
+    }
+    if (!isValidImportPayload(raw)) {
+      throw new Error(
+        'File does not match the workflow export schema (expected schemaVersion=1, name, classification, canvasData with version=1).',
+      )
+    }
+    return create(raw.name, raw.classification, raw.canvasData)
+  }
+
   async function remove(id: string): Promise<void> {
     await apiFetch(`/api/workflows/${id}`, { method: 'DELETE' })
     list.value = list.value.filter((w) => w.id !== id)
@@ -509,6 +607,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     restoreVersion,
     loadExecutionDetail,
     clearHistory,
+    downloadExport,
+    importFromFile,
   }
 })
 

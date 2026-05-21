@@ -7,11 +7,13 @@
  *   - Tool nodes   → dispatchToolCalls (re-uses Free Agent infrastructure)
  *   - Note nodes   → skipped
  *
- * V1 limitations:
- *   - Sequential execution (no parallel branches even when topo allows).
+ * Execution model:
+ *   - Layered topological execution: nodes at the same dependency depth run
+ *     concurrently via Promise.all; subsequent layers wait for the prior one
+ *     to settle. Single-track graphs still run strictly sequentially.
  *   - Memory mutations from tools are discarded (workflows have no shared memory).
  *   - Branch is a Function category: returns { matched: boolean } and prunes the
- *     downstream subtree when matched=false.
+ *     downstream subtree when matched=false. Pruning happens between layers.
  *   - ${nodeId} / ${nodeId.path} string templating in tool/function params only.
  */
 
@@ -189,6 +191,9 @@ function sendHeartbeat(res: Response): void {
 // ============================================================================
 
 interface GraphAnalysis {
+  /** Layered topological order. Nodes within one layer have no inter-deps and can run concurrently. */
+  layers: string[][];
+  /** Flattened topo order (layers concatenated). Retained for non-layered consumers and tests. */
   topoOrder: string[];
   cycle: string[] | null;
   parents: Map<string, string[]>;
@@ -214,28 +219,34 @@ function analyzeGraph(nodes: CanvasNode[], edges: CanvasEdge[]): GraphAnalysis {
     indegree.set(e.target, (indegree.get(e.target) ?? 0) + 1);
   }
 
-  // Kahn's algorithm
-  const queue: string[] = [];
+  // Layered Kahn's: each layer is the current zero-indegree frontier; processing
+  // a layer decrements its children's indegree, exposing the next frontier.
+  const layers: string[][] = [];
+  let frontier: string[] = [];
   for (const [id, deg] of indegree) {
-    if (deg === 0) queue.push(id);
-  }
-  const topoOrder: string[] = [];
-  while (queue.length > 0) {
-    const id = queue.shift()!;
-    topoOrder.push(id);
-    for (const child of children.get(id) ?? []) {
-      const d = (indegree.get(child) ?? 0) - 1;
-      indegree.set(child, d);
-      if (d === 0) queue.push(child);
-    }
+    if (deg === 0) frontier.push(id);
   }
 
+  while (frontier.length > 0) {
+    layers.push(frontier);
+    const next: string[] = [];
+    for (const id of frontier) {
+      for (const child of children.get(id) ?? []) {
+        const d = (indegree.get(child) ?? 0) - 1;
+        indegree.set(child, d);
+        if (d === 0) next.push(child);
+      }
+    }
+    frontier = next;
+  }
+
+  const topoOrder = layers.flat();
   if (topoOrder.length !== nodes.length) {
     const remaining = nodes.map((n) => n.id).filter((id) => !topoOrder.includes(id));
-    return { topoOrder: [], cycle: remaining, parents, children };
+    return { layers: [], topoOrder: [], cycle: remaining, parents, children };
   }
 
-  return { topoOrder, cycle: null, parents, children };
+  return { layers, topoOrder, cycle: null, parents, children };
 }
 
 // ============================================================================
@@ -529,7 +540,7 @@ export async function runWorkflow(
   const executableNodes = canvas.nodes.filter((n) => n.data.kind !== "note");
   const noteNodeIds = new Set(canvas.nodes.filter((n) => n.data.kind === "note").map((n) => n.id));
 
-  const { topoOrder, cycle, parents, children } = analyzeGraph(executableNodes, canvas.edges);
+  const { layers, topoOrder, cycle, parents, children } = analyzeGraph(executableNodes, canvas.edges);
   if (cycle) {
     sendSSE(res, { type: "error", error: "Workflow contains a cycle", code: "cycle", nodeIds: cycle });
     res.end();
@@ -596,123 +607,169 @@ export async function runWorkflow(
   let finalStatus: "completed" | "error" | "aborted" = "completed";
   let finalError: string | undefined;
   let sawStageError = false;
+  let processedSinceCheckpoint = 0;
+  // Preserve the previous "stageIndex" semantic (position in flattened topo)
+  // so SSE consumers and persisted records remain stable across the parallel rewrite.
+  const stageIndexByNode = new Map<string, number>();
+  topoOrder.forEach((id, idx) => stageIndexByNode.set(id, idx));
+
+  const nodeById = new Map(executableNodes.map((n) => [n.id, n]));
+
+  /** Run a single node end-to-end, returning its StageOutput. Errors are caught. */
+  async function runOne(nodeId: string): Promise<StageOutput> {
+    const node = nodeById.get(nodeId)!;
+    const parentIds = parents.get(nodeId) ?? [];
+    const stageIndex = stageIndexByNode.get(nodeId) ?? 0;
+    const stageStart = Date.now();
+    try {
+      if (node.data.kind === "agent") {
+        return await executeAgentStage(
+          node as CanvasNode & { data: AgentNodeData },
+          parentIds,
+          outputs,
+          workflow.classification,
+        );
+      }
+      if (node.data.kind === "function") {
+        return await executeFunctionStage(
+          node as CanvasNode & { data: FunctionNodeData },
+          parentIds,
+          outputs,
+        );
+      }
+      if (node.data.kind === "tool") {
+        return await executeToolStage(
+          node as CanvasNode & { data: ToolNodeData },
+          outputs,
+          executionId,
+          ctx.userId,
+          ctx.ministryCode,
+          stageIndex,
+        );
+      }
+      // Defensive: notes already filtered out
+      return {
+        nodeId,
+        kind: node.data.kind,
+        value: null,
+        durationMs: 0,
+        status: "skipped",
+        reason: "unsupported",
+      };
+    } catch (err) {
+      return {
+        nodeId,
+        kind: node.data.kind,
+        value: null,
+        durationMs: Date.now() - stageStart,
+        status: "error",
+        error: (err as Error).message,
+      };
+    }
+  }
 
   try {
-    for (let i = 0; i < topoOrder.length; i++) {
-      const nodeId = topoOrder[i];
-
-      // Abort check
+    layerLoop: for (const layer of layers) {
+      // Abort check between layers — in-flight stages from the previous layer
+      // have already settled, so we honor the abort cleanly.
       if (activeExecutions.get(executionId)?.abort) {
         finalStatus = "aborted";
         break;
       }
 
-      // Pruned by branch ancestor?
-      if (pruned.has(nodeId)) {
-        sendSSE(res, { type: "stage_skipped", executionId, nodeId, reason: "pruned" });
-        outputs.set(nodeId, {
-          nodeId,
-          kind: executableNodes.find((n) => n.id === nodeId)!.data.kind,
-          value: null,
-          durationMs: 0,
-          status: "skipped",
-          reason: "pruned",
-        });
-        continue;
-      }
-
-      const node = executableNodes.find((n) => n.id === nodeId)!;
-      const parentIds = parents.get(nodeId) ?? [];
-
-      sendSSE(res, { type: "stage_start", executionId, nodeId, kind: node.data.kind, stageIndex: i });
-
-      const stageStart = Date.now();
-      let stageOutput: StageOutput;
-      try {
-        if (node.data.kind === "agent") {
-          stageOutput = await executeAgentStage(
-            node as CanvasNode & { data: AgentNodeData },
-            parentIds,
-            outputs,
-            workflow.classification
-          );
-        } else if (node.data.kind === "function") {
-          stageOutput = await executeFunctionStage(
-            node as CanvasNode & { data: FunctionNodeData },
-            parentIds,
-            outputs
-          );
-        } else if (node.data.kind === "tool") {
-          stageOutput = await executeToolStage(
-            node as CanvasNode & { data: ToolNodeData },
-            outputs,
-            executionId,
-            ctx.userId,
-            ctx.ministryCode,
-            i
-          );
+      // Partition this layer into pruned vs runnable. Pruning is decided by
+      // ancestors in earlier layers, so siblings in the same layer can't
+      // affect each other.
+      const runnable: string[] = [];
+      for (const nodeId of layer) {
+        if (pruned.has(nodeId)) {
+          sendSSE(res, { type: "stage_skipped", executionId, nodeId, reason: "pruned" });
+          outputs.set(nodeId, {
+            nodeId,
+            kind: nodeById.get(nodeId)!.data.kind,
+            value: null,
+            durationMs: 0,
+            status: "skipped",
+            reason: "pruned",
+          });
         } else {
-          // Defensive: notes already filtered out
-          continue;
-        }
-      } catch (err) {
-        // Record the elapsed time so the report doesn't claim instantaneous
-        // failures for stages that actually ran for seconds before throwing.
-        stageOutput = {
-          nodeId,
-          kind: node.data.kind,
-          value: null,
-          durationMs: Date.now() - stageStart,
-          status: "error",
-          error: (err as Error).message,
-        };
-      }
-
-      outputs.set(nodeId, stageOutput);
-
-      if (stageOutput.status === "error") {
-        sawStageError = true;
-        sendSSE(res, {
-          type: "stage_error",
-          executionId,
-          nodeId,
-          error: stageOutput.error || "Stage failed",
-          stageIndex: i,
-        });
-        if (!ctx.continueOnError) {
-          finalStatus = "error";
-          finalError = stageOutput.error;
-          break;
-        }
-      } else {
-        sendSSE(res, {
-          type: "stage_complete",
-          executionId,
-          nodeId,
-          kind: node.data.kind,
-          stageIndex: i,
-          durationMs: stageOutput.durationMs,
-          value: truncateForSSE(stageOutput.value),
-          tokens: stageOutput.tokens,
-        });
-
-        // Branch handling: prune descendants when matched=false
-        if (
-          node.data.kind === "function" &&
-          isBranchFunction(node.data.fnName) &&
-          stageOutput.value &&
-          typeof stageOutput.value === "object" &&
-          (stageOutput.value as { matched?: boolean }).matched === false
-        ) {
-          collectDescendants(nodeId, children, pruned);
+          runnable.push(nodeId);
         }
       }
 
-      // Checkpoint every 5 stages
-      if ((i + 1) % 5 === 0) {
+      // Emit stage_start for every runnable node up-front so the UI can show
+      // them all entering "running" together.
+      for (const nodeId of runnable) {
+        const node = nodeById.get(nodeId)!;
+        sendSSE(res, {
+          type: "stage_start",
+          executionId,
+          nodeId,
+          kind: node.data.kind,
+          stageIndex: stageIndexByNode.get(nodeId) ?? 0,
+        });
+      }
+
+      // Execute concurrently. allSettled is unnecessary because runOne never throws.
+      const results = await Promise.all(runnable.map(runOne));
+
+      // Process results in topo order so stage_complete events arrive in a
+      // stable, reviewable sequence even though stages ran in parallel.
+      for (let r = 0; r < runnable.length; r++) {
+        const nodeId = runnable[r];
+        const stageOutput = results[r];
+        const node = nodeById.get(nodeId)!;
+        outputs.set(nodeId, stageOutput);
+        processedSinceCheckpoint++;
+
+        if (stageOutput.status === "error") {
+          sawStageError = true;
+          sendSSE(res, {
+            type: "stage_error",
+            executionId,
+            nodeId,
+            error: stageOutput.error || "Stage failed",
+            stageIndex: stageIndexByNode.get(nodeId) ?? 0,
+          });
+          if (!ctx.continueOnError) {
+            // Mark every later-layer node as pruned for the checkpoint record so
+            // the persisted stage_results don't show them as "pending forever."
+            finalStatus = "error";
+            finalError = stageOutput.error;
+            break layerLoop;
+          }
+        } else {
+          sendSSE(res, {
+            type: "stage_complete",
+            executionId,
+            nodeId,
+            kind: node.data.kind,
+            stageIndex: stageIndexByNode.get(nodeId) ?? 0,
+            durationMs: stageOutput.durationMs,
+            value: truncateForSSE(stageOutput.value),
+            tokens: stageOutput.tokens,
+          });
+
+          // Branch pruning applies for subsequent layers, not for this one
+          // (siblings in the same layer have no dependency on each other).
+          if (
+            node.data.kind === "function" &&
+            isBranchFunction((node.data as FunctionNodeData).fnName) &&
+            stageOutput.value &&
+            typeof stageOutput.value === "object" &&
+            (stageOutput.value as { matched?: boolean }).matched === false
+          ) {
+            collectDescendants(nodeId, children, pruned);
+          }
+        }
+      }
+
+      // Checkpoint after each layer or every 5 processed stages, whichever comes first.
+      if (processedSinceCheckpoint >= 5) {
         await persistStageResults(executionId, Array.from(outputs.values())).catch((err) => {
           logger.error("Failed to checkpoint stage results", err, { executionId });
         });
+        processedSinceCheckpoint = 0;
       }
     }
   } catch (err) {

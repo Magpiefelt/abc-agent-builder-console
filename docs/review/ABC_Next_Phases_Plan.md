@@ -1,8 +1,32 @@
 # ABC Agent Builder Console — Next Phases Work Plan
 
-**Date:** May 21, 2026
+**Date:** May 21, 2026 (updated with Feature-Depth slice)
 **Author:** Manus AI
 **Target Repository:** `Magpiefelt/abc-agent-builder-console`
+
+## 0. Feature-Depth Slice (delivered)
+
+The following items from the recommendations document have landed:
+
+- **Session replay / history view (3.4)** — new `/sessions/:id` route, `loadReplay()`
+  action on the agent session store, read-only banner + disabled controls in
+  `FreeAgentView`/`TaskPanel`, and a "View" affordance on each recent-session
+  entry. Hydrates from the existing `GET /api/agent/sessions/:id`,
+  `…/iterations`, and `…/artifacts` endpoints.
+- **Workflow export / import (3.3)** — `downloadExport()` and
+  `importFromFile()` actions on the workflow store, an Export button in
+  `WorkflowToolbar`, and an Import button + hidden file input on
+  `WorkflowListView`. Portable schema is `{ schemaVersion, exportedAt, name,
+  description, classification, canvasData }`.
+- **Parallel branch execution (3.5)** — `analyzeGraph()` now returns layered
+  topological order; `runWorkflow()` executes each layer with `Promise.all()`
+  and only advances when the layer settles. Branch pruning happens between
+  layers so siblings never affect each other.
+- **Hardcoded models removed from WorkflowView (2.3)** — wires
+  `useModelsStore` and falls back to the four known IDs only while the
+  registry call is in flight.
+- **Ministry filter (2.4)** — `WorkflowListView`'s "My ministry" / "All
+  accessible" dropdown is now actually applied to the visible list.
 
 ## 1. Context and Current State
 

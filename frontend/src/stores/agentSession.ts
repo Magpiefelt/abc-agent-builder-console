@@ -126,16 +126,24 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   const errors = ref<string[]>([])
   const finalReport = ref<unknown>(null)
   const streamStatus = ref<string>('idle')
+  /**
+   * Set when a session is loaded via loadReplay() rather than a live run.
+   * The UI uses this to render controls as read-only and to skip SSE wiring.
+   */
+  const replayMode = ref(false)
+  const replayLoading = ref(false)
+  const replayError = ref<string | null>(null)
 
   const isRunning = computed(() => status.value === 'running')
   const canStop = computed(() => status.value === 'running')
   const canContinue = computed(
     () =>
-      status.value === 'paused' ||
-      status.value === 'completed' ||
-      status.value === 'needs_assistance',
+      !replayMode.value &&
+      (status.value === 'paused' ||
+        status.value === 'completed' ||
+        status.value === 'needs_assistance'),
   )
-  const canInterject = computed(() => status.value === 'running')
+  const canInterject = computed(() => !replayMode.value && status.value === 'running')
 
   // Lookup index so per-event mutations are O(1) instead of O(n).
   const iterationIndex = new Map<number, IterationRecord>()
@@ -159,6 +167,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     errors.value = []
     finalReport.value = null
     streamStatus.value = 'idle'
+    replayMode.value = false
+    replayLoading.value = false
+    replayError.value = null
     stopStatusWatcher?.()
     stopStatusWatcher = null
     activeStream?.abort()
@@ -497,6 +508,149 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     })
   }
 
+  interface SessionReplayResponse {
+    id: string
+    status: SessionStatus
+    prompt: string
+    modelId: string
+    maxIterations: number
+    currentIteration: number
+    classification: string
+    blackboard?: BlackboardEntry[]
+    scratchpad?: string
+    attributes?: Record<string, unknown>
+    finalReport?: unknown
+    error?: string | null
+  }
+
+  interface ReplayIteration {
+    iterationNumber: number
+    status: 'pending' | 'running' | 'completed' | 'error'
+    userPrompt: string | null
+    parsedResponse: {
+      thinking?: string
+      status?: string
+      userMessage?: string | null
+      toolCallCount?: number
+    } | null
+    toolCalls: Array<{ tool: string }> | null
+    toolResults: Array<{
+      tool: string
+      success: boolean
+      durationMs?: number
+      error?: string | null
+    }> | null
+    error: string | null
+    tokensUsed: number | null
+    durationMs: number | null
+  }
+
+  /**
+   * Load a completed (or in-progress) session into the store in read-only mode.
+   * Hydrates iterations, blackboard, scratchpad, attributes, artifacts, and the
+   * final report from the three replay endpoints.
+   */
+  async function loadReplay(id: string): Promise<void> {
+    reset()
+    replayMode.value = true
+    replayLoading.value = true
+    replayError.value = null
+    sessionId.value = id
+    try {
+      const [meta, itersResp, artifactsResp] = await Promise.all([
+        apiFetch<SessionReplayResponse>(`/api/agent/sessions/${encodeURIComponent(id)}`),
+        apiFetch<{ iterations: ReplayIteration[] }>(
+          `/api/agent/sessions/${encodeURIComponent(id)}/iterations`,
+        ),
+        apiFetch<{
+          artifacts: Array<{
+            id: string
+            artifact_type: string
+            title: string
+            description: string | null
+            mime_type: string | null
+            size_bytes: number | null
+            iteration: number | null
+          }>
+        }>(`/api/agent/sessions/${encodeURIComponent(id)}/artifacts`),
+      ])
+
+      sessionMeta.value = {
+        prompt: meta.prompt,
+        modelId: meta.modelId,
+        classification: meta.classification,
+        maxIterations: meta.maxIterations,
+      }
+      currentIteration.value = meta.currentIteration ?? 0
+      blackboard.value = meta.blackboard ?? []
+      scratchpad.value = meta.scratchpad ?? ''
+      attributes.value = meta.attributes ?? {}
+      finalReport.value = meta.finalReport ?? null
+      if (meta.error) pushError(meta.error)
+      // Surface the persisted status (completed | error | paused | needs_assistance | running)
+      // so the rest of the UI keys off it. Running-state replays are rare but
+      // possible if the user opens the link mid-execution.
+      status.value = meta.status ?? 'completed'
+
+      // Hydrate the iteration timeline. We rebuild via ensureIteration / patch
+      // so iterationIndex stays consistent with the live-event code path.
+      for (const it of itersResp.iterations ?? []) {
+        const rec = ensureIteration(it.iterationNumber)
+        rec.status = it.status
+        rec.thinking = it.parsedResponse?.thinking
+        rec.parsedStatus = it.parsedResponse?.status
+        rec.userMessage = it.parsedResponse?.userMessage ?? it.userPrompt ?? null
+        rec.toolCallCount = it.parsedResponse?.toolCallCount
+        rec.toolCalls = Array.isArray(it.toolCalls) ? it.toolCalls : []
+        rec.toolResults = Array.isArray(it.toolResults)
+          ? it.toolResults.map((tr) => ({
+              tool: tr.tool,
+              success: tr.success,
+              durationMs: tr.durationMs ?? 0,
+              error: tr.error ?? undefined,
+            }))
+          : []
+        rec.durationMs = it.durationMs ?? undefined
+        rec.tokensUsed = it.tokensUsed ?? undefined
+        rec.error = it.error ?? undefined
+        // Mirror tool results into the global tool-call log so the existing
+        // viewers (which render from toolCallLog) populate for replays too.
+        for (const tr of rec.toolResults) {
+          toolCallLog.value = [
+            ...toolCallLog.value,
+            {
+              iteration: it.iterationNumber,
+              tool: tr.tool,
+              success: tr.success,
+              durationMs: tr.durationMs,
+              error: tr.error,
+            },
+          ]
+        }
+      }
+      // Force a reactive refresh after batch hydration.
+      iterations.value = [...iterations.value]
+
+      artifacts.value = (artifactsResp.artifacts ?? []).map((a) => ({
+        id: a.id,
+        title: a.title,
+        type: a.artifact_type,
+        mimeType: a.mime_type,
+        description: a.description,
+        iteration: a.iteration ?? 0,
+        size: a.size_bytes ?? 0,
+      }))
+    } catch (err) {
+      const msg = (err as Error).message || 'Failed to load session.'
+      replayError.value = msg
+      status.value = 'error'
+      pushError(msg)
+      toast.push({ kind: 'error', message: msg })
+    } finally {
+      replayLoading.value = false
+    }
+  }
+
   async function interject(message: string): Promise<void> {
     if (!sessionId.value || !message.trim()) return
     try {
@@ -525,6 +679,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     errors,
     finalReport,
     streamStatus,
+    replayMode,
+    replayLoading,
+    replayError,
     isRunning,
     canStop,
     canContinue,
@@ -536,5 +693,6 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     continueSession,
     interject,
     refreshSessionMemory,
+    loadReplay,
   }
 })

@@ -3,9 +3,11 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useAuthStore } from '@/stores/auth'
 
 const router = useRouter()
 const store = useWorkflowStore()
+const auth = useAuthStore()
 const { list, loading, error } = storeToRefs(store)
 
 const search = ref('')
@@ -16,14 +18,46 @@ const creating = ref(false)
 const createError = ref<string | null>(null)
 
 const deleteTarget = ref<{ id: string; name: string } | null>(null)
+const importInput = ref<HTMLInputElement | null>(null)
+const importing = ref(false)
+const importError = ref<string | null>(null)
 
 onMounted(() => {
   store.loadList()
 })
 
+function triggerImport(): void {
+  importError.value = null
+  importInput.value?.click()
+}
+
+async function onImportFile(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  // Reset so re-importing the same file fires `change` again.
+  input.value = ''
+  if (!file) return
+  importing.value = true
+  importError.value = null
+  try {
+    const wf = await store.importFromFile(file)
+    router.push(`/workflows/${wf.id}`)
+  } catch (e) {
+    importError.value = (e as Error).message
+  } finally {
+    importing.value = false
+  }
+}
+
 const filtered = computed(() =>
   list.value.filter((w) => {
     if (search.value && !w.name.toLowerCase().includes(search.value.toLowerCase())) return false
+    // The backend list endpoint returns both the user's own workflows AND any
+    // workflow inside their ministry. "mine" narrows that down client-side to
+    // just the rows owned by the current user; "ministry" keeps everything.
+    if (ministryFilter.value === 'mine' && auth.user?.id) {
+      if (w.user_id !== auth.user.id) return false
+    }
     return true
   })
 )
@@ -98,10 +132,35 @@ function formatDate(iso: string): string {
           <goa-dropdown-item value="mine" label="My ministry"></goa-dropdown-item>
           <goa-dropdown-item value="ministry" label="All accessible"></goa-dropdown-item>
         </goa-dropdown>
+        <goa-button
+          type="tertiary"
+          leadingicon="upload"
+          :disabled="importing || undefined"
+          @_click="triggerImport"
+        >
+          {{ importing ? 'Importing…' : 'Import' }}
+        </goa-button>
+        <input
+          ref="importInput"
+          type="file"
+          accept="application/json,.json"
+          class="hidden"
+          aria-label="Workflow JSON file to import"
+          @change="onImportFile"
+        />
         <goa-button type="primary" leadingicon="add" @_click="showCreate = !showCreate">
           New workflow
         </goa-button>
       </div>
+
+      <goa-callout
+        v-if="importError"
+        type="emergency"
+        heading="Couldn't import workflow"
+        class="mt-2"
+      >
+        {{ importError }}
+      </goa-callout>
 
       <div v-if="showCreate" class="mt-3 flex items-center gap-2">
         <goa-input

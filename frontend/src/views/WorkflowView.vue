@@ -3,6 +3,7 @@ import { computed, onMounted, onBeforeUnmount, ref, watch } from 'vue'
 import { useRoute, useRouter, onBeforeRouteLeave } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { useModelsStore } from '@/stores/models'
 import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
 import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
@@ -14,15 +15,24 @@ import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/wor
 const route = useRoute()
 const router = useRouter()
 const store = useWorkflowStore()
+const modelsStore = useModelsStore()
 const { current, library, dirty, selectedNode, execution, error } = storeToRefs(store)
 
 const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
-const models = [
+// Pull from the registry so new approved models appear in both Free Agent and
+// Workflow modes automatically; fall back to the four known models if the
+// registry call is still loading so the dropdowns aren't empty on first paint.
+const FALLBACK_MODELS: { id: string; name: string }[] = [
   { id: 'claude-opus-4-7', name: 'Claude Opus 4.7' },
   { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
   { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
   { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
 ]
+const models = computed(() =>
+  modelsStore.models.length > 0
+    ? modelsStore.models.map((m) => ({ id: m.id, name: m.name }))
+    : FALLBACK_MODELS,
+)
 
 const runError = ref<string | null>(null)
 const saveError = ref<string | null>(null)
@@ -34,7 +44,7 @@ function toggleHistory(): void {
 
 onMounted(async () => {
   const id = route.params.id as string
-  await Promise.all([store.loadLibrary(), store.load(id)])
+  await Promise.all([store.loadLibrary(), store.load(id), modelsStore.ensureLoaded()])
 })
 
 watch(() => route.params.id, async (newId) => {
@@ -115,6 +125,13 @@ function onBack(): void {
   router.push('/workflows')
 }
 
+function onExport(): void {
+  const ok = store.downloadExport()
+  if (!ok) {
+    saveError.value = 'Nothing to export — the workflow is not yet loaded.'
+  }
+}
+
 function beforeUnload(event: BeforeUnloadEvent): void {
   if (dirty.value) {
     event.preventDefault()
@@ -150,6 +167,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       @update:name="store.setName"
       @back="onBack"
       @toggle-history="toggleHistory"
+      @export="onExport"
     />
 
     <goa-callout

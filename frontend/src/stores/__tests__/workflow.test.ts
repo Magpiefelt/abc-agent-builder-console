@@ -363,3 +363,128 @@ describe('useWorkflowStore — restoreVersion clears preview', () => {
     expect(store.versionPreview).toBeNull()
   })
 })
+
+describe('useWorkflowStore — downloadExport / importFromFile', () => {
+  it('returns false from downloadExport when no workflow is loaded', () => {
+    const store = useWorkflowStore()
+    expect(store.downloadExport()).toBe(false)
+  })
+
+  it('downloads a JSON blob with the schemaVersion and canvas data', () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({
+      name: 'Demo workflow',
+      canvas_data: {
+        nodes: [
+          {
+            id: 'n1',
+            type: 'function',
+            position: { x: 0, y: 0 },
+            data: { kind: 'function', label: 'Upper', fnName: 'to_upper', params: {} },
+          },
+        ],
+        edges: [],
+        version: 1,
+      },
+    })
+
+    // Capture the URL.createObjectURL argument so we can read back the payload.
+    let capturedBlob: Blob | null = null
+    const originalCreate = URL.createObjectURL
+    const originalRevoke = URL.revokeObjectURL
+    URL.createObjectURL = vi.fn((blob: Blob) => {
+      capturedBlob = blob
+      return 'blob:mock'
+    })
+    URL.revokeObjectURL = vi.fn()
+
+    // jsdom's HTMLAnchorElement#click triggers navigation. Stub it.
+    const clickSpy = vi
+      .spyOn(HTMLAnchorElement.prototype, 'click')
+      .mockImplementation(() => {})
+
+    try {
+      expect(store.downloadExport()).toBe(true)
+      expect(capturedBlob).not.toBeNull()
+    } finally {
+      URL.createObjectURL = originalCreate
+      URL.revokeObjectURL = originalRevoke
+      clickSpy.mockRestore()
+    }
+
+    // Read the captured blob and assert its shape.
+    const reader = new FileReader()
+    return new Promise<void>((resolve, reject) => {
+      reader.onload = () => {
+        try {
+          const parsed = JSON.parse(reader.result as string)
+          expect(parsed.schemaVersion).toBe(1)
+          expect(parsed.name).toBe('Demo workflow')
+          expect(parsed.classification).toBe('unclassified')
+          expect(parsed.canvasData.nodes).toHaveLength(1)
+          expect(parsed.canvasData.version).toBe(1)
+          resolve()
+        } catch (e) {
+          reject(e as Error)
+        }
+      }
+      reader.onerror = () => reject(new Error('failed to read blob'))
+      reader.readAsText(capturedBlob!)
+    })
+  })
+
+  it('importFromFile creates a new workflow via POST when the payload is valid', async () => {
+    const newWorkflow = makeWorkflow({ id: 'wf-new', name: 'Imported' })
+    apiFetchMock.mockResolvedValueOnce(newWorkflow)
+
+    const store = useWorkflowStore()
+    const payload = {
+      schemaVersion: 1,
+      exportedAt: '2026-05-21T00:00:00Z',
+      name: 'Imported',
+      description: null,
+      classification: 'unclassified',
+      canvasData: { nodes: [], edges: [], version: 1 },
+    }
+    const file = new File([JSON.stringify(payload)], 'imported.workflow.json', {
+      type: 'application/json',
+    })
+
+    const result = await store.importFromFile(file)
+    expect(result.id).toBe('wf-new')
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      '/api/workflows',
+      expect.objectContaining({ method: 'POST' }),
+    )
+    // The new workflow should be prepended to the list.
+    expect(store.list[0].id).toBe('wf-new')
+  })
+
+  it('importFromFile rejects payloads with the wrong schemaVersion', async () => {
+    const store = useWorkflowStore()
+    const file = new File(
+      [JSON.stringify({ schemaVersion: 99, name: 'x', classification: 'unclassified', canvasData: { nodes: [], edges: [], version: 1 } })],
+      'bad.json',
+      { type: 'application/json' },
+    )
+    await expect(store.importFromFile(file)).rejects.toThrow(/export schema/i)
+  })
+
+  it('importFromFile rejects non-JSON files', async () => {
+    const store = useWorkflowStore()
+    const file = new File(['not json at all'], 'oops.json', {
+      type: 'application/json',
+    })
+    await expect(store.importFromFile(file)).rejects.toThrow(/valid JSON/i)
+  })
+
+  it('importFromFile rejects payloads missing required fields', async () => {
+    const store = useWorkflowStore()
+    const file = new File(
+      [JSON.stringify({ schemaVersion: 1, canvasData: { nodes: [], edges: [], version: 1 } })],
+      'incomplete.json',
+      { type: 'application/json' },
+    )
+    await expect(store.importFromFile(file)).rejects.toThrow(/export schema/i)
+  })
+})
