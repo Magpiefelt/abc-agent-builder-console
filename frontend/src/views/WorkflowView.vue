@@ -7,6 +7,7 @@ import WorkflowCanvas from '@/components/workflow/WorkflowCanvas.vue'
 import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
 import WorkflowToolbar from '@/components/workflow/WorkflowToolbar.vue'
+import WorkflowHistoryPanel from '@/components/workflow/WorkflowHistoryPanel.vue'
 import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/workflow'
 
 const route = useRoute()
@@ -24,6 +25,11 @@ const models = [
 
 const runError = ref<string | null>(null)
 const saveError = ref<string | null>(null)
+const historyOpen = ref(false)
+
+function toggleHistory(): void {
+  historyOpen.value = !historyOpen.value
+}
 
 onMounted(async () => {
   const id = route.params.id as string
@@ -142,6 +148,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       @update:classification="store.setClassification"
       @update:name="store.setName"
       @back="onBack"
+      @toggle-history="toggleHistory"
     />
 
     <div
@@ -152,7 +159,7 @@ onBeforeRouteLeave((_to, _from, next) => {
       {{ saveError || runError || error }}
     </div>
 
-    <div class="flex-1 flex overflow-hidden">
+    <div class="flex-1 flex overflow-hidden relative">
       <WorkflowSidebar
         v-if="library"
         :agent-templates="library.agentTemplates"
@@ -190,6 +197,13 @@ onBeforeRouteLeave((_to, _from, next) => {
         :models="models"
         @update:node="onPropertyUpdate"
         @remove="onPropertyRemove"
+      />
+
+      <WorkflowHistoryPanel
+        v-if="current"
+        :open="historyOpen"
+        :workflow-id="current.id"
+        @close="historyOpen = false"
       />
     </div>
   </div>

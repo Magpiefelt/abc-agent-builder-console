@@ -17,6 +17,7 @@ const emit = defineEmits<{
   (e: 'update:classification', c: Classification): void
   (e: 'update:name', name: string): void
   (e: 'back'): void
+  (e: 'toggle-history'): void
 }>()
 
 const statusLabel = computed(() => {
@@ -73,6 +74,14 @@ const statusClass = computed(() => {
     </select>
 
     <span v-if="statusLabel" :class="statusClass" class="text-xs px-2 py-1 rounded-md font-medium">{{ statusLabel }}</span>
+
+    <button
+      @click="emit('toggle-history')"
+      class="text-sm py-1.5 px-3 bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] text-[var(--goa-color-text)] rounded-md hover:bg-[var(--goa-color-background)]"
+      title="Versions and runs"
+    >
+      History
+    </button>
 
     <button
       @click="emit('save')"
