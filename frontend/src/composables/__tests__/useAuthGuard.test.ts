@@ -99,7 +99,7 @@ describe('useAuthGuard — unauthenticated visitor on requiresAuth route', () =>
 })
 
 describe('useAuthGuard — unauthenticated visitor on requiresAdmin route', () => {
-  it('redirects to login for admin routes when not authenticated', async () => {
+  it('redirects to login with returnTo preserved for admin routes when not authenticated', async () => {
     const auth = useAuthStore()
     auth.user = null
     auth.fetched = true
@@ -107,7 +107,7 @@ describe('useAuthGuard — unauthenticated visitor on requiresAdmin route', () =
     const guard = useAuthGuard()
     const result = await guard(makeRoute('admin', { requiresAdmin: true }), {} as never)
 
-    expect(result).toMatchObject({ name: 'login' })
+    expect(result).toMatchObject({ name: 'login', query: { returnTo: '/admin' } })
   })
 })
 
@@ -178,18 +178,15 @@ describe('useAuthGuard — lazy fetchMe on first navigation', () => {
 })
 
 describe('useAuthGuard — returnTo edge cases', () => {
-  it('does not add returnTo=/login to the query (avoids loop)', async () => {
+  it('does not redirect or add returnTo=/login when unauthenticated user visits /login', async () => {
     const auth = useAuthStore()
     auth.user = null
     auth.fetched = true
 
     const guard = useAuthGuard()
-    const loginRoute = makeRoute('login', { requiresAuth: false })
-    // Simulate visiting /login while unauthenticated — no loop
-    const result = await guard(loginRoute, {} as never)
-    // The route is public, so should be allowed or redirect without returnTo=/login
-    if (result && typeof result === 'object' && 'query' in result) {
-      expect((result as { query?: { returnTo?: string } }).query?.returnTo).not.toBe('/login')
-    }
+    // /login is a public route — unauthenticated users must be allowed through
+    const result = await guard(makeRoute('login', { requiresAuth: false }), {} as never)
+    // Public route: guard returns undefined (allow) — no redirect, no loop
+    expect(result).toBeUndefined()
   })
 })

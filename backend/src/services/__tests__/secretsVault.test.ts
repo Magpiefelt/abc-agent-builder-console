@@ -64,6 +64,7 @@ import {
   rotateKey,
   logVaultFingerprint,
 } from "../secretsVault.js";
+import { AuditAction } from "../auditLogger.js";
 
 // ---------------------------------------------------------------------------
 // Setup
@@ -158,7 +159,7 @@ describe("setSecret — successful insert", () => {
     expect(sql).toContain("ON CONFLICT");
     // auditAction called with SECRET_CREATED
     expect(auditActionMock).toHaveBeenCalledOnce();
-    expect(auditActionMock.mock.calls[0][1]).toBe("secret.created");
+    expect(auditActionMock.mock.calls[0][1]).toBe(AuditAction.SECRET_CREATED);
   });
 
   it("audits SECRET_UPDATED when the upsert updates an existing row", async () => {
@@ -166,7 +167,7 @@ describe("setSecret — successful insert", () => {
 
     await setSecret("u-1", "github_token", "ghp_new");
 
-    expect(auditActionMock.mock.calls[0][1]).toBe("secret.updated");
+    expect(auditActionMock.mock.calls[0][1]).toBe(AuditAction.SECRET_UPDATED);
   });
 });
 
@@ -224,7 +225,7 @@ describe("getSecret — success", () => {
 
     await getSecret("u-1", "api_key");
     expect(auditActionMock).toHaveBeenCalledOnce();
-    expect(auditActionMock.mock.calls[0][1]).toBe("secret.accessed");
+    expect(auditActionMock.mock.calls[0][1]).toBe(AuditAction.SECRET_ACCESSED);
   });
 });
 
@@ -280,7 +281,7 @@ describe("deleteSecret", () => {
     const deleted = await deleteSecret("u-1", "api_key");
     expect(deleted).toBe(true);
     expect(auditActionMock).toHaveBeenCalledOnce();
-    expect(auditActionMock.mock.calls[0][1]).toBe("secret.deleted");
+    expect(auditActionMock.mock.calls[0][1]).toBe(AuditAction.SECRET_DELETED);
   });
 });
 
@@ -289,20 +290,25 @@ describe("deleteSecret", () => {
 // ---------------------------------------------------------------------------
 
 describe("rotateKey", () => {
+  const OLD_KEY = "old-key-here-long-enough";
+  const NEW_KEY = "n".repeat(32);
+
+  function setupRotateMock(rowCount: number) {
+    const mockClient = { query: vi.fn().mockResolvedValue({ rowCount }) };
+    transactionMock.mockImplementation(async (cb: (client: unknown) => Promise<unknown>) =>
+      cb(mockClient)
+    );
+    return mockClient;
+  }
+
   it("throws when newKey is shorter than 32 bytes", async () => {
     await expect(rotateKey("old-key", "short")).rejects.toThrow(/32 bytes/);
   });
 
   it("calls transaction callback and returns rowsRotated", async () => {
-    const newKey = "n".repeat(32);
-    const mockClient = {
-      query: vi.fn().mockResolvedValue({ rowCount: 7 }),
-    };
-    transactionMock.mockImplementation(async (cb: (client: unknown) => Promise<unknown>) =>
-      cb(mockClient)
-    );
+    const mockClient = setupRotateMock(7);
 
-    const result = await rotateKey("old-key-here-long-enough", newKey);
+    const result = await rotateKey(OLD_KEY, NEW_KEY);
     expect(result.rowsRotated).toBe(7);
     expect(mockClient.query).toHaveBeenCalledOnce();
     const sql: string = mockClient.query.mock.calls[0][0];
@@ -311,16 +317,10 @@ describe("rotateKey", () => {
   });
 
   it("calls auditAction with SECRET_ROTATED after rotation", async () => {
-    const newKey = "n".repeat(32);
-    const mockClient = {
-      query: vi.fn().mockResolvedValue({ rowCount: 3 }),
-    };
-    transactionMock.mockImplementation(async (cb: (client: unknown) => Promise<unknown>) =>
-      cb(mockClient)
-    );
+    setupRotateMock(3);
 
-    await rotateKey("old-key-here-long-enough", newKey);
+    await rotateKey(OLD_KEY, NEW_KEY);
     expect(auditActionMock).toHaveBeenCalledOnce();
-    expect(auditActionMock.mock.calls[0][1]).toBe("secret.rotated");
+    expect(auditActionMock.mock.calls[0][1]).toBe(AuditAction.SECRET_ROTATED);
   });
 });

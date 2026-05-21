@@ -122,6 +122,7 @@ describe("entBraveSearch — SSRF guard", () => {
     vi.stubGlobal("fetch", vi.fn());
 
     await expect(entBraveSearch("query")).rejects.toThrow(/private\/reserved/i);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalled();
   });
 
   it("throws when ENT_TOOLS_BASE_URL uses a non-HTTP scheme", async () => {
@@ -129,6 +130,7 @@ describe("entBraveSearch — SSRF guard", () => {
     vi.stubGlobal("fetch", vi.fn());
 
     await expect(entBraveSearch("query")).rejects.toThrow(/HTTP\(S\)/i);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalled();
   });
 });
 
@@ -235,6 +237,7 @@ describe("entImageGeneration — no API key", () => {
     vi.stubGlobal("fetch", vi.fn());
 
     await expect(entImageGeneration("a blue sky")).rejects.toThrow(/ENT_TOOLS_API_KEY/);
+    expect(vi.mocked(global.fetch)).not.toHaveBeenCalled();
   });
 });
 

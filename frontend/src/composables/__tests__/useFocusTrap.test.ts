@@ -66,12 +66,10 @@ beforeEach(() => {
 
 describe('useFocusTrap — initial focus', () => {
   it('focuses the first focusable element on mount', async () => {
+    const focusSpy = vi.spyOn(HTMLElement.prototype, 'focus')
     const wrapper = mount(makeComponent({ buttonCount: 2 }))
     await nextTick()
-    const firstBtn = wrapper.find('#btn-0').element as HTMLElement
-    // In jsdom, focus() doesn't always update document.activeElement reliably,
-    // but we can check that focus() was called by verifying the element is in the DOM.
-    expect(firstBtn).toBeTruthy()
+    expect(focusSpy).toHaveBeenCalled()
     wrapper.unmount()
   })
 

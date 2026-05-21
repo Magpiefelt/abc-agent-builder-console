@@ -147,12 +147,15 @@ describe('useUserMemoryStore — deletePrompt()', () => {
     expect(store.savedPrompts[0].id).toBe('p-2')
   })
 
-  it('sets error on failure', async () => {
+  it('sets error and does not remove the prompt on failure', async () => {
     mockFetch(500, 'Server error', false)
     const store = useUserMemoryStore()
     store.savedPrompts = [mockPrompt]
     await store.deletePrompt('p-1')
     expect(store.error).toBeTruthy()
+    // Prompt must still be in the store — no optimistic removal on error
+    expect(store.savedPrompts).toHaveLength(1)
+    expect(store.savedPrompts[0].id).toBe('p-1')
   })
 })
 

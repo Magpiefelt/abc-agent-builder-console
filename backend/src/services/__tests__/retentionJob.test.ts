@@ -87,8 +87,8 @@ describe("runRetentionPass — policy load failure", () => {
     queryMock.mockRejectedValueOnce(new Error("DB gone"));
 
     const report = await runRetentionPass("test");
-    expect(report.startedAt).toBeTruthy();
-    expect(report.finishedAt).toBeTruthy();
+    expect(new Date(report.startedAt).getTime()).not.toBeNaN();
+    expect(new Date(report.finishedAt).getTime()).not.toBeNaN();
     expect(report.durationMs).toBeGreaterThanOrEqual(0);
   });
 });

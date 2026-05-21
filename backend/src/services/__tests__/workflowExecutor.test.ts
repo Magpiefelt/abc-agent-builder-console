@@ -61,7 +61,7 @@ vi.mock("../../services/logger.js", () => ({
 vi.mock("../../config/env.js", () => ({
   env: {
     NODE_ENV: "development",
-    DB_SCHEMA: "cohen_mcleod",
+    DB_SCHEMA: "test",
   },
 }));
 
@@ -77,6 +77,7 @@ import {
   type CanvasData,
   type ExecutionContext,
 } from "../workflowExecutor.js";
+import { AuditAction } from "../auditLogger.js";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -275,11 +276,11 @@ describe("runWorkflow — single function node", () => {
     const res = makeMockRes();
     await runWorkflow(makeWorkflow(singleFunctionCanvas("to_upper")), res as never, ctx);
 
-    const types = res.events().map((e) => e.type);
-    expect(types).toContain("workflow_start");
-    expect(types).toContain("stage_start");
-    expect(types).toContain("stage_complete");
-    expect(types).toContain("workflow_complete");
+    const events = res.events();
+    expect(events.some((e) => e.type === "workflow_start")).toBe(true);
+    expect(events.some((e) => e.type === "stage_start")).toBe(true);
+    expect(events.some((e) => e.type === "stage_complete")).toBe(true);
+    expect(events.some((e) => e.type === "workflow_complete")).toBe(true);
   });
 
   it("workflow_complete status is 'completed' when all stages succeed", async () => {
@@ -295,7 +296,7 @@ describe("runWorkflow — single function node", () => {
     await runWorkflow(makeWorkflow(singleFunctionCanvas()), res as never, ctx);
 
     expect(logAuditMock).toHaveBeenCalledWith(
-      expect.objectContaining({ action: "workflow.executed" })
+      expect.objectContaining({ action: AuditAction.WORKFLOW_EXECUTED })
     );
   });
 });
