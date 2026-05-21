@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useWorkflowStore } from '@/stores/workflow'
+import { describeNode, describeEdge } from '@/lib/canvasDiff'
 import type {
   WorkflowExecutionDetail,
   WorkflowExecutionSummary,
@@ -15,6 +16,10 @@ import type {
  *
  * Backed by /api/workflows/:id/versions and /api/workflows/:id/executions.
  * Fetches lazily when the drawer opens and refreshes after a restore.
+ *
+ * Versions tab supports an inline preview mode: clicking Preview on a version
+ * loads its canvas, computes a diff vs the live canvas, and renders a
+ * non-destructive summary the user can restore from or back out of.
  */
 const props = defineProps<{
   open: boolean
@@ -33,6 +38,9 @@ const {
   historyKey,
   historyLoading,
   historyError,
+  versionPreview,
+  previewLoading,
+  previewError,
 } = storeToRefs(store)
 
 type Tab = 'versions' | 'runs'
@@ -61,9 +69,42 @@ watch(
   { immediate: true },
 )
 
+// Closing the drawer abandons any preview-in-progress.
+watch(
+  () => props.open,
+  (isOpen) => {
+    if (!isOpen) store.clearVersionPreview()
+  },
+)
+
 function askRestore(v: WorkflowVersionSummary): void {
   if (currentVersion.value !== null && v.version === currentVersion.value) return
   restoreTarget.value = v
+}
+
+async function onPreview(v: WorkflowVersionSummary): Promise<void> {
+  if (currentVersion.value !== null && v.version === currentVersion.value) return
+  await store.previewVersion(v.version)
+}
+
+function onClosePreview(): void {
+  store.clearVersionPreview()
+}
+
+async function restoreFromPreview(): Promise<void> {
+  if (!versionPreview.value) return
+  const version = versionPreview.value.version
+  restoringVersion.value = version
+  restoreError.value = null
+  restoreNotice.value = null
+  try {
+    await store.restoreVersion(version)
+    restoreNotice.value = `Restored from v${version}. A new snapshot was saved.`
+  } catch (err) {
+    restoreError.value = (err as Error).message
+  } finally {
+    restoringVersion.value = null
+  }
 }
 
 async function confirmRestore(): Promise<void> {
@@ -82,6 +123,8 @@ async function confirmRestore(): Promise<void> {
     restoringVersion.value = null
   }
 }
+
+const previewHasChanges = computed(() => versionPreview.value?.summary.hasChanges ?? false)
 
 async function onExpandExecution(exec: WorkflowExecutionSummary): Promise<void> {
   if (expandedExecutionId.value === exec.id) {
@@ -216,6 +259,24 @@ function stringifyValue(value: unknown): string {
         {{ restoreNotice }}
       </goa-callout>
 
+      <goa-callout
+        v-if="previewError"
+        type="emergency"
+        heading="Preview failed"
+        class="m-3"
+      >
+        {{ previewError }}
+      </goa-callout>
+
+      <div
+        v-if="previewLoading"
+        class="px-4 py-2 text-xs text-[var(--goa-color-text-secondary)]"
+        role="status"
+        aria-live="polite"
+      >
+        Loading version preview…
+      </div>
+
       <div v-if="historyLoading" class="flex-1 flex items-center justify-center text-sm text-[var(--goa-color-text-secondary)]">
         Loading history…
       </div>
@@ -227,7 +288,139 @@ function stringifyValue(value: unknown): string {
         role="tabpanel"
         aria-label="Versions"
       >
-        <ul v-if="versions.length > 0" class="divide-y divide-[var(--goa-color-border)]">
+        <!-- PREVIEW MODE -->
+        <div v-if="versionPreview" class="p-4 space-y-3" aria-label="Version preview">
+          <div class="flex items-center gap-2">
+            <goa-button type="tertiary" size="compact" leadingicon="arrow-back" @_click="onClosePreview">
+              Back
+            </goa-button>
+            <h4 class="text-sm font-semibold flex-1">
+              Preview v{{ versionPreview.version }}
+              <span v-if="currentVersion !== null" class="font-normal text-[var(--goa-color-text-secondary)]">
+                vs v{{ currentVersion }}
+              </span>
+            </h4>
+          </div>
+
+          <p v-if="!previewHasChanges" class="text-xs text-[var(--goa-color-text-secondary)]">
+            This version is structurally identical to the current canvas.
+          </p>
+
+          <div v-else class="space-y-3 text-xs">
+            <div class="flex flex-wrap gap-2">
+              <goa-badge
+                v-if="versionPreview.summary.nodeAdded > 0"
+                type="success"
+                :content="`+${versionPreview.summary.nodeAdded} nodes`"
+              ></goa-badge>
+              <goa-badge
+                v-if="versionPreview.summary.nodeRemoved > 0"
+                type="emergency"
+                :content="`−${versionPreview.summary.nodeRemoved} nodes`"
+              ></goa-badge>
+              <goa-badge
+                v-if="versionPreview.summary.nodeModified > 0"
+                type="important"
+                :content="`~${versionPreview.summary.nodeModified} modified`"
+              ></goa-badge>
+              <goa-badge
+                v-if="versionPreview.summary.edgeAdded > 0"
+                type="success"
+                :content="`+${versionPreview.summary.edgeAdded} edges`"
+              ></goa-badge>
+              <goa-badge
+                v-if="versionPreview.summary.edgeRemoved > 0"
+                type="emergency"
+                :content="`−${versionPreview.summary.edgeRemoved} edges`"
+              ></goa-badge>
+              <goa-badge
+                v-if="versionPreview.summary.edgeModified > 0"
+                type="important"
+                :content="`~${versionPreview.summary.edgeModified} edges`"
+              ></goa-badge>
+            </div>
+
+            <div
+              v-if="versionPreview.diff.addedNodes.length > 0"
+              class="border border-[var(--goa-color-border)] rounded p-2"
+            >
+              <div class="font-semibold text-[var(--goa-color-success-dark, #0d6e3f)] mb-1">
+                Nodes to add ({{ versionPreview.diff.addedNodes.length }})
+              </div>
+              <ul class="space-y-0.5">
+                <li v-for="n in versionPreview.diff.addedNodes" :key="`add-${n.id}`" class="truncate">
+                  + {{ n.type }}: {{ describeNode(n) }}
+                </li>
+              </ul>
+            </div>
+
+            <div
+              v-if="versionPreview.diff.removedNodes.length > 0"
+              class="border border-[var(--goa-color-border)] rounded p-2"
+            >
+              <div class="font-semibold text-[var(--goa-color-error)] mb-1">
+                Nodes to remove ({{ versionPreview.diff.removedNodes.length }})
+              </div>
+              <ul class="space-y-0.5">
+                <li v-for="n in versionPreview.diff.removedNodes" :key="`rm-${n.id}`" class="truncate">
+                  − {{ n.type }}: {{ describeNode(n) }}
+                </li>
+              </ul>
+            </div>
+
+            <div
+              v-if="versionPreview.diff.modifiedNodes.length > 0"
+              class="border border-[var(--goa-color-border)] rounded p-2"
+            >
+              <div class="font-semibold mb-1">
+                Nodes to modify ({{ versionPreview.diff.modifiedNodes.length }})
+              </div>
+              <ul class="space-y-0.5">
+                <li v-for="m in versionPreview.diff.modifiedNodes" :key="`mod-${m.id}`" class="truncate">
+                  ~ {{ m.after.type }}: {{ describeNode(m.before) }}
+                  <span v-if="describeNode(m.before) !== describeNode(m.after)" class="text-[var(--goa-color-text-secondary)]">
+                    → {{ describeNode(m.after) }}
+                  </span>
+                </li>
+              </ul>
+            </div>
+
+            <div
+              v-if="versionPreview.diff.addedEdges.length + versionPreview.diff.removedEdges.length + versionPreview.diff.modifiedEdges.length > 0"
+              class="border border-[var(--goa-color-border)] rounded p-2"
+            >
+              <div class="font-semibold mb-1">Edges</div>
+              <ul class="space-y-0.5">
+                <li v-for="e in versionPreview.diff.addedEdges" :key="`ae-${e.id}`" class="truncate text-[var(--goa-color-success-dark, #0d6e3f)]">
+                  + {{ describeEdge(e) }}
+                </li>
+                <li v-for="e in versionPreview.diff.removedEdges" :key="`re-${e.id}`" class="truncate text-[var(--goa-color-error)]">
+                  − {{ describeEdge(e) }}
+                </li>
+                <li v-for="m in versionPreview.diff.modifiedEdges" :key="`me-${m.id}`" class="truncate">
+                  ~ {{ describeEdge(m.before) }} → {{ describeEdge(m.after) }}
+                </li>
+              </ul>
+            </div>
+          </div>
+
+          <div class="flex justify-end gap-2 pt-2">
+            <goa-button type="secondary" size="compact" @_click="onClosePreview">
+              Cancel
+            </goa-button>
+            <goa-button
+              type="primary"
+              size="compact"
+              :disabled="restoringVersion !== null || undefined"
+              @_click="restoreFromPreview"
+            >
+              {{ restoringVersion !== null ? 'Restoring…' : 'Restore this version' }}
+            </goa-button>
+          </div>
+        </div>
+
+        <!-- LIST MODE -->
+        <ul v-else-if="versions.length > 0" class="divide-y divide-[var(--goa-color-border)]">
           <li
             v-for="v in versions"
             :key="v.version"
@@ -249,20 +442,30 @@ function stringifyValue(value: unknown): string {
                 {{ v.createdByDisplayName || v.createdByEmail || v.createdBy }}
               </div>
             </div>
-            <goa-button
-              type="secondary"
-              size="compact"
-              :disabled="currentVersion === v.version || restoringVersion !== null || undefined"
-              @_click="askRestore(v)"
-            >
-              {{
-                restoringVersion === v.version
-                  ? 'Restoring…'
-                  : currentVersion === v.version
-                  ? 'Active'
-                  : 'Restore'
-              }}
-            </goa-button>
+            <div class="flex flex-col gap-1 items-end">
+              <goa-button
+                type="tertiary"
+                size="compact"
+                :disabled="currentVersion === v.version || previewLoading || undefined"
+                @_click="onPreview(v)"
+              >
+                Preview
+              </goa-button>
+              <goa-button
+                type="secondary"
+                size="compact"
+                :disabled="currentVersion === v.version || restoringVersion !== null || undefined"
+                @_click="askRestore(v)"
+              >
+                {{
+                  restoringVersion === v.version
+                    ? 'Restoring…'
+                    : currentVersion === v.version
+                    ? 'Active'
+                    : 'Restore'
+                }}
+              </goa-button>
+            </div>
           </li>
         </ul>
         <div v-else class="p-6 text-sm text-[var(--goa-color-text-secondary)] text-center">

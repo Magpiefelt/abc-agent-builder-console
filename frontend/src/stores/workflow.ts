@@ -2,6 +2,7 @@ import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import { useSSEStream } from '@/composables/useSSEStream'
 import { apiFetch } from '@/composables/useApiFetch'
+import { diffCanvas, summarizeCanvasDiff, type CanvasDiff, type CanvasDiffSummary } from '@/lib/canvasDiff'
 import type {
   CanvasData,
   CanvasNode,
@@ -22,6 +23,13 @@ import type {
   WorkflowExecutionListResponse,
   WorkflowExecutionSummary,
 } from '@/types/workflow'
+
+export interface VersionPreview {
+  version: number
+  detail: WorkflowVersionDetail
+  diff: CanvasDiff
+  summary: CanvasDiffSummary
+}
 
 /**
  * Workflow store (Stream C).
@@ -51,6 +59,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const historyKey = ref<string | null>(null)
   const historyLoading = ref(false)
   const historyError = ref<string | null>(null)
+
+  // Preview of an old version. When non-null the history panel renders the
+  // diff against `current` instead of the version list. Restore-from-preview
+  // simply forwards to `restoreVersion`.
+  const versionPreview = ref<VersionPreview | null>(null)
+  const previewLoading = ref(false)
+  const previewError = ref<string | null>(null)
 
   // Stream B's reusable SSE consumer. We instantiate once per store; the
   // composable handles abort + reconnect + line-buffer parsing.
@@ -387,6 +402,32 @@ export const useWorkflowStore = defineStore('workflow', () => {
     )
   }
 
+  async function previewVersion(version: number): Promise<VersionPreview | null> {
+    if (!current.value) return null
+    previewLoading.value = true
+    previewError.value = null
+    try {
+      const detail = await loadVersionCanvas(current.value.id, version)
+      const diff = diffCanvas(current.value.canvas_data, detail.canvasData)
+      const summary = summarizeCanvasDiff(diff)
+      const preview: VersionPreview = { version, detail, diff, summary }
+      versionPreview.value = preview
+      return preview
+    } catch (err) {
+      previewError.value = (err as Error).message
+      versionPreview.value = null
+      return null
+    } finally {
+      previewLoading.value = false
+    }
+  }
+
+  function clearVersionPreview(): void {
+    versionPreview.value = null
+    previewError.value = null
+    previewLoading.value = false
+  }
+
   async function restoreVersion(version: number): Promise<void> {
     if (!current.value) return
     const id = current.value.id
@@ -399,6 +440,8 @@ export const useWorkflowStore = defineStore('workflow', () => {
     const idx = list.value.findIndex((w) => w.id === id)
     const summary = summarize(refreshed)
     if (idx >= 0) list.value[idx] = summary
+    // Discard any open preview; the canvas now matches it.
+    clearVersionPreview()
     // Refresh history so the new snapshot row appears immediately.
     await loadHistory(id)
   }
@@ -418,6 +461,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
     currentVersion.value = null
     historyKey.value = null
     historyError.value = null
+    clearVersionPreview()
   }
 
   return {
@@ -455,8 +499,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
     historyKey,
     historyLoading,
     historyError,
+    versionPreview,
+    previewLoading,
+    previewError,
     loadHistory,
     loadVersionCanvas,
+    previewVersion,
+    clearVersionPreview,
     restoreVersion,
     loadExecutionDetail,
     clearHistory,
