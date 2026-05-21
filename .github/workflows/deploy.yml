@@ -68,21 +68,18 @@ jobs:
         working-directory: frontend
         run: pnpm run build-only
 
-      - name: Install backend production deps for bundle
-        working-directory: backend
-        run: pnpm install --prod --frozen-lockfile --node-linker=hoisted --dir backend-bundle-prep --filter ./
-
       - name: Package frontend
         run: tar -czf frontend-dist.tar.gz -C frontend dist
 
       - name: Package backend
+        # Ship the compiled output, the manifest, and the lockfile. The Nexus
+        # target runs `pnpm install --prod --frozen-lockfile` before starting,
+        # so production deps are resolved at deploy time, not bundled.
         run: |
           mkdir backend-bundle
           cp -r backend/dist backend-bundle/dist
           cp backend/package.json backend-bundle/package.json
-          if [ -d backend/node_modules ]; then
-            cp -r backend/node_modules backend-bundle/node_modules
-          fi
+          cp pnpm-lock.yaml backend-bundle/pnpm-lock.yaml
           tar -czf backend-dist.tar.gz -C backend-bundle .
 
       - name: Upload frontend artifact

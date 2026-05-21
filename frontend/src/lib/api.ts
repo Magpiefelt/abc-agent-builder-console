@@ -16,7 +16,9 @@ import type {
   RetentionReport,
 } from "@/types/admin";
 
-const BASE = "";
+// Same-origin in production; Vite proxies /api to localhost:3000 in dev.
+// Override via VITE_API_BASE_URL if the backend lives elsewhere.
+const BASE: string = import.meta.env.VITE_API_BASE_URL ?? "";
 
 export class ApiError extends Error {
   status: number;

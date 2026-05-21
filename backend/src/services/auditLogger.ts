@@ -67,6 +67,7 @@ export enum AuditAction {
 
   // Secrets Vault
   SECRET_CREATED = "secret.created",
+  SECRET_UPDATED = "secret.updated",
   SECRET_ACCESSED = "secret.accessed",
   SECRET_DELETED = "secret.deleted",
   SECRET_ROTATED = "secret.rotated",

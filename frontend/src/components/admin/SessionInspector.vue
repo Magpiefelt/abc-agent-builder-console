@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onActivated } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import type { SessionSummary, SessionStatus } from '@/types/admin'
 
@@ -41,7 +41,13 @@ function statusClass(status: SessionStatus): string {
   }
 }
 
-onMounted(load)
+let loaded = false
+onActivated(() => {
+  if (!loaded) {
+    loaded = true
+    load()
+  }
+})
 </script>
 
 <template>

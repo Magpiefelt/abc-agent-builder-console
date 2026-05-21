@@ -90,15 +90,24 @@ export async function setSecret(
     throw new Error("Secret plaintext must be 1-10000 chars.");
   }
 
-  await query(
+  // `xmax = 0` on the returned row means INSERT (no prior row); otherwise UPDATE.
+  // This lets us audit insert-vs-update distinctly without an extra round-trip.
+  const result = await query<{ inserted: boolean }>(
     `INSERT INTO user_secrets (user_id, label, encrypted_value)
      VALUES ($1, $2, pgp_sym_encrypt($3, $4))
      ON CONFLICT (user_id, label)
-     DO UPDATE SET encrypted_value = pgp_sym_encrypt($3, $4), updated_at = NOW()`,
+     DO UPDATE SET encrypted_value = pgp_sym_encrypt($3, $4), updated_at = NOW()
+     RETURNING (xmax = 0) AS inserted`,
     [userId, label, plaintext, key]
   );
 
-  auditAction(userId, AuditAction.SECRET_CREATED, "user_secret", label);
+  const isInsert = result.rows[0]?.inserted === true;
+  auditAction(
+    userId,
+    isInsert ? AuditAction.SECRET_CREATED : AuditAction.SECRET_UPDATED,
+    "user_secret",
+    label
+  );
 }
 
 /**

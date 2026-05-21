@@ -18,7 +18,8 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const envSchema = z.object({
+const envSchema = z
+  .object({
   // ============================================================================
   // SERVER
   // ============================================================================
@@ -89,7 +90,25 @@ const envSchema = z.object({
   RETENTION_JOB_ENABLED: z.coerce.boolean().default(false),
   /** Local hour-of-day (0-23) for the daily retention pass. Default 02:00. */
   RETENTION_JOB_HOUR: z.coerce.number().min(0).max(23).default(2),
-});
+  })
+  .superRefine((env, ctx) => {
+    if (env.NODE_ENV === "production") {
+      if (!env.SECRETS_VAULT_KEY) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SECRETS_VAULT_KEY"],
+          message: "SECRETS_VAULT_KEY (>= 32 bytes) is required when NODE_ENV=production.",
+        });
+      }
+      if (env.SESSION_SECRET === "dev-secret-change-in-production") {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["SESSION_SECRET"],
+          message: "SESSION_SECRET must be set (not the dev default) when NODE_ENV=production.",
+        });
+      }
+    }
+  });
 
 const parsed = envSchema.safeParse(process.env);
 

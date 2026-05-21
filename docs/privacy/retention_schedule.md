@@ -4,9 +4,10 @@ This document defines how long the ABC Agent Builder Console keeps each class of
 
 ## Retention strategy
 
-Two strategies are applied depending on the table:
+Three strategies are applied:
 
-- **Hard-delete** — the row is physically removed. Used for transient agent state where the obligation to delete (FOIP) outweighs the audit value (`agent_sessions`, `agent_iterations`, `artifacts`).
+- **Hard-delete** — the row is physically removed. Used for `agent_sessions` (the parent record) beyond the classification's `sessions_days`.
+- **Cascade** — the row is removed automatically by a `ON DELETE CASCADE` foreign-key constraint when its parent `agent_sessions` row is deleted. Used for `agent_iterations` and `artifacts`. The retention job reports cascade-affected counts by issuing a `SELECT COUNT(*)` against the to-be-deleted children immediately before the parent DELETE.
 - **Anonymize** — `user_id` and `ip_address` are nulled (and `details` reduced to a key skeleton) while the row remains. Used for `audit_log` and `pii_detections` where FOIP audit-trail obligations require evidence that an event occurred, but not who triggered it, beyond the retention window. Anonymized records are kept indefinitely for compliance counting.
 
 The classification of the **source agent_session** drives the retention window for related rows.
@@ -23,17 +24,17 @@ The classification of the **source agent_session** drives the retention window f
 
 ## Data lifecycle by table
 
-### `cohen_mcleod.agent_sessions` (and `agent_iterations` joined via `session_id`)
+### `cohen_mcleod.agent_sessions`
 
 - **Created:** when the user creates a session (`POST /api/agent/sessions`).
 - **Retained:** for `sessions_days` of its classification.
-- **Disposed:** hard-deleted by the daily retention pass. The matching `agent_iterations` rows are cascaded out via an explicit DELETE-by-join.
+- **Disposed:** hard-deleted by the daily retention pass.
 
-### `cohen_mcleod.artifacts`
+### `cohen_mcleod.agent_iterations` and `cohen_mcleod.artifacts`
 
-- **Created:** when the agent or workflow produces a saved output.
-- **Retained:** for `artifacts_days` of its classification.
-- **Disposed:** hard-deleted.
+- **Created:** during agent execution / on artifact emit.
+- **Retained:** for the parent session's `sessions_days` (iterations) or `artifacts_days` (artifacts). Schema-wise they have no `classification` column; the parent session governs retention.
+- **Disposed:** automatically by `ON DELETE CASCADE` when the parent `agent_sessions` row is deleted. The retention report counts these rows via a pre-DELETE `SELECT COUNT(*)`.
 
 ### `cohen_mcleod.workflows`
 

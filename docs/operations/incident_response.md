@@ -29,7 +29,7 @@ This runbook covers the four phases: **detect, contain, eradicate, recover** —
 -- Recent security events in last 24 h
 SELECT created_at, action, ip_address, details
 FROM cohen_mcleod.audit_log
-WHERE action LIKE 'security.%' OR action LIKE 'pii.%'
+WHERE (action LIKE 'security.%' OR action LIKE 'pii.%')
   AND created_at > NOW() - INTERVAL '24 hours'
 ORDER BY created_at DESC
 LIMIT 200;

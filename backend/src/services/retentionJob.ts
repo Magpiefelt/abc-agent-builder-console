@@ -5,18 +5,18 @@
  * `retention_policy` table and applies the relevant retention window to each
  * data class:
  *
- *   - `agent_sessions`, `agent_iterations`, `artifacts`  → HARD DELETE
- *     (rows older than `sessions_days` / `artifacts_days` are physically removed)
+ *   - `agent_sessions` → HARD DELETE rows older than `sessions_days`.
+ *     `agent_iterations` and `artifacts` are removed automatically by their
+ *     `ON DELETE CASCADE` foreign-key constraints — we do not delete them
+ *     directly. The cascade row counts are captured via SELECT-COUNT-before-DELETE.
  *
- *   - `audit_log`, `pii_detections`                       → ANONYMIZE
- *     (rows older than `audit_log_days` keep their skeleton — user_id is
- *     nulled, ip_address is hashed — for compliance counts; the row itself
- *     persists per FOIP audit-trail obligations)
+ *   - `audit_log`, `pii_detections` → ANONYMIZE rows older than the longest
+ *     audit window (Protected B, 7 years). `user_id` is nulled, `ip_address`
+ *     is nulled, and `details` are collapsed to a key-skeleton. Rows are
+ *     preserved per FOIP audit-trail obligations.
  *
- * Strategy choice (anonymize vs hard-delete) is encoded in this file, not
- * the schema, so the migration stays faithful to the master plan SQL.
- *
- * Each pass writes a summary entry to the audit log with row counts.
+ * Strategy choice (anonymize vs hard-delete) is encoded in this file, not the
+ * schema, so the migration stays faithful to the master plan SQL.
  *
  * Gated by `RETENTION_JOB_ENABLED`. Default OFF in development to avoid
  * accidental data loss during local testing. Turn on explicitly in production
@@ -25,14 +25,14 @@
  * Manual trigger: `POST /api/admin/retention/run` (admin-only).
  */
 
-import { query, transaction } from "../config/database.js";
+import { query } from "../config/database.js";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { logAudit, AuditAction } from "./auditLogger.js";
 
 export interface RetentionTableReport {
   table: string;
-  strategy: "hard_delete" | "anonymize";
+  strategy: "hard_delete" | "anonymize" | "cascade";
   classification: string;
   cutoffDays: number;
   rowsAffected: number;
@@ -87,17 +87,15 @@ export async function runRetentionPass(triggeredBy: string = "scheduler"): Promi
     return report;
   }
 
-  // Hard-delete: classification-scoped tables (agent_sessions, agent_iterations, artifacts)
+  // Hard-delete sessions per classification. Iterations & artifacts cascade.
   for (const policy of policies) {
-    await runDelete(report, policy, "agent_sessions", "sessions_days");
-    await runDeleteByJoin(report, policy);
-    await runDelete(report, policy, "artifacts", "artifacts_days");
+    await runSessionDelete(report, policy);
   }
 
-  // Anonymize: audit_log and pii_detections beyond the maximum window.
-  // We pick the LONGEST audit_log_days across classifications (i.e. protected_b
-  // 7y) so we never anonymize evidence too early. Conservative on purpose.
-  const maxAuditDays = Math.max(...policies.map((p) => p.audit_log_days), 0);
+  // Anonymize audit_log + pii_detections beyond the LONGEST window across
+  // classifications (i.e. protected_b — 7 y). Conservative: never anonymizes
+  // evidence too early when classifications differ.
+  const maxAuditDays = policies.reduce((max, p) => Math.max(max, p.audit_log_days), 0);
   if (maxAuditDays > 0) {
     await anonymizeAuditLog(report, maxAuditDays);
     await anonymizePIIDetections(report, maxAuditDays);
@@ -132,79 +130,93 @@ function finalize(report: RetentionReport, startedAt: Date): void {
   });
 }
 
-async function runDelete(
-  report: RetentionReport,
-  policy: RetentionPolicyRow,
-  table: "agent_sessions" | "artifacts",
-  daysField: "sessions_days" | "artifacts_days"
-): Promise<void> {
-  const days = policy[daysField];
-  try {
-    const result = await query(
-      `DELETE FROM ${table}
-       WHERE classification = $1
-         AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')`,
-      [policy.classification, days]
-    );
-    report.byTable.push({
-      table,
-      strategy: "hard_delete",
-      classification: policy.classification,
-      cutoffDays: days,
-      rowsAffected: result.rowCount ?? 0,
-    });
-  } catch (err) {
-    const msg = (err as Error).message;
-    logger.error(`Retention delete failed for ${table}`, err as Error, { classification: policy.classification });
-    report.errors.push(`${table}/${policy.classification}: ${msg}`);
-  }
-}
-
 /**
- * agent_iterations has no classification column — delete by joining its parent session.
+ * Hard-delete agent_sessions older than the classification's `sessions_days`.
+ * `agent_iterations` and `artifacts` cascade automatically via foreign keys
+ * defined in the schema. We capture cascade counts via a pre-DELETE COUNT(*)
+ * so the report reflects the real impact.
  */
-async function runDeleteByJoin(
+async function runSessionDelete(
   report: RetentionReport,
   policy: RetentionPolicyRow
 ): Promise<void> {
   const days = policy.sessions_days;
+
   try {
-    const result = await query(
-      `DELETE FROM agent_iterations
-       WHERE session_id IN (
-         SELECT id FROM agent_sessions
-         WHERE classification = $1
-           AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
-       )`,
+    // Pre-count cascaded children so the report shows accurate impact.
+    const countResult = await query<{ iterations: string; artifacts: string }>(
+      `SELECT
+         (SELECT COUNT(*) FROM agent_iterations
+          WHERE session_id IN (
+            SELECT id FROM agent_sessions
+            WHERE classification = $1
+              AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
+          )) AS iterations,
+         (SELECT COUNT(*) FROM artifacts
+          WHERE session_id IN (
+            SELECT id FROM agent_sessions
+            WHERE classification = $1
+              AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')
+          )) AS artifacts`,
       [policy.classification, days]
     );
+
+    const iterationsCascaded = Number(countResult.rows[0]?.iterations ?? 0);
+    const artifactsCascaded = Number(countResult.rows[0]?.artifacts ?? 0);
+
+    const deleteResult = await query(
+      `DELETE FROM agent_sessions
+       WHERE classification = $1
+         AND created_at < NOW() - ($2::INTEGER * INTERVAL '1 day')`,
+      [policy.classification, days]
+    );
+
     report.byTable.push({
-      table: "agent_iterations",
+      table: "agent_sessions",
       strategy: "hard_delete",
       classification: policy.classification,
       cutoffDays: days,
-      rowsAffected: result.rowCount ?? 0,
+      rowsAffected: deleteResult.rowCount ?? 0,
+    });
+    report.byTable.push({
+      table: "agent_iterations",
+      strategy: "cascade",
+      classification: policy.classification,
+      cutoffDays: days,
+      rowsAffected: iterationsCascaded,
+    });
+    report.byTable.push({
+      table: "artifacts",
+      strategy: "cascade",
+      classification: policy.classification,
+      cutoffDays: policy.artifacts_days,
+      rowsAffected: artifactsCascaded,
     });
   } catch (err) {
     const msg = (err as Error).message;
-    logger.error("Retention delete failed for agent_iterations", err as Error, { classification: policy.classification });
-    report.errors.push(`agent_iterations/${policy.classification}: ${msg}`);
+    logger.error("Retention session delete failed", err as Error, { classification: policy.classification });
+    report.errors.push(`agent_sessions/${policy.classification}: ${msg}`);
   }
 }
 
 async function anonymizeAuditLog(report: RetentionReport, days: number): Promise<void> {
   try {
-    const result = await transaction(async (client) => {
-      return await client.query(
-        `UPDATE audit_log
-         SET user_id = NULL,
-             ip_address = NULL,
-             details = jsonb_build_object('anonymized', true, 'original_keys', (SELECT array_agg(k) FROM jsonb_object_keys(details) k))
-         WHERE created_at < NOW() - ($1::INTEGER * INTERVAL '1 day')
-           AND user_id IS NOT NULL`,
-        [days]
-      );
-    });
+    const result = await query(
+      `UPDATE audit_log
+       SET user_id = NULL,
+           ip_address = NULL,
+           details = jsonb_build_object(
+             'anonymized', true,
+             'original_keys',
+             COALESCE(
+               (SELECT array_agg(k) FROM jsonb_object_keys(COALESCE(details, '{}'::jsonb)) k),
+               ARRAY[]::text[]
+             )
+           )
+       WHERE created_at < NOW() - ($1::INTEGER * INTERVAL '1 day')
+         AND (user_id IS NOT NULL OR ip_address IS NOT NULL)`,
+      [days]
+    );
     report.byTable.push({
       table: "audit_log",
       strategy: "anonymize",
@@ -226,7 +238,7 @@ async function anonymizePIIDetections(report: RetentionReport, days: number): Pr
        SET user_id = NULL,
            context_snippet = NULL
        WHERE created_at < NOW() - ($1::INTEGER * INTERVAL '1 day')
-         AND user_id IS NOT NULL`,
+         AND (user_id IS NOT NULL OR context_snippet IS NOT NULL)`,
       [days]
     );
     report.byTable.push({

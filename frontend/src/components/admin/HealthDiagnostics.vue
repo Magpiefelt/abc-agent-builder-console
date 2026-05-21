@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from 'vue'
+import { ref, onBeforeUnmount, onActivated, onDeactivated } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import type { HealthDetailed, RetentionReport } from '@/types/admin'
 
@@ -10,6 +10,7 @@ const lastFetched = ref<Date | null>(null)
 const retentionRunning = ref(false)
 const retentionReport = ref<RetentionReport | null>(null)
 
+const POLL_INTERVAL_MS = 30_000
 let pollHandle: ReturnType<typeof setInterval> | null = null
 
 async function load() {
@@ -46,14 +47,27 @@ function formatUptime(seconds: number): string {
   return `${d}d ${h}h ${m}m ${s}s`
 }
 
-onMounted(() => {
-  load()
-  pollHandle = setInterval(load, 30000)
-})
+function startPolling() {
+  if (pollHandle) return
+  pollHandle = setInterval(load, POLL_INTERVAL_MS)
+}
 
-onBeforeUnmount(() => {
-  if (pollHandle) clearInterval(pollHandle)
+function stopPolling() {
+  if (pollHandle) {
+    clearInterval(pollHandle)
+    pollHandle = null
+  }
+}
+
+// onActivated fires on first KeepAlive mount AND every subsequent re-activation,
+// so it covers both initial render and tab-revisit. Using onMounted alongside
+// would double-call load() on first mount.
+onActivated(() => {
+  load()
+  startPolling()
 })
+onDeactivated(stopPolling)
+onBeforeUnmount(stopPolling)
 </script>
 
 <template>

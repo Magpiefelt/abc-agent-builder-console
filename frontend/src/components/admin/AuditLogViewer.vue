@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onActivated } from 'vue'
 import { api, ApiError } from '@/lib/api'
 import type { AuditEntry } from '@/types/admin'
 
@@ -32,13 +32,22 @@ async function load() {
   }
 }
 
+function escapeCsv(value: unknown): string {
+  if (value === null || value === undefined) return ''
+  const s = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  if (/[",\n\r]/.test(s)) {
+    return `"${s.replace(/"/g, '""')}"`
+  }
+  return s
+}
+
 function exportCsv() {
-  const headers = ['id', 'created_at', 'action', 'user_id', 'ministry_code', 'resource_type', 'resource_id', 'ip_address']
+  const headers = ['id', 'created_at', 'action', 'user_id', 'ministry_code', 'resource_type', 'resource_id', 'ip_address', 'details']
   const rows = entries.value.map((e) =>
-    headers.map((h) => JSON.stringify((e as Record<string, unknown>)[h] ?? '')).join(','),
+    headers.map((h) => escapeCsv((e as Record<string, unknown>)[h])).join(','),
   )
   const csv = [headers.join(','), ...rows].join('\n')
-  const blob = new Blob([csv], { type: 'text/csv' })
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -47,7 +56,15 @@ function exportCsv() {
   URL.revokeObjectURL(url)
 }
 
-onMounted(load)
+// Load once on first activation. Subsequent KeepAlive re-activations preserve
+// the user's last filter + result set; use the Refresh button to re-query.
+let loaded = false
+onActivated(() => {
+  if (!loaded) {
+    loaded = true
+    load()
+  }
+})
 </script>
 
 <template>
