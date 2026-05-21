@@ -72,57 +72,75 @@ onActivated(() => {
     <header class="flex items-center justify-between">
       <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Audit Log</h3>
       <div class="flex gap-2">
-        <button
-          @click="load"
-          class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded hover:bg-[var(--goa-color-primary-dark)]"
-        >
+        <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
           Refresh
-        </button>
-        <button
-          @click="exportCsv"
-          :disabled="entries.length === 0"
-          class="px-3 py-1.5 text-sm font-medium border border-[var(--goa-color-border)] rounded hover:bg-gray-50 disabled:opacity-50"
+        </goa-button>
+        <goa-button
+          type="secondary"
+          size="compact"
+          leadingicon="download"
+          :disabled="entries.length === 0 || undefined"
+          @_click="exportCsv"
         >
           Export CSV
-        </button>
+        </goa-button>
       </div>
     </header>
 
     <!-- Filters -->
     <div class="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded">
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium">Action</label>
-        <input
-          v-model="filterAction"
+      <goa-form-item label="Action">
+        <goa-input
+          name="filterAction"
+          :value="filterAction"
           placeholder="e.g. admin.access"
-          class="px-2 py-1 border border-[var(--goa-color-border)] rounded text-sm"
-        />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium">User ID</label>
-        <input
-          v-model="filterUserId"
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (filterAction = e.detail.value)"
+        ></goa-input>
+      </goa-form-item>
+      <goa-form-item label="User ID">
+        <goa-input
+          name="filterUserId"
+          :value="filterUserId"
           placeholder="UUID"
-          class="px-2 py-1 border border-[var(--goa-color-border)] rounded text-sm"
-        />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium">From</label>
-        <input v-model="filterFrom" type="datetime-local" class="px-2 py-1 border border-[var(--goa-color-border)] rounded text-sm" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium">To</label>
-        <input v-model="filterTo" type="datetime-local" class="px-2 py-1 border border-[var(--goa-color-border)] rounded text-sm" />
-      </div>
-      <div class="flex flex-col gap-1">
-        <label class="text-xs font-medium">Limit</label>
-        <input v-model.number="filterLimit" type="number" min="1" max="500" class="px-2 py-1 border border-[var(--goa-color-border)] rounded text-sm" />
-      </div>
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (filterUserId = e.detail.value)"
+        ></goa-input>
+      </goa-form-item>
+      <goa-form-item label="From">
+        <goa-input
+          name="filterFrom"
+          type="datetime-local"
+          :value="filterFrom"
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (filterFrom = e.detail.value)"
+        ></goa-input>
+      </goa-form-item>
+      <goa-form-item label="To">
+        <goa-input
+          name="filterTo"
+          type="datetime-local"
+          :value="filterTo"
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (filterTo = e.detail.value)"
+        ></goa-input>
+      </goa-form-item>
+      <goa-form-item label="Limit">
+        <goa-input
+          name="filterLimit"
+          type="number"
+          :value="String(filterLimit)"
+          min="1"
+          max="500"
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (filterLimit = Number(e.detail.value) || 100)"
+        ></goa-input>
+      </goa-form-item>
     </div>
 
-    <div v-if="error" class="p-3 bg-red-50 border border-[var(--goa-color-error)] text-[var(--goa-color-error)] text-sm rounded">
+    <goa-callout v-if="error" type="emergency" heading="Audit query failed">
       {{ error }}
-    </div>
+    </goa-callout>
 
     <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
       <table class="w-full text-sm">

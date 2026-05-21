@@ -15,6 +15,8 @@ const newName = ref('')
 const creating = ref(false)
 const createError = ref<string | null>(null)
 
+const deleteTarget = ref<{ id: string; name: string } | null>(null)
+
 onMounted(() => {
   store.loadList()
 })
@@ -49,9 +51,14 @@ async function duplicate(id: string): Promise<void> {
   }
 }
 
-async function deleteWorkflow(id: string, name: string): Promise<void> {
-  if (!window.confirm(`Delete workflow "${name}"? This cannot be undone.`)) return
-  await store.remove(id)
+function askDelete(id: string, name: string): void {
+  deleteTarget.value = { id, name }
+}
+
+async function confirmDelete(): Promise<void> {
+  if (!deleteTarget.value) return
+  await store.remove(deleteTarget.value.id)
+  deleteTarget.value = null
 }
 
 function formatDate(iso: string): string {
@@ -73,59 +80,66 @@ function formatDate(iso: string): string {
       <div class="flex items-center gap-4">
         <h1 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Workflows</h1>
         <div class="flex-1" />
-        <input
-          v-model="search"
+        <goa-input
+          name="search"
           type="search"
+          :value="search"
           placeholder="Search workflows…"
-          class="w-64 p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-        />
-        <select
-          v-model="ministryFilter"
-          class="p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
+          width="16rem"
+          leadingicon="search"
+          @_change="(e: CustomEvent<{ value: string }>) => (search = e.detail.value)"
+        ></goa-input>
+        <goa-dropdown
+          name="ministryFilter"
+          :value="ministryFilter"
+          width="12rem"
+          @_change="(e: CustomEvent<{ value: 'mine' | 'ministry' }>) => (ministryFilter = e.detail.value)"
         >
-          <option value="mine">My ministry</option>
-          <option value="ministry">All accessible</option>
-        </select>
-        <button
-          @click="showCreate = !showCreate"
-          class="text-sm py-2 px-3 bg-[var(--goa-color-primary)] text-white rounded-md hover:bg-[var(--goa-color-primary-dark)]"
-        >
-          + New workflow
-        </button>
+          <goa-dropdown-item value="mine" label="My ministry"></goa-dropdown-item>
+          <goa-dropdown-item value="ministry" label="All accessible"></goa-dropdown-item>
+        </goa-dropdown>
+        <goa-button type="primary" leadingicon="add" @_click="showCreate = !showCreate">
+          New workflow
+        </goa-button>
       </div>
 
       <div v-if="showCreate" class="mt-3 flex items-center gap-2">
-        <input
-          v-model="newName"
-          @keyup.enter="createWorkflow"
-          type="text"
+        <goa-input
+          name="newName"
+          :value="newName"
           placeholder="Workflow name"
-          class="flex-1 p-2 text-sm border border-[var(--goa-color-border)] rounded-md focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-        />
-        <button
-          @click="createWorkflow"
-          :disabled="!newName.trim() || creating"
-          class="text-sm py-2 px-3 bg-[var(--goa-color-primary)] text-white rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50"
+          width="100%"
+          @_change="(e: CustomEvent<{ value: string }>) => (newName = e.detail.value)"
+          @_keypress="(e: CustomEvent<{ key: string }>) => e.detail.key === 'Enter' && createWorkflow()"
+        ></goa-input>
+        <goa-button
+          type="primary"
+          :disabled="!newName.trim() || creating || undefined"
+          @_click="createWorkflow"
         >
           {{ creating ? 'Creating…' : 'Create' }}
-        </button>
-        <button
-          @click="showCreate = false"
-          class="text-sm py-2 px-3 text-[var(--goa-color-text-secondary)] hover:underline"
-        >
-          Cancel
-        </button>
+        </goa-button>
+        <goa-button type="tertiary" @_click="showCreate = false">Cancel</goa-button>
       </div>
-      <div v-if="createError" class="mt-2 text-sm text-[var(--goa-color-error)]">{{ createError }}</div>
+      <goa-callout
+        v-if="createError"
+        type="emergency"
+        heading="Couldn't create workflow"
+        class="mt-2"
+      >
+        {{ createError }}
+      </goa-callout>
     </header>
 
     <div class="flex-1 overflow-auto p-6">
       <div v-if="loading" class="text-sm text-[var(--goa-color-text-secondary)]">Loading workflows…</div>
 
-      <div v-else-if="error" class="text-sm text-[var(--goa-color-error)]">{{ error }}</div>
+      <goa-callout v-else-if="error" type="emergency" heading="Couldn't load workflows">
+        {{ error }}
+      </goa-callout>
 
       <div v-else-if="filtered.length === 0" class="text-sm text-[var(--goa-color-text-secondary)] text-center py-12">
-        No workflows yet. Click "+ New workflow" to get started.
+        No workflows yet. Click "New workflow" to get started.
       </div>
 
       <table v-else class="w-full bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md overflow-hidden">
@@ -157,22 +171,37 @@ function formatDate(iso: string): string {
             <td class="px-4 py-2 text-xs">v{{ wf.version }}</td>
             <td class="px-4 py-2 text-xs">{{ formatDate(wf.updated_at) }}</td>
             <td class="px-4 py-2 text-right">
-              <button
-                @click="duplicate(wf.id)"
-                class="text-xs text-[var(--goa-color-primary)] hover:underline mr-3"
-              >
+              <goa-button type="tertiary" size="compact" @_click="duplicate(wf.id)">
                 Use as template
-              </button>
-              <button
-                @click="deleteWorkflow(wf.id, wf.name)"
-                class="text-xs text-[var(--goa-color-error)] hover:underline"
+              </goa-button>
+              <goa-button
+                type="tertiary"
+                variant="destructive"
+                size="compact"
+                @_click="askDelete(wf.id, wf.name)"
               >
                 Delete
-              </button>
+              </goa-button>
             </td>
           </tr>
         </tbody>
       </table>
     </div>
+
+    <goa-modal
+      v-if="deleteTarget"
+      open
+      heading="Delete workflow?"
+      role="alertdialog"
+      @_close="deleteTarget = null"
+    >
+      <p>
+        Delete workflow "<strong>{{ deleteTarget.name }}</strong>"? This cannot be undone.
+      </p>
+      <div slot="actions" class="flex justify-end gap-2">
+        <goa-button type="secondary" @_click="deleteTarget = null">Cancel</goa-button>
+        <goa-button type="primary" variant="destructive" @_click="confirmDelete">Delete</goa-button>
+      </div>
+    </goa-modal>
   </div>
 </template>

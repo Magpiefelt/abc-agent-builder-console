@@ -209,153 +209,141 @@ function loadFromRecent(p: string): void {
 
     <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">Task Configuration</h2>
 
-    <div class="flex flex-col gap-1">
-      <label for="fa-prompt" class="text-sm font-medium">Task Description</label>
-      <textarea
-        id="fa-prompt"
-        v-model="prompt"
+    <goa-form-item label="Task Description">
+      <goa-textarea
+        name="prompt"
+        :value="prompt"
         rows="6"
         placeholder="Describe what you want the agent to do..."
-        :disabled="session.status === 'running' || session.status === 'creating'"
-        class="w-full p-3 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] disabled:opacity-60"
-      />
-    </div>
+        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        @_change="(e: CustomEvent<{ value: string }>) => (prompt = e.detail.value)"
+      ></goa-textarea>
+    </goa-form-item>
 
-    <div class="flex flex-col gap-1">
-      <label for="fa-model" class="text-sm font-medium">Model</label>
-      <select
-        id="fa-model"
-        v-model="selectedModelId"
-        :disabled="modelsStore.loading || session.status === 'running' || session.status === 'creating'"
-        class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+    <goa-form-item label="Model" :helptext="modelsStore.error ?? ''">
+      <goa-dropdown
+        name="modelId"
+        :value="selectedModelId"
+        :disabled="modelsStore.loading || session.status === 'running' || session.status === 'creating' || undefined"
+        width="100%"
+        @_change="(e: CustomEvent<{ value: string }>) => (selectedModelId = e.detail.value)"
       >
-        <option v-if="modelsStore.loading" disabled value="">Loading models…</option>
-        <option v-else-if="modelsStore.models.length === 0" disabled value="">No models available</option>
-        <option v-for="m in modelsStore.models" :key="m.id" :value="m.id">
-          {{ m.name }}
-        </option>
-      </select>
-      <div v-if="modelsStore.error" class="flex items-center gap-2 text-xs text-[var(--goa-color-error)]">
-        <span>{{ modelsStore.error }}</span>
-        <button
-          type="button"
-          @click="modelsStore.ensureLoaded()"
-          class="underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded"
-        >
-          Retry
-        </button>
-      </div>
-    </div>
-
-    <div class="flex flex-col gap-1">
-      <label for="fa-classification" class="text-sm font-medium">Classification</label>
-      <select
-        id="fa-classification"
-        v-model="classification"
-        :disabled="session.status === 'running' || session.status === 'creating'"
-        class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        <goa-dropdown-item
+          v-for="m in modelsStore.models"
+          :key="m.id"
+          :value="m.id"
+          :label="m.name"
+        ></goa-dropdown-item>
+      </goa-dropdown>
+      <goa-button
+        v-if="modelsStore.error"
+        type="tertiary"
+        size="compact"
+        slot="helptext"
+        @_click="modelsStore.ensureLoaded()"
       >
-        <option value="unclassified">Unclassified</option>
-        <option value="protected_a">Protected A</option>
-        <option value="protected_b">Protected B</option>
-      </select>
-    </div>
+        Retry
+      </goa-button>
+    </goa-form-item>
 
-    <div class="flex flex-col gap-1">
-      <label for="fa-max-iter" class="text-sm font-medium">Max Iterations</label>
-      <input
-        id="fa-max-iter"
-        v-model.number="maxIterations"
+    <goa-form-item label="Classification">
+      <goa-dropdown
+        name="classification"
+        :value="classification"
+        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        width="100%"
+        @_change="(e: CustomEvent<{ value: 'unclassified' | 'protected_a' | 'protected_b' }>) => (classification = e.detail.value)"
+      >
+        <goa-dropdown-item value="unclassified" label="Unclassified"></goa-dropdown-item>
+        <goa-dropdown-item value="protected_a" label="Protected A"></goa-dropdown-item>
+        <goa-dropdown-item value="protected_b" label="Protected B"></goa-dropdown-item>
+      </goa-dropdown>
+    </goa-form-item>
+
+    <goa-form-item label="Max Iterations">
+      <goa-input
         type="number"
+        name="maxIterations"
+        :value="String(maxIterations)"
         min="1"
         max="100"
-        :disabled="session.status === 'running' || session.status === 'creating'"
-        class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-      />
-    </div>
+        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        width="100%"
+        @_change="(e: CustomEvent<{ value: string }>) => (maxIterations = Number(e.detail.value) || 10)"
+      ></goa-input>
+    </goa-form-item>
 
-    <button
-      type="button"
-      @click="customizerOpen = true"
-      class="w-full py-2 px-3 text-sm font-medium border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-primary-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] text-left flex items-center justify-between"
+    <goa-button
+      type="secondary"
+      @_click="customizerOpen = true"
     >
       <span>Customize Prompt</span>
-      <span
+      <goa-badge
         v-if="overrideCount > 0"
-        class="text-xs px-2 py-0.5 rounded-full bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]"
-      >
-        {{ overrideCount }} override{{ overrideCount === 1 ? '' : 's' }}
-      </span>
-    </button>
+        type="information"
+        :content="`${overrideCount} override${overrideCount === 1 ? '' : 's'}`"
+      ></goa-badge>
+    </goa-button>
 
-    <p
+    <goa-callout
       v-if="classificationWarning"
-      class="text-xs text-[var(--goa-color-warning)] bg-yellow-50 border border-yellow-200 rounded p-2"
-      role="alert"
+      type="important"
+      heading="Classification mismatch"
     >
       {{ classificationWarning }}
-    </p>
+    </goa-callout>
 
-    <button
-      type="button"
-      @click="handleStart"
-      :disabled="startDisabled || !!classificationWarning"
-      class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
+    <goa-button
+      type="primary"
+      :disabled="startDisabled || !!classificationWarning || undefined"
+      @_click="handleStart"
     >
       {{ startLabel }}
-    </button>
+    </goa-button>
 
     <!-- Save current prompt to user library (Stream A user-memory feature) -->
     <div v-if="auth.isAuthenticated" class="border-t border-[var(--goa-color-border)] pt-3">
-      <button
+      <goa-button
         v-if="!showSaveForm"
-        type="button"
-        @click="openSaveForm"
-        :disabled="!prompt.trim()"
-        class="w-full py-2 px-3 text-sm font-medium border border-[var(--goa-color-primary)] text-[var(--goa-color-primary)] rounded-md hover:bg-[var(--goa-color-primary-light)] disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        type="secondary"
+        :disabled="!prompt.trim() || undefined"
+        @_click="openSaveForm"
       >
         Save this prompt
-      </button>
+      </goa-button>
       <div v-else class="space-y-2" role="region" aria-label="Save prompt">
-        <label for="fa-save-title" class="text-sm font-medium">Prompt title</label>
-        <input
-          id="fa-save-title"
-          v-model="saveTitle"
-          type="text"
-          maxlength="200"
-          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-        />
+        <goa-form-item label="Prompt title">
+          <goa-input
+            name="saveTitle"
+            :value="saveTitle"
+            maxlength="200"
+            width="100%"
+            @_change="(e: CustomEvent<{ value: string }>) => (saveTitle = e.detail.value)"
+          ></goa-input>
+        </goa-form-item>
         <div class="flex gap-2">
-          <button
-            type="button"
-            @click="confirmSave"
-            :disabled="!saveTitle.trim() || saveStatus === 'saving'"
-            class="flex-1 py-2 px-3 bg-[var(--goa-color-primary)] text-white text-sm font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
+          <goa-button
+            type="primary"
+            :disabled="!saveTitle.trim() || saveStatus === 'saving' || undefined"
+            @_click="confirmSave"
           >
             {{ saveStatus === 'saving' ? 'Saving…' : 'Save' }}
-          </button>
-          <button
-            type="button"
-            @click="cancelSave"
-            class="px-3 py-2 text-sm border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
-          >
-            Cancel
-          </button>
+          </goa-button>
+          <goa-button type="secondary" @_click="cancelSave">Cancel</goa-button>
         </div>
-        <p v-if="saveStatus === 'error'" class="text-xs text-[var(--goa-color-error)]">
-          Could not save. Please try again.
-        </p>
+        <goa-callout v-if="saveStatus === 'error'" type="emergency" heading="Couldn't save">
+          Please try again.
+        </goa-callout>
       </div>
     </div>
 
-    <button
+    <goa-button
       v-if="session.status === 'completed' || session.status === 'error' || session.status === 'paused' || session.status === 'needs_assistance'"
-      type="button"
-      @click="handleNewSession"
-      class="w-full py-2 px-3 text-sm font-medium border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+      type="secondary"
+      @_click="handleNewSession"
     >
       New Session
-    </button>
+    </goa-button>
 
     <PromptCustomizer
       v-if="customizerOpen"

@@ -46,23 +46,23 @@ function signIn(): void {
         </p>
       </div>
 
-      <div
+      <goa-callout
         v-if="errorMessage"
-        class="mb-4 p-3 rounded border border-[var(--goa-color-error)] bg-red-50 text-sm text-[var(--goa-color-error)]"
-        role="alert"
+        type="emergency"
+        heading="Sign-in failed"
+        class="mb-4"
       >
         {{ errorMessage }}
-      </div>
+      </goa-callout>
 
-      <button
-        type="button"
-        class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-60 transition-colors"
-        :disabled="auth.loading"
-        @click="signIn"
+      <goa-button
+        type="primary"
+        :disabled="auth.loading || undefined"
+        @_click="signIn"
       >
         <span v-if="auth.loading">Checking your session&hellip;</span>
         <span v-else>Sign in with Microsoft</span>
-      </button>
+      </goa-button>
 
       <p class="text-xs text-[var(--goa-color-text-secondary)] mt-6 text-center">
         Your session is restricted to your ministry. Activity is audited.

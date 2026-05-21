@@ -3,36 +3,16 @@ import { useToast, type Toast } from '@/composables/useToast'
 
 const { toasts, dismiss } = useToast()
 
-function kindStyles(kind: Toast['kind']): { bg: string; border: string; text: string; label: string } {
+function notificationType(kind: Toast['kind']): 'emergency' | 'important' | 'event' | 'information' {
   switch (kind) {
     case 'error':
-      return {
-        bg: 'bg-white',
-        border: 'border-[var(--goa-color-error)]',
-        text: 'text-[var(--goa-color-error)]',
-        label: 'Error',
-      }
+      return 'emergency'
     case 'warning':
-      return {
-        bg: 'bg-white',
-        border: 'border-[var(--goa-color-warning)]',
-        text: 'text-[var(--goa-color-text)]',
-        label: 'Warning',
-      }
+      return 'important'
     case 'success':
-      return {
-        bg: 'bg-white',
-        border: 'border-[var(--goa-color-success)]',
-        text: 'text-[var(--goa-color-success)]',
-        label: 'Success',
-      }
+      return 'event'
     default:
-      return {
-        bg: 'bg-white',
-        border: 'border-[var(--goa-color-info)]',
-        text: 'text-[var(--goa-color-text)]',
-        label: 'Info',
-      }
+      return 'information'
   }
 }
 </script>
@@ -46,29 +26,16 @@ function kindStyles(kind: Toast['kind']): { bg: string; border: string; text: st
     <div
       v-for="t in toasts"
       :key="t.id"
-      :class="[
-        'pointer-events-auto rounded-md border-l-4 shadow-md p-3 flex items-start gap-3',
-        kindStyles(t.kind).bg,
-        kindStyles(t.kind).border,
-      ]"
+      class="pointer-events-auto"
       role="status"
     >
-      <div class="flex-1 min-w-0">
-        <div :class="['text-xs font-semibold uppercase tracking-wide mb-1', kindStyles(t.kind).text]">
-          {{ kindStyles(t.kind).label }}
-        </div>
-        <div class="text-sm text-[var(--goa-color-text)] break-words">{{ t.message }}</div>
-      </div>
-      <button
-        type="button"
-        @click="dismiss(t.id)"
-        aria-label="Dismiss notification"
-        class="shrink-0 text-[var(--goa-color-text-secondary)] hover:text-[var(--goa-color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded p-1"
+      <goa-notification
+        :type="notificationType(t.kind)"
+        @_dismiss="dismiss(t.id)"
+        @_close="dismiss(t.id)"
       >
-        <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
-          <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="2" fill="none" />
-        </svg>
-      </button>
+        {{ t.message }}
+      </goa-notification>
     </div>
   </div>
 </template>

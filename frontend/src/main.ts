@@ -1,3 +1,6 @@
+import '@abgov/design-tokens/dist/tokens.css'
+import '@abgov/web-components'
+
 import './assets/main.css'
 
 import { createApp } from 'vue'

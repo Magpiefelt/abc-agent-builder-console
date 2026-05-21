@@ -36,47 +36,51 @@ function mountHeader(opts: { authenticated?: boolean } = {}): ReturnType<typeof 
 }
 
 describe("AppHeader — unauthenticated", () => {
-  it("renders the app title and a Sign in link", async () => {
+  it("renders the GoA app header with the service name", async () => {
     await router.push("/");
     const wrapper = mountHeader({ authenticated: false });
-    expect(wrapper.text()).toContain("Agent Builder Console");
+    const header = wrapper.find("goa-app-header");
+    expect(header.exists()).toBe(true);
+    expect(header.attributes("heading")).toBe("Agent Builder Console");
+  });
+
+  it("renders a Sign in link when the user is not signed in", async () => {
+    await router.push("/");
+    const wrapper = mountHeader({ authenticated: false });
     expect(wrapper.text()).toContain("Sign in");
   });
 
-  it("does not show the primary nav when the user is not signed in", async () => {
+  it("does not render primary nav links when unauthenticated", async () => {
     await router.push("/");
     const wrapper = mountHeader({ authenticated: false });
-    const navs = wrapper.findAll('nav[aria-label="Primary navigation"]');
-    expect(navs).toHaveLength(0);
-  });
-
-  it("renders a banner landmark", async () => {
-    const wrapper = mountHeader({ authenticated: false });
-    expect(wrapper.find('header[role="banner"]').exists()).toBe(true);
+    const navLinks = wrapper.findAll('a[slot="navigation"]');
+    expect(navLinks).toHaveLength(0);
   });
 });
 
 describe("AppHeader — authenticated", () => {
-  it("shows the user's display name and ministry chip", async () => {
+  it("shows the user's display name and ministry badge", async () => {
     await router.push("/");
     const wrapper = mountHeader({ authenticated: true });
     expect(wrapper.text()).toContain("Cohen McLeod");
-    expect(wrapper.text()).toContain("INFRA");
+    const badge = wrapper.find("goa-badge");
+    expect(badge.exists()).toBe(true);
+    expect(badge.attributes("content")).toBe("INFRA");
   });
 
-  it("renders Free Agent and Workflows nav links with focus rings", async () => {
+  it("renders Free Agent and Workflows nav links in the navigation slot", async () => {
     await router.push("/");
     const wrapper = mountHeader({ authenticated: true });
-    const nav = wrapper.find('nav[aria-label="Primary navigation"]');
-    expect(nav.exists()).toBe(true);
-    expect(nav.html()).toMatch(/Free Agent/i);
-    expect(nav.html()).toMatch(/Workflows/i);
-    expect(nav.html()).toMatch(/focus-visible:ring/);
+    const navLinks = wrapper.findAll('a[slot="navigation"]');
+    const labels = navLinks.map((l) => l.text());
+    expect(labels).toContain("Free Agent");
+    expect(labels).toContain("Workflows");
   });
 
-  it("renders the Sign out button with an aria-label", async () => {
+  it("renders a Sign out button (GoA button)", async () => {
     const wrapper = mountHeader({ authenticated: true });
-    const signOut = wrapper.find('button[aria-label*="Sign out"]');
-    expect(signOut.exists()).toBe(true);
+    const buttons = wrapper.findAll("goa-button");
+    const signOut = buttons.find((b) => b.text().trim() === "Sign out");
+    expect(signOut).toBeDefined();
   });
 });

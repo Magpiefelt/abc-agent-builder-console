@@ -20,16 +20,16 @@ async function load() {
   }
 }
 
-function actionBadgeClass(action: string): string {
+function actionBadgeType(action: string): 'emergency' | 'important' | 'information' | 'midtone' {
   switch (action) {
     case 'blocked':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'emergency'
     case 'redacted':
-      return 'bg-yellow-100 text-yellow-800'
+      return 'important'
     case 'flagged':
-      return 'bg-blue-100 text-[var(--goa-color-primary-dark)]'
+      return 'information'
     default:
-      return 'bg-gray-100 text-gray-700'
+      return 'midtone'
   }
 }
 
@@ -51,17 +51,14 @@ onActivated(() => {
           Matches are truncated server-side (first 4 chars + ***). Raw values are never persisted.
         </p>
       </div>
-      <button
-        @click="load"
-        class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded hover:bg-[var(--goa-color-primary-dark)]"
-      >
+      <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
         Refresh
-      </button>
+      </goa-button>
     </header>
 
-    <div v-if="error" class="p-3 bg-red-50 border border-[var(--goa-color-error)] text-[var(--goa-color-error)] text-sm rounded">
+    <goa-callout v-if="error" type="emergency" heading="Couldn't load PII detections">
       {{ error }}
-    </div>
+    </goa-callout>
 
     <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
       <table class="w-full text-sm">
@@ -86,9 +83,7 @@ onActivated(() => {
             <td class="px-3 py-2 whitespace-nowrap font-mono text-xs">{{ new Date(d.created_at).toLocaleString() }}</td>
             <td class="px-3 py-2 font-mono text-xs">{{ d.detection_type }}</td>
             <td class="px-3 py-2">
-              <span :class="['px-2 py-0.5 rounded text-xs font-medium', actionBadgeClass(d.action_taken)]">
-                {{ d.action_taken }}
-              </span>
+              <goa-badge :type="actionBadgeType(d.action_taken)" :content="d.action_taken"></goa-badge>
             </td>
             <td class="px-3 py-2 font-mono text-xs">{{ d.context_snippet ?? '—' }}</td>
             <td class="px-3 py-2 text-xs">{{ d.user_display_name || d.user_email || d.user_id || '—' }}</td>

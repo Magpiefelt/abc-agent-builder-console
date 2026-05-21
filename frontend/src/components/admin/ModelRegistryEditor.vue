@@ -37,14 +37,14 @@ async function toggle(model: ModelRegistryEntry) {
   }
 }
 
-function classificationBadge(c: string): string {
+function classificationBadgeType(c: string): 'emergency' | 'important' | 'success' {
   switch (c) {
     case 'protected_b':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'emergency'
     case 'protected_a':
-      return 'bg-yellow-100 text-yellow-800'
+      return 'important'
     default:
-      return 'bg-green-100 text-[var(--goa-color-success)]'
+      return 'success'
   }
 }
 
@@ -66,17 +66,14 @@ onActivated(() => {
           Toggle approved LLMs. Inactive models cannot be selected in new sessions.
         </p>
       </div>
-      <button
-        @click="load"
-        class="px-3 py-1.5 text-sm font-medium bg-[var(--goa-color-primary)] text-white rounded hover:bg-[var(--goa-color-primary-dark)]"
-      >
+      <goa-button type="primary" size="compact" leadingicon="refresh" @_click="load">
         Refresh
-      </button>
+      </goa-button>
     </header>
 
-    <div v-if="error" class="p-3 bg-red-50 border border-[var(--goa-color-error)] text-[var(--goa-color-error)] text-sm rounded">
+    <goa-callout v-if="error" type="emergency" heading="Couldn't update model registry">
       {{ error }}
-    </div>
+    </goa-callout>
 
     <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
       <table class="w-full text-sm">
@@ -104,24 +101,20 @@ onActivated(() => {
             <td class="px-3 py-2 font-mono text-xs">{{ m.provider }}</td>
             <td class="px-3 py-2 text-xs uppercase">{{ m.data_residency }}</td>
             <td class="px-3 py-2">
-              <span :class="['px-2 py-0.5 rounded text-xs font-medium', classificationBadge(m.max_classification)]">
-                {{ m.max_classification }}
-              </span>
+              <goa-badge
+                :type="classificationBadgeType(m.max_classification)"
+                :content="m.max_classification"
+              ></goa-badge>
             </td>
             <td class="px-3 py-2">
-              <button
-                @click="toggle(m)"
-                :disabled="updatingId === m.id"
-                :class="[
-                  'px-3 py-1 rounded text-xs font-medium',
-                  m.is_active
-                    ? 'bg-[var(--goa-color-success)] text-white'
-                    : 'bg-gray-300 text-gray-700',
-                  updatingId === m.id ? 'opacity-50 cursor-not-allowed' : 'hover:opacity-80',
-                ]"
+              <goa-button
+                :type="m.is_active ? 'primary' : 'secondary'"
+                size="compact"
+                :disabled="updatingId === m.id || undefined"
+                @_click="toggle(m)"
               >
                 {{ updatingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive' }}
-              </button>
+              </goa-button>
             </td>
           </tr>
         </tbody>
