@@ -472,7 +472,7 @@ class AnthropicProvider implements LLMProvider {
     const toolCalls: LLMToolCall[] = [];
     let currentToolCall: Partial<LLMToolCall> | null = null;
     let currentToolArgs = "";
-    let usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
+    const usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
     let finishReason: LLMResponse["finishReason"] = "stop";
 
     try {

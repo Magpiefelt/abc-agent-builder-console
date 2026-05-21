@@ -86,7 +86,6 @@ const MAX_ARTIFACT_CONTENT_BYTES = 10 * 1024 * 1024; // 10MB per artifact
  * Tools that need to persist artifacts, look up ministry scope, or apply
  * per-user rate limits accept it as a second parameter.
  */
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type EdgeToolHandler = (params: Record<string, unknown>, context?: ToolContext) => Promise<any>;
 
 /**
@@ -535,7 +534,7 @@ export async function dispatchToolCalls(
   context: ToolContext
 ): Promise<{ results: ToolResult[]; finalMemory: SessionMemory }> {
   const results: ToolResult[] = [];
-  let currentMemory: SessionMemory = {
+  const currentMemory: SessionMemory = {
     blackboard: [...context.memory.blackboard],
     scratchpad: context.memory.scratchpad,
     attributes: { ...context.memory.attributes },

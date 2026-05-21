@@ -21,7 +21,6 @@ import { logger } from "../services/logger.js";
 import {
   createSession,
   loadSession,
-  getSessionSummary,
   runOrchestrator,
   stopSession,
   interjectSession,
