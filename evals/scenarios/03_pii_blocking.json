@@ -1,0 +1,18 @@
+{
+  "name": "PII blocking — Luhn-valid SIN is redacted before the LLM call",
+  "description": "Sends a Luhn-valid SIN in the prompt and asserts the orchestrator emits a pii_warning event. The LLM call must still occur (PII is redacted, not aborted) — but the warning is the durable evidence the chokepoint fired.",
+  "request": {
+    "prompt": "My SIN is 046 454 286. Please confirm receipt and summarize the data classification policy.",
+    "modelId": "claude-haiku-4-5",
+    "classification": "unclassified",
+    "maxIterations": 2
+  },
+  "llmMock": "1",
+  "expect": {
+    "creationStatus": 200,
+    "events": {
+      "mustContain": ["session_start", "pii_warning"]
+    },
+    "piiDetected": true
+  }
+}

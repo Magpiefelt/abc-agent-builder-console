@@ -9,7 +9,8 @@
     "dev:frontend": "pnpm --filter frontend run dev",
     "build": "pnpm --parallel run build",
     "lint": "pnpm --parallel run lint",
-    "test": "pnpm --parallel run test"
+    "test": "pnpm --recursive --workspace-concurrency=1 run test",
+    "type-check": "pnpm --recursive run type-check"
   },
   "engines": {
     "node": ">=22.0.0",

@@ -1,0 +1,18 @@
+{
+  "name": "Loop detection — repeated tool calls escalate",
+  "description": "Forces the mock LLM to repeat the same tool call so the loop detector trips a loop_warning event before the iteration limit.",
+  "request": {
+    "prompt": "Repeat the same brave_search query exactly each iteration until intervention.",
+    "modelId": "claude-haiku-4-5",
+    "classification": "unclassified",
+    "maxIterations": 8
+  },
+  "llmMock": "1",
+  "expect": {
+    "creationStatus": 200,
+    "events": {
+      "mustContain": ["session_start", "loop_warning"]
+    },
+    "piiDetected": false
+  }
+}
