@@ -8,7 +8,12 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "lint": "eslint src/",
-    "test": "vitest"
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage"
   },
   "dependencies": {
     "adm-zip": "^0.5.16",
@@ -28,16 +33,23 @@
     "zod": "^3.25.0"
   },
   "devDependencies": {
+    "@testcontainers/postgresql": "^10.13.0",
     "@types/adm-zip": "^0.5.5",
     "@types/cookie-parser": "^1.4.7",
     "@types/cors": "^2.8.17",
     "@types/express": "^5.0.0",
     "@types/nodemailer": "^8.0.0",
     "@types/pg": "^8.11.10",
+    "@types/supertest": "^6.0.2",
     "@types/uuid": "^10.0.0",
+    "@eslint/js": "^9.0.0",
+    "@vitest/coverage-v8": "^3.1.0",
     "eslint": "^9.0.0",
+    "supertest": "^7.0.0",
+    "testcontainers": "^10.13.0",
     "tsx": "^4.19.0",
     "typescript": "^5.8.0",
+    "typescript-eslint": "^8.0.0",
     "vitest": "^3.1.0"
   }
 }

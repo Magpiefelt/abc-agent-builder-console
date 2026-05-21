@@ -56,6 +56,8 @@ export interface LLMRequest {
   maxTokens?: number;
   temperature?: number;
   responseFormat?: "json" | "text";
+  /** Optional opaque identifier used by the mock provider to key canned responses. */
+  sessionId?: string;
 }
 
 export interface LLMToolCall {
@@ -161,7 +163,7 @@ async function withRetry<T>(
     }
   }
 
-  throw lastError!;
+  throw lastError ?? new Error(`${context} failed after ${config.maxRetries + 1} attempts.`);
 }
 
 // ============================================================================
@@ -235,9 +237,16 @@ export async function getActiveModels(): Promise<ModelRegistryEntry[]> {
     const result = await query<ModelRegistryEntry>(
       "SELECT * FROM model_registry WHERE is_active = true ORDER BY display_name"
     );
-    registryCache = result.rows;
+    if (result.rows.length === 0) {
+      // Empty registry — fall back to defaults so dev/test environments work
+      // without a manual seed. In production, model_registry should always be
+      // populated.
+      registryCache = getDefaultModels();
+    } else {
+      registryCache = result.rows;
+    }
     registryCacheTime = now;
-    logger.debug("Model registry refreshed", { count: result.rows.length });
+    logger.debug("Model registry refreshed", { count: registryCache.length });
     return registryCache;
   } catch (err) {
     logger.error("Failed to fetch model registry", err as Error);
@@ -283,6 +292,32 @@ function getDefaultModels(): ModelRegistryEntry[] {
       display_name: "Gemini 2.5 Flash",
       provider: "google",
       api_model_name: "gemini-2.5-flash-preview-05-20",
+      max_output_tokens: 8192,
+      supports_streaming: true,
+      supports_tools: true,
+      data_residency: "us",
+      max_classification: "unclassified",
+      is_active: true,
+    },
+    {
+      id: 99,
+      model_id: "mock-llm",
+      display_name: "Mock LLM",
+      provider: "anthropic",
+      api_model_name: "mock-model",
+      max_output_tokens: 8192,
+      supports_streaming: true,
+      supports_tools: true,
+      data_residency: "canada",
+      max_classification: "protected_b",
+      is_active: true,
+    },
+    {
+      id: 100,
+      model_id: "mock-llm-us",
+      display_name: "Mock LLM (US)",
+      provider: "anthropic",
+      api_model_name: "mock-model-us",
       max_output_tokens: 8192,
       supports_streaming: true,
       supports_tools: true,
@@ -760,7 +795,7 @@ class GoogleGeminiProvider implements LLMProvider {
 }
 
 // ============================================================================
-// MOCK PROVIDER (dev only, gated on env.LLM_MOCK === "1")
+// UI DEMO MOCK PROVIDER (dev only, gated on env.LLM_MOCK === "1")
 // ============================================================================
 
 /**
@@ -774,13 +809,10 @@ class GoogleGeminiProvider implements LLMProvider {
  * step 0, and it works for any concurrent session without per-process
  * counter contention.
  */
-class MockProvider implements LLMProvider {
+class UIDemoMockProvider implements LLMProvider {
   name = "mock";
 
   private detectStep(systemPrompt: string): number {
-    // The orchestrator's prompt builder injects prior blackboard titles into
-    // the system prompt verbatim. We look for sentinels written by earlier
-    // steps to decide where we are.
     if (systemPrompt.includes("Final analysis")) return 3;
     if (systemPrompt.includes("Sources reviewed")) return 2;
     if (systemPrompt.includes("Initial scan")) return 1;
@@ -822,9 +854,6 @@ class MockProvider implements LLMProvider {
                 mimeType: "text/markdown",
               },
             },
-            // Intentionally unknown tool so dispatchTool returns success=false —
-            // this exercises the failure styling in the iteration timeline and
-            // the canvas without affecting session completion.
             { tool: "this_tool_does_not_exist", params: { demo: true } },
           ],
           blackboard_updates: [
@@ -858,7 +887,6 @@ class MockProvider implements LLMProvider {
         }),
       };
     }
-    // Fallback for any iteration past the script (e.g. user continued the session).
     return {
       content: JSON.stringify({
         thinking: "Continuation iteration acknowledged. No additional work required.",
@@ -905,6 +933,66 @@ class MockProvider implements LLMProvider {
 }
 
 // ============================================================================
+// TEST MOCK PROVIDER (Stream E: vitest + evals harness, gated by MOCK_LLM=1)
+// ============================================================================
+
+/**
+ * Mock provider used by Vitest tests and the evals harness. Reads canned
+ * responses from backend/test/helpers/mockLLM.ts keyed by sessionId, so each
+ * test can register a deterministic LLM script before invoking the
+ * orchestrator. Activated only when MOCK_LLM=1 AND the model id is "mock-llm",
+ * so it never interferes with either real providers or the UI demo mock above.
+ *
+ * Path computed at runtime so the TypeScript compiler does not pull the
+ * test/ tree under rootDir. The TestMockProvider is only ever instantiated
+ * when MOCK_LLM=1 is set, which is never the case in a production build.
+ */
+const MOCK_HELPER_PATH = "../" + "../test/helpers/mockLLM.js";
+
+interface MockHelperModule {
+  consumeMockResponse: (sessionId: string) => {
+    thinking?: string;
+    toolCalls?: Array<{ name: string; arguments: Record<string, unknown> }>;
+    blackboardUpdates?: Array<{ category: string; title: string; content: string }>;
+    scratchpad?: string | null;
+    attributeUpdates?: Record<string, unknown> | null;
+    status?: "running" | "completed" | "needs_assistance" | "error";
+    userMessage?: string;
+    error?: string;
+    usage?: { promptTokens: number; completionTokens: number };
+  };
+  renderMockResponse: (modelName: string, startTime: number, input: unknown) => LLMResponse;
+  emitMockStream: (response: LLMResponse, onEvent: LLMStreamCallback) => void;
+}
+
+class TestMockProvider implements LLMProvider {
+  name = "mock";
+
+  async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
+    const startTime = Date.now();
+    const helper = (await import(MOCK_HELPER_PATH)) as MockHelperModule;
+    const sessionId = request.sessionId || "default";
+    const canned = helper.consumeMockResponse(sessionId);
+    return helper.renderMockResponse(modelName, startTime, canned);
+  }
+
+  async stream(request: LLMRequest, modelName: string, onEvent: LLMStreamCallback): Promise<LLMResponse> {
+    const response = await this.call(request, modelName);
+    const helper = (await import(MOCK_HELPER_PATH)) as MockHelperModule;
+    helper.emitMockStream(response, onEvent);
+    return response;
+  }
+}
+
+function isTestMockEnabled(): boolean {
+  return process.env.MOCK_LLM === "1";
+}
+
+function isTestMockModel(model: ModelRegistryEntry): boolean {
+  return model.model_id === "mock-llm" || model.display_name === "Mock LLM";
+}
+
+// ============================================================================
 // PROVIDER FACTORY
 // ============================================================================
 
@@ -913,10 +1001,24 @@ const providers: Map<string, LLMProvider> = new Map();
 /**
  * Get the LLM provider instance for a given model registry entry.
  * Providers are singletons cached by provider name.
+ *
+ * Order of precedence:
+ *   1. TestMockProvider — when MOCK_LLM=1 AND model is "mock-llm". Used by
+ *      vitest and the evals harness; serves per-session canned responses.
+ *   2. UIDemoMockProvider — when env.LLM_MOCK="1". Used to drive the Free
+ *      Agent UI without an API key.
+ *   3. Real Anthropic / Gemini providers.
  */
 function getProviderInstance(model: ModelRegistryEntry): LLMProvider {
+  if (isTestMockEnabled() && isTestMockModel(model)) {
+    if (!providers.has("test-mock")) {
+      providers.set("test-mock", new TestMockProvider());
+    }
+    return providers.get("test-mock")!;
+  }
+
   if (env.LLM_MOCK === "1") {
-    if (!providers.has("mock")) providers.set("mock", new MockProvider());
+    if (!providers.has("mock")) providers.set("mock", new UIDemoMockProvider());
     return providers.get("mock")!;
   }
 

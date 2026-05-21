@@ -1,0 +1,101 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Lint, type-check, test
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abc_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # Backend integration tests + evals harness use this URL.
+      CI_TEST_DATABASE_URL: postgresql://postgres:postgres@localhost:5432/abc_ci
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/abc_ci
+      DB_SCHEMA: cohen_mcleod
+      NODE_ENV: development
+      ANTHROPIC_API_KEY: test-mock-key
+      MOCK_LLM: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Get pnpm store directory
+        id: pnpm-cache
+        shell: bash
+        run: echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: |
+          export PGPASSWORD=postgres
+          psql -h localhost -U postgres -d abc_ci -f docs/02_database_migrations.sql
+
+      - name: Type-check
+        run: pnpm run type-check
+
+      - name: Lint (backend)
+        run: pnpm --filter backend run lint
+
+      - name: Backend unit tests + coverage
+        run: pnpm --filter backend run test:coverage
+
+      - name: Frontend unit + a11y tests
+        run: pnpm --filter frontend run test
+
+      - name: Backend integration tests
+        run: pnpm --filter backend run test:integration
+
+      - name: Evals harness
+        run: pnpm --filter evals run test
+
+      - name: Upload coverage artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage
+          path: backend/coverage/
+          retention-days: 14

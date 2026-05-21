@@ -1,0 +1,19 @@
+{
+  "name": "evals",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "End-to-end evaluation harness for the ABC Agent Builder Console.",
+  "scripts": {
+    "test": "tsx runners/runAll.ts",
+    "test:one": "tsx runners/scenarioRunner.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.19.0",
+    "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.5.5",
+    "typescript": "^5.8.0"
+  }
+}
