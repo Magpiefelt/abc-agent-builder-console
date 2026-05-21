@@ -277,3 +277,35 @@ describe("llmProvider — token usage tracking", () => {
     expect(stats.callCount).toBeGreaterThanOrEqual(2);
   });
 });
+
+describe("llmProvider — callLLM error paths", () => {
+  it("rejects when modelId is not in registry", async () => {
+    queryMock.mockResolvedValueOnce({ rows: [] });
+    await expect(callLLM("ghost-model", {
+      systemPrompt: "s",
+      messages: [{ role: "user", content: "u" }],
+    })).rejects.toThrow(/not found/);
+  });
+});
+
+describe("llmProvider — streaming via MockProvider", () => {
+  it("streamLLM emits text_delta and done events", async () => {
+    const { streamLLM } = await import("../llmProvider.js");
+    queryMock.mockResolvedValueOnce({ rows: [MOCK_MODEL_ROW] });
+    registerMockResponses("sess-stream", [
+      { thinking: "test", status: "completed", userMessage: "Done" },
+    ]);
+    const events: string[] = [];
+    await streamLLM(
+      "mock-llm",
+      {
+        systemPrompt: "s",
+        messages: [{ role: "user", content: "u" }],
+        sessionId: "sess-stream",
+      },
+      (ev) => events.push(ev.type)
+    );
+    expect(events).toContain("text_delta");
+    expect(events).toContain("done");
+  });
+});
