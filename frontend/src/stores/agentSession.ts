@@ -536,7 +536,5 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     continueSession,
     interject,
     refreshSessionMemory,
-    /** Exposed for unit testing only — dispatches a synthetic SSE event. */
-    handleSseEvent: handleEvent,
   }
 })

@@ -8,6 +8,7 @@ import WorkflowSidebar from '@/components/workflow/WorkflowSidebar.vue'
 import PropertiesPanel from '@/components/workflow/PropertiesPanel.vue'
 import WorkflowToolbar from '@/components/workflow/WorkflowToolbar.vue'
 import WorkflowHistoryPanel from '@/components/workflow/WorkflowHistoryPanel.vue'
+import ExecutionPanel from '@/components/workflow/ExecutionPanel.vue'
 import type { CanvasNode, Classification, NodeData, NodeKind } from '@/types/workflow'
 
 const route = useRoute()
