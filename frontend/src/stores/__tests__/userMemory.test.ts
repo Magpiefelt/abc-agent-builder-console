@@ -27,18 +27,6 @@ function mockFetch(status: number, body: unknown, ok = status >= 200 && status <
   )
 }
 
-function mockFetch204() {
-  vi.stubGlobal(
-    'fetch',
-    vi.fn().mockResolvedValue({
-      ok: true,
-      status: 204,
-      statusText: 'No Content',
-      json: vi.fn().mockResolvedValue(undefined),
-      text: vi.fn().mockResolvedValue(''),
-    }),
-  )
-}
 
 const mockPrompt = {
   id: 'p-1',
@@ -152,7 +140,7 @@ describe('useUserMemoryStore — deletePrompt()', () => {
     const store = useUserMemoryStore()
     store.savedPrompts = [mockPrompt, { ...mockPrompt, id: 'p-2', title: 'Second' }]
 
-    mockFetch204()
+    mockFetch(204, undefined)
     await store.deletePrompt('p-1')
 
     expect(store.savedPrompts).toHaveLength(1)
@@ -205,7 +193,7 @@ describe('useUserMemoryStore — favoriteWorkflow()', () => {
 
 describe('useUserMemoryStore — unfavoriteWorkflow()', () => {
   it('removes the workflow from favoriteWorkflows optimistically', async () => {
-    mockFetch204()
+    mockFetch(204, undefined)
     const store = useUserMemoryStore()
     store.favoriteWorkflows = [
       { workflowId: 'wf-1', favoritedAt: '2026-01-01', name: 'A', description: null },

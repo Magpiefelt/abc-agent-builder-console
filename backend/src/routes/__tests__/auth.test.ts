@@ -97,12 +97,19 @@ vi.mock("../../config/env.js", () => ({
 import cookieParser from "cookie-parser";
 import authRouter from "../auth.js";
 
-function makeApp(): express.Express {
-  const app = express();
-  app.use(express.json());
-  app.use(cookieParser());
-  app.use("/api/auth", authRouter);
-  return app;
+// Build once — the app is stateless; mocks reset in beforeEach cover per-test isolation.
+const app = (() => {
+  const a = express();
+  a.use(express.json());
+  a.use(cookieParser());
+  a.use("/api/auth", authRouter);
+  return a;
+})();
+
+/** Normalise supertest's set-cookie header into a single string for assertions. */
+function joinCookies(res: { headers: Record<string, unknown> }): string {
+  const h = res.headers["set-cookie"] as string[] | string | undefined;
+  return Array.isArray(h) ? h.join(";") : h ?? "";
 }
 
 // ---------------------------------------------------------------------------
@@ -131,7 +138,7 @@ beforeEach(() => {
 describe("GET /api/auth/login — Entra not configured", () => {
   it("returns 503 when ENTRA_CLIENT_ID is absent", async () => {
     // env mock has no ENTRA_CLIENT_ID set
-    const res = await request(makeApp()).get("/api/auth/login");
+    const res = await request(app).get("/api/auth/login");
     expect(res.status).toBe(503);
     expect(res.body.error).toMatch(/not configured/i);
   });
@@ -143,90 +150,75 @@ describe("GET /api/auth/login — Entra not configured", () => {
 
 describe("GET /api/auth/callback — missing code or state", () => {
   it("redirects to /login?error= when code is missing", async () => {
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .query({ state: "some-state" });
-    // Either a redirect to /login?error= or a 400 JSON
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(400);
-      expect(res.body.error).toBeTruthy();
-    }
+    // No Accept header → route redirects (HTML client path)
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain("error=");
   });
 
   it("redirects to /login?error= when state is missing", async () => {
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .query({ code: "some-code" });
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(400);
-    }
+    expect(res.status).toBe(302);
+    expect(res.headers.location).toContain("error=");
   });
 
-  it("handles error query param from Entra (user denied consent)", async () => {
-    const res = await request(makeApp())
+  it("returns 400 JSON when Entra signals error (user denied consent)", async () => {
+    const res = await request(app)
       .get("/api/auth/callback")
       .query({ error: "access_denied", error_description: "The user cancelled" })
       .accept("application/json");
-    expect([302, 400]).toContain(res.status);
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
   });
 });
 
 describe("GET /api/auth/callback — missing state cookie", () => {
-  it("returns 400 or redirects when state cookie is absent", async () => {
-    const res = await request(makeApp())
+  it("returns 400 JSON when state cookie is absent", async () => {
+    const res = await request(app)
       .get("/api/auth/callback")
       .query({ code: "auth-code", state: "incoming-state" })
       .accept("application/json");
-    // No cookie → fail("missing_state_cookie")
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(400);
-    }
+    // Accept: application/json → route returns JSON instead of redirecting
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
   });
 });
 
 describe("GET /api/auth/callback — invalid state cookie", () => {
-  it("returns 400 when verifyOAuthState throws", async () => {
+  it("returns 400 JSON when verifyOAuthState throws", async () => {
     verifyOAuthStateMock.mockRejectedValueOnce(new Error("bad sig"));
 
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .set("Cookie", "abc_oauth_state=bad-token")
       .query({ code: "auth-code", state: "some-state" })
       .accept("application/json");
 
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(400);
-    }
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
   });
 });
 
 describe("GET /api/auth/callback — state mismatch", () => {
-  it("returns 400 when incoming state doesn't match cookie state", async () => {
+  it("returns 400 JSON when incoming state doesn't match cookie state", async () => {
     verifyOAuthStateMock.mockResolvedValueOnce({
       state: "expected-state",
       codeVerifier: "verifier",
       returnTo: "/",
     });
 
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .set("Cookie", "abc_oauth_state=valid-token")
       .query({ code: "auth-code", state: "DIFFERENT-state" })
       .accept("application/json");
 
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(400);
-    }
+    expect(res.status).toBe(400);
+    expect(res.body.error).toBeTruthy();
   });
 });
 
@@ -255,23 +247,19 @@ describe("GET /api/auth/callback — successful login", () => {
       role: "user",
     });
 
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .set("Cookie", "abc_oauth_state=valid-state-token")
       .query({ code: "auth-code", state: "good-state" });
 
     expect(res.status).toBe(302);
-    // Should redirect somewhere in the frontend
     expect(res.headers.location).toContain("localhost:5173");
-    // Session cookie should be set
-    const setCookie = res.headers["set-cookie"] as string[] | string | undefined;
-    const cookieString = Array.isArray(setCookie) ? setCookie.join(";") : setCookie ?? "";
-    expect(cookieString).toContain("abc_session");
+    expect(joinCookies(res)).toContain("abc_session");
   });
 });
 
 describe("GET /api/auth/callback — EntraConfigError", () => {
-  it("redirects with 503 when EntraConfigError is thrown", async () => {
+  it("returns 503 JSON when EntraConfigError is thrown", async () => {
     verifyOAuthStateMock.mockResolvedValueOnce({
       state: "good-state",
       codeVerifier: "v",
@@ -279,17 +267,14 @@ describe("GET /api/auth/callback — EntraConfigError", () => {
     });
     exchangeCodeForTokenMock.mockRejectedValueOnce(new MockEntraConfigError("not configured"));
 
-    const res = await request(makeApp())
+    const res = await request(app)
       .get("/api/auth/callback")
       .set("Cookie", "abc_oauth_state=valid-state-token")
       .query({ code: "auth-code", state: "good-state" })
       .accept("application/json");
 
-    if (res.status === 302) {
-      expect(res.headers.location).toContain("error=");
-    } else {
-      expect(res.status).toBe(503);
-    }
+    expect(res.status).toBe(503);
+    expect(res.body.error).toBeTruthy();
   });
 });
 
@@ -299,13 +284,10 @@ describe("GET /api/auth/callback — EntraConfigError", () => {
 
 describe("POST /api/auth/logout", () => {
   it("returns 204 and clears session cookie", async () => {
-    const res = await request(makeApp()).post("/api/auth/logout");
+    const res = await request(app).post("/api/auth/logout");
     expect(res.status).toBe(204);
-    // Session cookie should be cleared
-    const setCookie = res.headers["set-cookie"] as string[] | string | undefined;
-    const cookieString = Array.isArray(setCookie) ? setCookie.join(";") : setCookie ?? "";
+    const cookieString = joinCookies(res);
     expect(cookieString).toContain("abc_session");
-    // The cookie should be expired/emptied
     expect(cookieString.toLowerCase()).toMatch(/expires=|max-age=0/);
   });
 });
@@ -317,7 +299,7 @@ describe("POST /api/auth/logout", () => {
 describe("GET /api/auth/me", () => {
   it("returns the authenticated user object", async () => {
     // Dev mock auth attaches the fixed dev user (cohen.mcleod@gov.ab.ca, admin)
-    const res = await request(makeApp()).get("/api/auth/me");
+    const res = await request(app).get("/api/auth/me");
     expect(res.status).toBe(200);
     expect(res.body.email).toBe("cohen.mcleod@gov.ab.ca");
     expect(res.body.role).toBe("admin");

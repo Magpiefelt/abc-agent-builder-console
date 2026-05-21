@@ -98,24 +98,25 @@ describe('useFocusTrap — initial focus', () => {
     // focus() should have been called at least once (the initialFocus override is exercised)
     expect(focusSpy).toHaveBeenCalled()
     wrapper.unmount()
-    vi.restoreAllMocks()
   })
 })
 
 describe('useFocusTrap — Escape key', () => {
   it('calls onEscape callback when Escape is pressed', async () => {
     const onEscape = vi.fn()
-    mount(makeComponent({ onEscape, buttonCount: 2 }))
+    const wrapper = mount(makeComponent({ onEscape, buttonCount: 2 }))
     await nextTick()
 
     fireKeydown(document, 'Escape')
     expect(onEscape).toHaveBeenCalledOnce()
+    wrapper.unmount()
   })
 
   it('does not throw when onEscape is not provided', async () => {
-    mount(makeComponent({ buttonCount: 2 }))
+    const wrapper = mount(makeComponent({ buttonCount: 2 }))
     await nextTick()
     expect(() => fireKeydown(document, 'Escape')).not.toThrow()
+    wrapper.unmount()
   })
 })
 
@@ -135,7 +136,6 @@ describe('useFocusTrap — Tab key wrapping', () => {
     // focus() should have been called on something (wrap to first)
     expect(focusSpy).toHaveBeenCalled()
     wrapper.unmount()
-    vi.restoreAllMocks()
   })
 
   it('wraps focus to last element when Shift+Tab is pressed on first focusable', async () => {
@@ -151,7 +151,6 @@ describe('useFocusTrap — Tab key wrapping', () => {
 
     expect(focusSpy).toHaveBeenCalled()
     wrapper.unmount()
-    vi.restoreAllMocks()
   })
 })
 
@@ -189,20 +188,19 @@ describe('useFocusTrap — cleanup on unmount', () => {
 
 describe('useFocusTrap — focus restoration on unmount', () => {
   it('restores focus to the element that was focused before mount', async () => {
-    // Create a button outside the trap and focus it
     const externalBtn = document.createElement('button')
-    externalBtn.id = 'external'
     document.body.appendChild(externalBtn)
     externalBtn.focus()
-
     const focusSpy = vi.spyOn(externalBtn, 'focus')
 
     const wrapper = mount(makeComponent({ buttonCount: 1 }))
     await nextTick()
-
     wrapper.unmount()
 
-    expect(focusSpy).toHaveBeenCalledOnce()
-    document.body.removeChild(externalBtn)
+    try {
+      expect(focusSpy).toHaveBeenCalledOnce()
+    } finally {
+      document.body.removeChild(externalBtn)
+    }
   })
 })

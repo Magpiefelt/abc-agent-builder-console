@@ -272,16 +272,8 @@ describe("runWorkflow — DB failure", () => {
 
 describe("runWorkflow — single function node", () => {
   it("emits workflow_start, stage_start, stage_complete, workflow_complete", async () => {
-    // createExecutionRow returns exec id; completeExecutionRow returns nothing
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 }) // create
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 }); // complete
-
     const res = makeMockRes();
-    const canvas = singleFunctionCanvas("to_upper");
-    // Provide a string input via params — to_upper takes the node input
-    // In workflow context the node has no upstream parents; input is empty string
-    await runWorkflow(makeWorkflow(canvas), res as never, ctx);
+    await runWorkflow(makeWorkflow(singleFunctionCanvas("to_upper")), res as never, ctx);
 
     const types = res.events().map((e) => e.type);
     expect(types).toContain("workflow_start");
@@ -291,10 +283,6 @@ describe("runWorkflow — single function node", () => {
   });
 
   it("workflow_complete status is 'completed' when all stages succeed", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const res = makeMockRes();
     await runWorkflow(makeWorkflow(singleFunctionCanvas()), res as never, ctx);
 
@@ -303,10 +291,6 @@ describe("runWorkflow — single function node", () => {
   });
 
   it("calls logAudit with WORKFLOW_EXECUTED", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const res = makeMockRes();
     await runWorkflow(makeWorkflow(singleFunctionCanvas()), res as never, ctx);
 
@@ -322,10 +306,6 @@ describe("runWorkflow — single function node", () => {
 
 describe("runWorkflow — two sequential function nodes (chain)", () => {
   it("emits two stage_complete events in topo order", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const canvas: CanvasData = {
       version: 1,
       nodes: [
@@ -352,10 +332,6 @@ describe("runWorkflow — two sequential function nodes (chain)", () => {
 
 describe("runWorkflow — note nodes", () => {
   it("emits stage_skipped for note nodes and still runs other nodes", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const canvas: CanvasData = {
       version: 1,
       nodes: [
@@ -391,10 +367,6 @@ describe("runWorkflow — note nodes", () => {
 
 describe("runWorkflow — stage error halts execution", () => {
   it("stops after first error and workflow_complete has status error", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const canvas: CanvasData = {
       version: 1,
       nodes: [
@@ -422,10 +394,6 @@ describe("runWorkflow — stage error halts execution", () => {
 
 describe("runWorkflow — continueOnError = true", () => {
   it("processes all stages and still reports error status if any stage failed", async () => {
-    queryMock
-      .mockResolvedValueOnce({ rows: [{ id: "exec-1" }], rowCount: 1 })
-      .mockResolvedValueOnce({ rows: [], rowCount: 1 });
-
     const canvas: CanvasData = {
       version: 1,
       nodes: [
