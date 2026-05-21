@@ -142,23 +142,19 @@ function formatDate(iso: string): string {
         No workflows yet. Click "New workflow" to get started.
       </div>
 
-      <table v-else class="w-full bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md overflow-hidden">
-        <thead class="bg-[var(--goa-color-primary-light)] text-left text-sm">
+      <goa-table v-else width="100%" variant="normal" version="2">
+        <thead>
           <tr>
-            <th class="px-4 py-2 font-semibold">Name</th>
-            <th class="px-4 py-2 font-semibold">Classification</th>
-            <th class="px-4 py-2 font-semibold">Version</th>
-            <th class="px-4 py-2 font-semibold">Updated</th>
-            <th class="px-4 py-2 font-semibold text-right">Actions</th>
+            <th>Name</th>
+            <th>Classification</th>
+            <th>Version</th>
+            <th>Updated</th>
+            <th class="text-right">Actions</th>
           </tr>
         </thead>
-        <tbody class="text-sm">
-          <tr
-            v-for="wf in filtered"
-            :key="wf.id"
-            class="border-t border-[var(--goa-color-border)] hover:bg-[var(--goa-color-primary-light)]/30"
-          >
-            <td class="px-4 py-2">
+        <tbody>
+          <tr v-for="wf in filtered" :key="wf.id">
+            <td>
               <router-link
                 :to="`/workflows/${wf.id}`"
                 class="text-[var(--goa-color-primary)] hover:underline font-medium"
@@ -167,10 +163,10 @@ function formatDate(iso: string): string {
               </router-link>
               <div v-if="wf.description" class="text-xs text-[var(--goa-color-text-secondary)] truncate">{{ wf.description }}</div>
             </td>
-            <td class="px-4 py-2 text-xs uppercase">{{ wf.classification }}</td>
-            <td class="px-4 py-2 text-xs">v{{ wf.version }}</td>
-            <td class="px-4 py-2 text-xs">{{ formatDate(wf.updated_at) }}</td>
-            <td class="px-4 py-2 text-right">
+            <td class="text-xs uppercase">{{ wf.classification }}</td>
+            <td class="text-xs">v{{ wf.version }}</td>
+            <td class="text-xs">{{ formatDate(wf.updated_at) }}</td>
+            <td class="text-right">
               <goa-button type="tertiary" size="compact" @_click="duplicate(wf.id)">
                 Use as template
               </goa-button>
@@ -185,7 +181,7 @@ function formatDate(iso: string): string {
             </td>
           </tr>
         </tbody>
-      </table>
+      </goa-table>
     </div>
 
     <goa-modal

@@ -60,37 +60,35 @@ onActivated(() => {
       {{ error }}
     </goa-callout>
 
-    <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]">
-          <tr>
-            <th class="text-left px-3 py-2 font-semibold">Time</th>
-            <th class="text-left px-3 py-2 font-semibold">Type</th>
-            <th class="text-left px-3 py-2 font-semibold">Action</th>
-            <th class="text-left px-3 py-2 font-semibold">Match</th>
-            <th class="text-left px-3 py-2 font-semibold">User</th>
-            <th class="text-left px-3 py-2 font-semibold">Session</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="6" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">Loading…</td>
-          </tr>
-          <tr v-else-if="detections.length === 0">
-            <td colspan="6" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">No PII detections recorded.</td>
-          </tr>
-          <tr v-for="d in detections" :key="d.id" class="border-t border-[var(--goa-color-border)] hover:bg-gray-50">
-            <td class="px-3 py-2 whitespace-nowrap font-mono text-xs">{{ new Date(d.created_at).toLocaleString() }}</td>
-            <td class="px-3 py-2 font-mono text-xs">{{ d.detection_type }}</td>
-            <td class="px-3 py-2">
-              <goa-badge :type="actionBadgeType(d.action_taken)" :content="d.action_taken"></goa-badge>
-            </td>
-            <td class="px-3 py-2 font-mono text-xs">{{ d.context_snippet ?? '—' }}</td>
-            <td class="px-3 py-2 text-xs">{{ d.user_display_name || d.user_email || d.user_id || '—' }}</td>
-            <td class="px-3 py-2 font-mono text-xs">{{ d.session_id ?? '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <goa-table width="100%" variant="normal" version="2">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Type</th>
+          <th>Action</th>
+          <th>Match</th>
+          <th>User</th>
+          <th>Session</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="loading">
+          <td colspan="6" class="text-center">Loading…</td>
+        </tr>
+        <tr v-else-if="detections.length === 0">
+          <td colspan="6" class="text-center">No PII detections recorded.</td>
+        </tr>
+        <tr v-for="d in detections" :key="d.id">
+          <td class="whitespace-nowrap font-mono text-xs">{{ new Date(d.created_at).toLocaleString() }}</td>
+          <td class="font-mono text-xs">{{ d.detection_type }}</td>
+          <td>
+            <goa-badge :type="actionBadgeType(d.action_taken)" :content="d.action_taken"></goa-badge>
+          </td>
+          <td class="font-mono text-xs">{{ d.context_snippet ?? '—' }}</td>
+          <td class="text-xs">{{ d.user_display_name || d.user_email || d.user_id || '—' }}</td>
+          <td class="font-mono text-xs">{{ d.session_id ?? '—' }}</td>
+        </tr>
+      </tbody>
+    </goa-table>
   </div>
 </template>

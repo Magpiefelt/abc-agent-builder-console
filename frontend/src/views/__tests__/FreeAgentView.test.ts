@@ -71,7 +71,8 @@ describe("FreeAgentView — layout shell", () => {
       },
     });
     expect(wrapper.find('aside[aria-label="Agent memory viewer"]').exists()).toBe(true);
-    expect(wrapper.find('[role="tablist"]').exists()).toBe(true);
+    expect(wrapper.find("goa-tabs").exists()).toBe(true);
+    expect(wrapper.findAll("goa-tab").length).toBe(3);
   });
 
   it("renders the agent execution canvas section as a landmark", () => {

@@ -78,41 +78,39 @@ onActivated(() => {
       {{ error }}
     </goa-callout>
 
-    <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]">
-          <tr>
-            <th class="text-left px-3 py-2 font-semibold">Status</th>
-            <th class="text-left px-3 py-2 font-semibold">Session ID</th>
-            <th class="text-left px-3 py-2 font-semibold">Model</th>
-            <th class="text-left px-3 py-2 font-semibold">Classification</th>
-            <th class="text-left px-3 py-2 font-semibold">Iterations</th>
-            <th class="text-left px-3 py-2 font-semibold">User</th>
-            <th class="text-left px-3 py-2 font-semibold">Ministry</th>
-            <th class="text-left px-3 py-2 font-semibold">Created</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="8" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">Loading…</td>
-          </tr>
-          <tr v-else-if="sessions.length === 0">
-            <td colspan="8" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">No sessions found.</td>
-          </tr>
-          <tr v-for="s in sessions" :key="s.id" class="border-t border-[var(--goa-color-border)] hover:bg-gray-50">
-            <td class="px-3 py-2">
-              <goa-badge :type="statusBadgeType(s.status)" :content="s.status"></goa-badge>
-            </td>
-            <td class="px-3 py-2 font-mono text-xs">{{ s.id.slice(0, 8) }}…</td>
-            <td class="px-3 py-2 font-mono text-xs">{{ s.model_id }}</td>
-            <td class="px-3 py-2 text-xs">{{ s.classification }}</td>
-            <td class="px-3 py-2 text-xs">{{ s.current_iteration }} / {{ s.max_iterations }}</td>
-            <td class="px-3 py-2 text-xs">{{ s.user_display_name || s.user_email || s.user_id }}</td>
-            <td class="px-3 py-2 text-xs">{{ s.ministry_code ?? '—' }}</td>
-            <td class="px-3 py-2 whitespace-nowrap font-mono text-xs">{{ new Date(s.created_at).toLocaleString() }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <goa-table width="100%" variant="normal" version="2">
+      <thead>
+        <tr>
+          <th>Status</th>
+          <th>Session ID</th>
+          <th>Model</th>
+          <th>Classification</th>
+          <th>Iterations</th>
+          <th>User</th>
+          <th>Ministry</th>
+          <th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="loading">
+          <td colspan="8" class="text-center">Loading…</td>
+        </tr>
+        <tr v-else-if="sessions.length === 0">
+          <td colspan="8" class="text-center">No sessions found.</td>
+        </tr>
+        <tr v-for="s in sessions" :key="s.id">
+          <td>
+            <goa-badge :type="statusBadgeType(s.status)" :content="s.status"></goa-badge>
+          </td>
+          <td class="font-mono text-xs">{{ s.id.slice(0, 8) }}…</td>
+          <td class="font-mono text-xs">{{ s.model_id }}</td>
+          <td class="text-xs">{{ s.classification }}</td>
+          <td class="text-xs">{{ s.current_iteration }} / {{ s.max_iterations }}</td>
+          <td class="text-xs">{{ s.user_display_name || s.user_email || s.user_id }}</td>
+          <td class="text-xs">{{ s.ministry_code ?? '—' }}</td>
+          <td class="whitespace-nowrap font-mono text-xs">{{ new Date(s.created_at).toLocaleString() }}</td>
+        </tr>
+      </tbody>
+    </goa-table>
   </div>
 </template>

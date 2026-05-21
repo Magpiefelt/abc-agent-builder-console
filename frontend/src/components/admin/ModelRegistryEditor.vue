@@ -75,50 +75,48 @@ onActivated(() => {
       {{ error }}
     </goa-callout>
 
-    <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]">
-          <tr>
-            <th class="text-left px-3 py-2 font-semibold">Model</th>
-            <th class="text-left px-3 py-2 font-semibold">Provider</th>
-            <th class="text-left px-3 py-2 font-semibold">Residency</th>
-            <th class="text-left px-3 py-2 font-semibold">Max Classification</th>
-            <th class="text-left px-3 py-2 font-semibold">Active</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="5" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">Loading…</td>
-          </tr>
-          <tr v-else-if="models.length === 0">
-            <td colspan="5" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">No models registered. Seed `model_registry` to begin.</td>
-          </tr>
-          <tr v-for="m in models" :key="m.id" class="border-t border-[var(--goa-color-border)] hover:bg-gray-50">
-            <td class="px-3 py-2">
-              <div class="font-medium">{{ m.display_name }}</div>
-              <div class="font-mono text-xs text-[var(--goa-color-text-secondary)]">{{ m.model_id }}</div>
-            </td>
-            <td class="px-3 py-2 font-mono text-xs">{{ m.provider }}</td>
-            <td class="px-3 py-2 text-xs uppercase">{{ m.data_residency }}</td>
-            <td class="px-3 py-2">
-              <goa-badge
-                :type="classificationBadgeType(m.max_classification)"
-                :content="m.max_classification"
-              ></goa-badge>
-            </td>
-            <td class="px-3 py-2">
-              <goa-button
-                :type="m.is_active ? 'primary' : 'secondary'"
-                size="compact"
-                :disabled="updatingId === m.id || undefined"
-                @_click="toggle(m)"
-              >
-                {{ updatingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive' }}
-              </goa-button>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <goa-table width="100%" variant="normal" version="2">
+      <thead>
+        <tr>
+          <th>Model</th>
+          <th>Provider</th>
+          <th>Residency</th>
+          <th>Max Classification</th>
+          <th>Active</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="loading">
+          <td colspan="5" class="text-center">Loading…</td>
+        </tr>
+        <tr v-else-if="models.length === 0">
+          <td colspan="5" class="text-center">No models registered. Seed `model_registry` to begin.</td>
+        </tr>
+        <tr v-for="m in models" :key="m.id">
+          <td>
+            <div class="font-medium">{{ m.display_name }}</div>
+            <div class="font-mono text-xs text-[var(--goa-color-text-secondary)]">{{ m.model_id }}</div>
+          </td>
+          <td class="font-mono text-xs">{{ m.provider }}</td>
+          <td class="text-xs uppercase">{{ m.data_residency }}</td>
+          <td>
+            <goa-badge
+              :type="classificationBadgeType(m.max_classification)"
+              :content="m.max_classification"
+            ></goa-badge>
+          </td>
+          <td>
+            <goa-button
+              :type="m.is_active ? 'primary' : 'secondary'"
+              size="compact"
+              :disabled="updatingId === m.id || undefined"
+              @_click="toggle(m)"
+            >
+              {{ updatingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive' }}
+            </goa-button>
+          </td>
+        </tr>
+      </tbody>
+    </goa-table>
   </div>
 </template>

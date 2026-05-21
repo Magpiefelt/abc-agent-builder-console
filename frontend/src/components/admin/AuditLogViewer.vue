@@ -142,35 +142,33 @@ onActivated(() => {
       {{ error }}
     </goa-callout>
 
-    <div class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded overflow-x-auto">
-      <table class="w-full text-sm">
-        <thead class="bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]">
-          <tr>
-            <th class="text-left px-3 py-2 font-semibold">Time</th>
-            <th class="text-left px-3 py-2 font-semibold">Action</th>
-            <th class="text-left px-3 py-2 font-semibold">User</th>
-            <th class="text-left px-3 py-2 font-semibold">Resource</th>
-            <th class="text-left px-3 py-2 font-semibold">IP</th>
-            <th class="text-left px-3 py-2 font-semibold">Details</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-if="loading">
-            <td colspan="6" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">Loading…</td>
-          </tr>
-          <tr v-else-if="entries.length === 0">
-            <td colspan="6" class="px-3 py-6 text-center text-[var(--goa-color-text-secondary)]">No audit entries match the filters.</td>
-          </tr>
-          <tr v-for="entry in entries" :key="entry.id" class="border-t border-[var(--goa-color-border)] hover:bg-gray-50">
-            <td class="px-3 py-2 whitespace-nowrap font-mono text-xs">{{ new Date(entry.created_at).toLocaleString() }}</td>
-            <td class="px-3 py-2 font-mono text-xs">{{ entry.action }}</td>
-            <td class="px-3 py-2 font-mono text-xs">{{ entry.user_id ?? '—' }}</td>
-            <td class="px-3 py-2 text-xs">{{ entry.resource_type ?? '—' }}<span v-if="entry.resource_id">/{{ entry.resource_id }}</span></td>
-            <td class="px-3 py-2 font-mono text-xs">{{ entry.ip_address ?? '—' }}</td>
-            <td class="px-3 py-2 text-xs max-w-xs truncate">{{ entry.details ? JSON.stringify(entry.details) : '—' }}</td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
+    <goa-table width="100%" variant="normal" version="2">
+      <thead>
+        <tr>
+          <th>Time</th>
+          <th>Action</th>
+          <th>User</th>
+          <th>Resource</th>
+          <th>IP</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr v-if="loading">
+          <td colspan="6" class="text-center">Loading…</td>
+        </tr>
+        <tr v-else-if="entries.length === 0">
+          <td colspan="6" class="text-center">No audit entries match the filters.</td>
+        </tr>
+        <tr v-for="entry in entries" :key="entry.id">
+          <td class="whitespace-nowrap font-mono text-xs">{{ new Date(entry.created_at).toLocaleString() }}</td>
+          <td class="font-mono text-xs">{{ entry.action }}</td>
+          <td class="font-mono text-xs">{{ entry.user_id ?? '—' }}</td>
+          <td class="text-xs">{{ entry.resource_type ?? '—' }}<span v-if="entry.resource_id">/{{ entry.resource_id }}</span></td>
+          <td class="font-mono text-xs">{{ entry.ip_address ?? '—' }}</td>
+          <td class="text-xs max-w-xs truncate">{{ entry.details ? JSON.stringify(entry.details) : '—' }}</td>
+        </tr>
+      </tbody>
+    </goa-table>
   </div>
 </template>

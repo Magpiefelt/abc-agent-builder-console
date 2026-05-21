@@ -36,13 +36,14 @@ async function handleCopy(): Promise<void> {
   >
     <header class="px-3 py-2 border-b border-[var(--goa-color-border)] flex items-center justify-between">
       <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Final Report</h3>
-      <button
-        type="button"
-        @click="handleCopy"
-        class="text-xs font-medium px-2 py-1 border border-[var(--goa-color-border)] rounded hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+      <goa-button
+        type="secondary"
+        size="compact"
+        leadingicon="copy"
+        @_click="handleCopy"
       >
         {{ copyState === 'copied' ? 'Copied!' : 'Copy' }}
-      </button>
+      </goa-button>
     </header>
     <div class="flex-1 overflow-y-auto p-4">
       <div

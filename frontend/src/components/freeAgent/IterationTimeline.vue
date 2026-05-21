@@ -48,16 +48,16 @@ watch(
   },
 )
 
-function statusClass(s: string | undefined): string {
+function statusBadgeType(s: string | undefined): 'success' | 'emergency' | 'information' | 'midtone' {
   switch (s) {
     case 'completed':
-      return 'bg-green-100 text-[var(--goa-color-success)]'
+      return 'success'
     case 'error':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'emergency'
     case 'running':
-      return 'bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]'
+      return 'information'
     default:
-      return 'bg-gray-100 text-[var(--goa-color-text-secondary)]'
+      return 'midtone'
   }
 }
 
@@ -97,9 +97,7 @@ function durationLabel(ms: number | undefined): string {
           class="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded-md"
         >
           <span class="text-xs font-semibold text-[var(--goa-color-primary-dark)]">#{{ iter.iteration }}</span>
-          <span :class="['px-2 py-0.5 rounded text-xs font-medium', statusClass(iter.status)]">
-            {{ iter.status }}
-          </span>
+          <goa-badge :type="statusBadgeType(iter.status)" :content="iter.status ?? 'unknown'"></goa-badge>
           <span v-if="iter.userMessage" class="text-sm text-[var(--goa-color-text)] truncate flex-1">
             {{ iter.userMessage }}
           </span>
