@@ -31,11 +31,11 @@ async function handleLogout(): Promise<void> {
           Free Agent
         </RouterLink>
         <RouterLink
-          to="/workflow"
+          to="/workflows"
           class="px-3 py-1.5 rounded text-sm font-medium hover:bg-white/10 transition-colors"
           active-class="bg-white/20"
         >
-          Workflow
+          Workflows
         </RouterLink>
       </nav>
     </div>

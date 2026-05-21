@@ -18,8 +18,14 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
-      path: '/workflow',
-      name: 'workflow',
+      path: '/workflows',
+      name: 'workflow-list',
+      component: () => import('@/views/WorkflowListView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      path: '/workflows/:id',
+      name: 'workflow-edit',
       component: () => import('@/views/WorkflowView.vue'),
       meta: { requiresAuth: true },
     },
@@ -28,6 +34,10 @@ const router = createRouter({
       name: 'profile',
       component: () => import('@/views/ProfileView.vue'),
       meta: { requiresAuth: true },
+    },
+    {
+      path: '/workflow',
+      redirect: '/workflows',
     },
   ],
 })

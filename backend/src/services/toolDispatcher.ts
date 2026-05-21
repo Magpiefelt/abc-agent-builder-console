@@ -51,6 +51,12 @@ export interface ToolContext {
   iteration: number;
   memory: SessionMemory;
   /**
+   * When set, the tool dispatcher is running inside a workflow execution
+   * rather than a free-agent session. Memory tools that persist (e.g.
+   * create_artifact) write to workflow_execution_id and leave session_id NULL.
+   */
+  workflowExecutionId?: string | null;
+  /**
    * Optional sink for orchestrator-level SSE events emitted by tools
    * (e.g. artifact_created). Kept optional so tools never depend on a
    * Response object — the orchestrator wires this when streaming.
@@ -431,14 +437,16 @@ async function storeArtifact(
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
 ): Promise<void> {
   const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
+  const isWorkflow = !!context.workflowExecutionId;
   let id: string | null = null;
   try {
     const result = await query<{ id: string }>(
-      `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+      `INSERT INTO artifacts (session_id, workflow_execution_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        RETURNING id`,
       [
-        context.sessionId,
+        isWorkflow ? null : context.sessionId,
+        isWorkflow ? context.workflowExecutionId : null,
         context.userId,
         artifact.type,
         artifact.title,
@@ -456,6 +464,7 @@ async function storeArtifact(
     // that need the row will retry/refresh on next session load.
     logger.warn("Failed to persist artifact, emitting transient SSE only", {
       sessionId: context.sessionId,
+      workflowExecutionId: context.workflowExecutionId,
       title: artifact.title,
       error: (err as Error).message,
     });
