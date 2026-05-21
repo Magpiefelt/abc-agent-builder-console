@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, nextTick } from 'vue'
+import { ref } from 'vue'
 import { useAgentSessionStore } from '@/stores/agentSession'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 const emit = defineEmits<{ close: [] }>()
 
@@ -8,25 +9,11 @@ const session = useAgentSessionStore()
 
 const message = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
-let previouslyFocused: HTMLElement | null = null
+const dialogRef = ref<HTMLDivElement | null>(null)
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    emit('close')
-  }
-}
-
-onMounted(async () => {
-  previouslyFocused = document.activeElement as HTMLElement | null
-  await nextTick()
-  textareaRef.value?.focus()
-  document.addEventListener('keydown', onKeydown)
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onKeydown)
-  previouslyFocused?.focus()
+useFocusTrap(dialogRef, {
+  onEscape: () => emit('close'),
+  initialFocus: () => textareaRef.value,
 })
 
 async function handleSubmit(): Promise<void> {
@@ -43,7 +30,11 @@ async function handleSubmit(): Promise<void> {
     aria-modal="true"
     aria-labelledby="interject-title"
   >
-    <div class="w-full sm:max-w-md bg-[var(--goa-color-surface)] rounded-md shadow-lg border border-[var(--goa-color-border)] flex flex-col">
+    <div
+      ref="dialogRef"
+      tabindex="-1"
+      class="w-full sm:max-w-md bg-[var(--goa-color-surface)] rounded-md shadow-lg border border-[var(--goa-color-border)] flex flex-col focus:outline-none"
+    >
       <header class="flex items-center justify-between px-4 py-3 border-b border-[var(--goa-color-border)]">
         <h3 id="interject-title" class="text-base font-semibold text-[var(--goa-color-primary-dark)]">
           Send Guidance

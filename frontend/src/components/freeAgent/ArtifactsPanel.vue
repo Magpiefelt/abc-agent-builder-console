@@ -118,14 +118,20 @@ function sizeLabel(bytes: number): string {
             {{ a.description }}
           </p>
         </div>
-        <button
-          type="button"
-          disabled
-          title="Download available once Stream D ships the content endpoint."
-          class="shrink-0 text-xs px-2 py-1 border border-[var(--goa-color-border)] rounded text-[var(--goa-color-text-secondary)] disabled:opacity-60 disabled:cursor-not-allowed"
+        <span
+          v-if="a.id"
+          class="shrink-0 text-[10px] uppercase tracking-wide text-[var(--goa-color-text-secondary)] px-2 py-1"
+          title="Download arrives with Stream D's artifact content endpoint."
         >
-          Download
-        </button>
+          Persisted
+        </span>
+        <span
+          v-else
+          class="shrink-0 text-[10px] uppercase tracking-wide text-[var(--goa-color-warning)] px-2 py-1"
+          title="In-memory only — backend wasn't able to persist this artifact."
+        >
+          Transient
+        </span>
       </article>
     </div>
   </div>

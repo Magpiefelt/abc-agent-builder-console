@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useAgentSessionStore } from '@/stores/agentSession'
 
 const session = useAgentSessionStore()
@@ -8,14 +8,45 @@ const sortedIterations = computed(() =>
   [...session.iterations].sort((a, b) => b.iteration - a.iteration),
 )
 
-const expanded = ref<Set<number>>(new Set())
+const manuallyExpanded = ref<Set<number>>(new Set())
+const manuallyCollapsed = ref<Set<number>>(new Set())
+
+// The currently-running iteration is auto-expanded so the operator can watch
+// it without clicking. The user can still collapse it explicitly.
+const expanded = computed<Set<number>>(() => {
+  const next = new Set(manuallyExpanded.value)
+  const running = session.currentIteration
+  if (session.status === 'running' && running > 0 && !manuallyCollapsed.value.has(running)) {
+    next.add(running)
+  }
+  return next
+})
 
 function toggle(iteration: number): void {
-  const next = new Set(expanded.value)
-  if (next.has(iteration)) next.delete(iteration)
-  else next.add(iteration)
-  expanded.value = next
+  if (expanded.value.has(iteration)) {
+    const m = new Set(manuallyExpanded.value)
+    m.delete(iteration)
+    manuallyExpanded.value = m
+    const c = new Set(manuallyCollapsed.value)
+    c.add(iteration)
+    manuallyCollapsed.value = c
+  } else {
+    const m = new Set(manuallyExpanded.value)
+    m.add(iteration)
+    manuallyExpanded.value = m
+    const c = new Set(manuallyCollapsed.value)
+    c.delete(iteration)
+    manuallyCollapsed.value = c
+  }
 }
+
+watch(
+  () => session.sessionId,
+  () => {
+    manuallyExpanded.value = new Set()
+    manuallyCollapsed.value = new Set()
+  },
+)
 
 function statusClass(s: string | undefined): string {
   switch (s) {

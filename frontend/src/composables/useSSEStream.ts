@@ -4,6 +4,12 @@
  * EventSource cannot send a POST body, so we drive the SSE protocol manually
  * over fetch(). The composable is generic (no agent-session knowledge) so
  * Stream C can reuse it for structured workflow streams.
+ *
+ * Reconnect policy: we only retry pre-read network failures (DNS hiccup,
+ * connection refused, etc.) with exponential backoff. Mid-stream drops are
+ * surfaced as 'error' immediately — for endpoints like /sessions/:id/start
+ * a blind POST retry would race with the backend's session-lifecycle
+ * cleanup and risk a 409. The store reconciles state via GET in onError.
  */
 
 import { ref, type Ref } from 'vue'
@@ -20,7 +26,7 @@ export interface UseSSEStreamOptions<TEvent> {
   onEvent: (event: TEvent) => void
   onError?: (err: Error) => void
   onDone?: () => void
-  /** Max reconnect attempts on transient network drops. Default 3. */
+  /** Max pre-read connect retries on transient failures. Default 3. */
   maxRetries?: number
   /** Base delay for exponential backoff (ms). Default 1000 → 1s, 2s, 4s. */
   retryBaseMs?: number
@@ -43,7 +49,7 @@ export function useSSEStream<TEvent = unknown>(
   const maxRetries = options.maxRetries ?? 3
   const retryBaseMs = options.retryBaseMs ?? 1000
 
-  function emitEvent(eventBlock: string) {
+  function emitEvent(eventBlock: string): void {
     const dataLines: string[] = []
     for (const rawLine of eventBlock.split('\n')) {
       const line = rawLine.replace(/\r$/, '')
@@ -64,11 +70,11 @@ export function useSSEStream<TEvent = unknown>(
     }
   }
 
-  async function consume(
+  async function attemptConnect(
     url: string,
     init: { body?: unknown; headers?: Record<string, string> } | undefined,
     retryCount: number,
-  ): Promise<void> {
+  ): Promise<{ stage: 'connected'; response: Response } | { stage: 'failed' } | { stage: 'aborted' }> {
     abortController = new AbortController()
     status.value = retryCount === 0 ? 'connecting' : 'reconnecting'
 
@@ -85,22 +91,38 @@ export function useSSEStream<TEvent = unknown>(
         signal: abortController.signal,
       })
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return
-      return scheduleRetry(url, init, retryCount, err as Error)
+      if ((err as Error).name === 'AbortError') return { stage: 'aborted' }
+      if (retryCount < maxRetries) {
+        const delay = retryBaseMs * 2 ** retryCount
+        await sleep(delay)
+        return attemptConnect(url, init, retryCount + 1)
+      }
+      status.value = 'error'
+      options.onError?.(err as Error)
+      return { stage: 'failed' }
     }
 
-    if (!response.ok || !response.body) {
+    if (!response.ok) {
       const body = await response.text().catch(() => '')
       const message =
         `SSE request failed: ${response.status} ${response.statusText}` +
         (body ? ` — ${body.slice(0, 200)}` : '')
       status.value = 'error'
       options.onError?.(new Error(message))
-      return
+      return { stage: 'failed' }
+    }
+    if (!response.body) {
+      status.value = 'error'
+      options.onError?.(new Error('SSE response had no body.'))
+      return { stage: 'failed' }
     }
 
+    return { stage: 'connected', response }
+  }
+
+  async function consume(response: Response): Promise<void> {
     status.value = 'streaming'
-    const reader = response.body.getReader()
+    const reader = response.body!.getReader()
     const decoder = new TextDecoder('utf-8')
     let buffer = ''
 
@@ -122,32 +144,19 @@ export function useSSEStream<TEvent = unknown>(
       options.onDone?.()
     } catch (err) {
       if ((err as Error).name === 'AbortError') return
-      return scheduleRetry(url, init, retryCount, err as Error)
-    }
-  }
-
-  async function scheduleRetry(
-    url: string,
-    init: { body?: unknown; headers?: Record<string, string> } | undefined,
-    retryCount: number,
-    err: Error,
-  ): Promise<void> {
-    if (retryCount >= maxRetries) {
       status.value = 'error'
-      options.onError?.(err)
-      return
+      options.onError?.(err as Error)
     }
-    const delay = retryBaseMs * 2 ** retryCount
-    status.value = 'reconnecting'
-    await new Promise((r) => setTimeout(r, delay))
-    return consume(url, init, retryCount + 1)
   }
 
   async function start(
     url: string,
     init?: { body?: unknown; headers?: Record<string, string> },
   ): Promise<void> {
-    return consume(url, init, 0)
+    const result = await attemptConnect(url, init, 0)
+    if (result.stage === 'connected') {
+      await consume(result.response)
+    }
   }
 
   function abort(): void {
@@ -159,4 +168,8 @@ export function useSSEStream<TEvent = unknown>(
   }
 
   return { status, start, abort }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((r) => setTimeout(r, ms))
 }

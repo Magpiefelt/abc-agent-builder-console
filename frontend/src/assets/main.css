@@ -33,3 +33,86 @@ body {
   display: flex;
   flex-direction: column;
 }
+
+/* Minimal markdown rendering styles — Tailwind v4 doesn't ship the
+   typography plugin by default. Scoped to .prose so it only applies where
+   we explicitly render sanitized HTML from `marked + DOMPurify`. */
+.prose {
+  font-size: 0.9rem;
+  color: var(--goa-color-text);
+}
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4 {
+  font-weight: 600;
+  color: var(--goa-color-primary-dark);
+  margin-top: 0.75rem;
+  margin-bottom: 0.35rem;
+  line-height: 1.3;
+}
+.prose h1 { font-size: 1.25rem; }
+.prose h2 { font-size: 1.1rem; }
+.prose h3 { font-size: 1rem; }
+.prose h4 { font-size: 0.95rem; }
+.prose p { margin: 0.4rem 0; }
+.prose ul,
+.prose ol { margin: 0.4rem 0; padding-left: 1.25rem; }
+.prose li { margin: 0.15rem 0; }
+.prose ul { list-style: disc; }
+.prose ol { list-style: decimal; }
+.prose code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.85em;
+  background-color: var(--goa-color-background);
+  padding: 0.05em 0.3em;
+  border-radius: 3px;
+}
+.prose pre {
+  background-color: var(--goa-color-background);
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  overflow-x: auto;
+  font-size: 0.85em;
+}
+.prose pre code { background: transparent; padding: 0; }
+.prose blockquote {
+  border-left: 3px solid var(--goa-color-primary-light);
+  padding-left: 0.75rem;
+  color: var(--goa-color-text-secondary);
+  margin: 0.5rem 0;
+}
+.prose a {
+  color: var(--goa-color-primary);
+  text-decoration: underline;
+}
+.prose hr {
+  border: none;
+  border-top: 1px solid var(--goa-color-border);
+  margin: 0.8rem 0;
+}
+.prose table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0.5rem 0;
+}
+.prose th,
+.prose td {
+  border: 1px solid var(--goa-color-border);
+  padding: 0.35rem 0.5rem;
+  text-align: left;
+}
+.prose th {
+  background-color: var(--goa-color-background);
+  font-weight: 600;
+}
+
+/* Vue Flow minimap default background is too dark for Alberta palette. */
+.vue-flow__minimap {
+  background-color: var(--goa-color-surface);
+  border: 1px solid var(--goa-color-border);
+  border-radius: 4px;
+}
+.vue-flow__minimap-mask {
+  fill: rgba(0, 112, 196, 0.08);
+}

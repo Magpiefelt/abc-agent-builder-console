@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref, nextTick } from 'vue'
+import { onMounted, ref } from 'vue'
 import type { PromptSectionOverride } from '@/stores/agentSession'
+import { useFocusTrap } from '@/composables/useFocusTrap'
 
 interface PromptSection {
   id: string
@@ -24,18 +25,10 @@ const baseSections = ref<Record<string, PromptSection>>({})
 const loading = ref(false)
 const error = ref<string | null>(null)
 const dialogRef = ref<HTMLDivElement | null>(null)
-let previouslyFocused: HTMLElement | null = null
 
-function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape') {
-    event.preventDefault()
-    emit('close')
-  }
-}
+useFocusTrap(dialogRef, { onEscape: () => emit('close') })
 
 onMounted(async () => {
-  previouslyFocused = document.activeElement as HTMLElement | null
-  document.addEventListener('keydown', onKeydown)
   loading.value = true
   try {
     const res = await fetch('/api/agent/prompt-template')
@@ -53,13 +46,6 @@ onMounted(async () => {
   } finally {
     loading.value = false
   }
-  await nextTick()
-  dialogRef.value?.focus()
-})
-
-onBeforeUnmount(() => {
-  document.removeEventListener('keydown', onKeydown)
-  previouslyFocused?.focus()
 })
 
 function toggle(id: string): void {

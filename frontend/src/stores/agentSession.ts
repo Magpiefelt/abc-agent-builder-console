@@ -7,12 +7,13 @@
  * /api/agent/sessions/:id/start into one mutation per event type.
  *
  * The orchestrator's blackboard_update / scratchpad_update / attributes_update
- * events carry counts only — full payloads are fetched via GET /sessions/:id
- * to keep the SSE contract narrow.
+ * events carry counts only — full payloads are fetched via a debounced GET
+ * /sessions/:id so a burst of memory events in one iteration triggers a
+ * single reconcile instead of three parallel requests.
  */
 
 import { defineStore } from 'pinia'
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useSSEStream } from '@/composables/useSSEStream'
 import { useToast } from '@/composables/useToast'
 
@@ -86,6 +87,23 @@ interface SSEEvent {
   [k: string]: unknown
 }
 
+const MAX_ERRORS_RETAINED = 20
+const MEMORY_REFRESH_DEBOUNCE_MS = 150
+
+const VALID_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  'idle',
+  'creating',
+  'running',
+  'paused',
+  'completed',
+  'error',
+  'needs_assistance',
+])
+
+function isValidStatus(s: string): s is SessionStatus {
+  return VALID_STATUSES.has(s as SessionStatus)
+}
+
 export const useAgentSessionStore = defineStore('agentSession', () => {
   const toast = useToast()
 
@@ -111,9 +129,19 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   const isRunning = computed(() => status.value === 'running')
   const canStop = computed(() => status.value === 'running')
   const canContinue = computed(
-    () => status.value === 'paused' || status.value === 'completed' || status.value === 'needs_assistance',
+    () =>
+      status.value === 'paused' ||
+      status.value === 'completed' ||
+      status.value === 'needs_assistance',
   )
   const canInterject = computed(() => status.value === 'running')
+
+  // Lookup index so per-event mutations are O(1) instead of O(n).
+  const iterationIndex = new Map<number, IterationRecord>()
+  let activeStream: ReturnType<typeof useSSEStream<SSEEvent>> | null = null
+  let stopStatusWatcher: (() => void) | null = null
+  let memoryRefreshTimer: ReturnType<typeof setTimeout> | null = null
+  let memoryRefreshInFlight = false
 
   function reset(): void {
     status.value = 'idle'
@@ -121,6 +149,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     sessionMeta.value = null
     currentIteration.value = 0
     iterations.value = []
+    iterationIndex.clear()
     blackboard.value = []
     scratchpad.value = ''
     attributes.value = {}
@@ -129,30 +158,51 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     errors.value = []
     finalReport.value = null
     streamStatus.value = 'idle'
+    stopStatusWatcher?.()
+    stopStatusWatcher = null
+    activeStream?.abort()
+    activeStream = null
+    if (memoryRefreshTimer) {
+      clearTimeout(memoryRefreshTimer)
+      memoryRefreshTimer = null
+    }
+  }
+
+  function pushError(message: string): void {
+    const next = [...errors.value, message]
+    errors.value =
+      next.length > MAX_ERRORS_RETAINED ? next.slice(next.length - MAX_ERRORS_RETAINED) : next
   }
 
   function ensureIteration(n: number): IterationRecord {
-    let rec = iterations.value.find((i) => i.iteration === n)
+    let rec = iterationIndex.get(n)
     if (!rec) {
-      rec = {
-        iteration: n,
-        status: 'running',
-        toolCalls: [],
-        toolResults: [],
-      }
+      rec = { iteration: n, status: 'running', toolCalls: [], toolResults: [] }
+      iterationIndex.set(n, rec)
       iterations.value = [...iterations.value, rec]
     }
     return rec
   }
 
-  function replaceIteration(n: number, patch: Partial<IterationRecord>): void {
-    iterations.value = iterations.value.map((i) =>
-      i.iteration === n ? { ...i, ...patch } : i,
-    )
+  function patchIteration(n: number, patch: Partial<IterationRecord>): void {
+    const rec = iterationIndex.get(n)
+    if (!rec) return
+    Object.assign(rec, patch)
+    // Replace the array reference so reactive consumers re-render.
+    iterations.value = [...iterations.value]
+  }
+
+  function scheduleMemoryRefresh(): void {
+    if (memoryRefreshTimer) clearTimeout(memoryRefreshTimer)
+    memoryRefreshTimer = setTimeout(() => {
+      memoryRefreshTimer = null
+      void refreshSessionMemory()
+    }, MEMORY_REFRESH_DEBOUNCE_MS)
   }
 
   async function refreshSessionMemory(): Promise<void> {
-    if (!sessionId.value) return
+    if (!sessionId.value || memoryRefreshInFlight) return
+    memoryRefreshInFlight = true
     try {
       const res = await fetch(`/api/agent/sessions/${sessionId.value}`)
       if (!res.ok) return
@@ -161,6 +211,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         scratchpad?: string
         attributes?: Record<string, unknown>
         finalReport?: unknown
+        status?: SessionStatus
       }
       if (Array.isArray(data.blackboard)) blackboard.value = data.blackboard
       if (typeof data.scratchpad === 'string') scratchpad.value = data.scratchpad
@@ -171,11 +222,30 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         finalReport.value = data.finalReport
       }
     } catch {
-      // transient — next event will trigger another refresh
+      // transient — next event will retrigger a refresh
+    } finally {
+      memoryRefreshInFlight = false
+    }
+  }
+
+  /** After a transport-level stream error, reconcile our local status to whatever the backend says. */
+  async function reconcileAfterStreamError(): Promise<void> {
+    if (!sessionId.value) return
+    try {
+      const res = await fetch(`/api/agent/sessions/${sessionId.value}`)
+      if (!res.ok) return
+      const data = (await res.json()) as { status?: SessionStatus; isRunning?: boolean }
+      if (data.status) status.value = data.status
+    } catch {
+      // Ignore — UI keeps its current status until the user acts.
     }
   }
 
   function handleEvent(event: SSEEvent): void {
+    // After reset() the active stream is aborted but in-flight events may
+    // still land before the AbortError propagates. Drop them so they don't
+    // dirty the cleared state.
+    if (!sessionId.value) return
     switch (event.type) {
       case 'session_start': {
         status.value = 'running'
@@ -193,7 +263,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       case 'llm_response': {
         const n = Number(event.iteration) || currentIteration.value
         ensureIteration(n)
-        replaceIteration(n, {
+        patchIteration(n, {
           thinking: typeof event.thinking === 'string' ? event.thinking : undefined,
           parsedStatus: typeof event.status === 'string' ? event.status : undefined,
           userMessage: (event.userMessage as string | null | undefined) ?? null,
@@ -206,7 +276,8 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         const n = Number(event.iteration) || currentIteration.value
         const calls = (event.calls as Array<{ tool: string }>) ?? []
         const rec = ensureIteration(n)
-        replaceIteration(n, { toolCalls: [...rec.toolCalls, ...calls] })
+        rec.toolCalls = [...rec.toolCalls, ...calls]
+        patchIteration(n, {})
         break
       }
       case 'tool_result': {
@@ -216,19 +287,15 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         const durationMs = Number(event.durationMs) || 0
         const error = typeof event.error === 'string' ? event.error : undefined
         const rec = ensureIteration(n)
-        replaceIteration(n, {
-          toolResults: [...rec.toolResults, { tool, success, durationMs, error }],
-        })
-        toolCallLog.value = [
-          ...toolCallLog.value,
-          { iteration: n, tool, success, durationMs, error },
-        ]
+        rec.toolResults = [...rec.toolResults, { tool, success, durationMs, error }]
+        patchIteration(n, {})
+        toolCallLog.value = [...toolCallLog.value, { iteration: n, tool, success, durationMs, error }]
         break
       }
       case 'blackboard_update':
       case 'scratchpad_update':
       case 'attributes_update': {
-        void refreshSessionMemory()
+        scheduleMemoryRefresh()
         break
       }
       case 'artifact_created': {
@@ -251,7 +318,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       }
       case 'iteration_complete': {
         const n = Number(event.iteration) || currentIteration.value
-        replaceIteration(n, {
+        patchIteration(n, {
           status: 'completed',
           durationMs: typeof event.durationMs === 'number' ? event.durationMs : undefined,
           tokensUsed: typeof event.tokensUsed === 'number' ? event.tokensUsed : undefined,
@@ -284,7 +351,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       }
       case 'llm_error': {
         const msg = typeof event.error === 'string' ? event.error : 'LLM error'
-        errors.value = [...errors.value, msg]
+        const iter = Number(event.iteration) || currentIteration.value
+        pushError(msg)
+        if (iterationIndex.has(iter)) patchIteration(iter, { status: 'error', error: msg })
         toast.push({ kind: 'error', message: `LLM error: ${msg}` })
         break
       }
@@ -301,18 +370,26 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         break
       }
       case 'session_complete': {
-        status.value = 'completed'
+        // Respect the backend's final word — it could be completed, paused
+        // (after stop), error, or needs_assistance.
+        const finalStatus =
+          typeof event.status === 'string' && isValidStatus(event.status)
+            ? (event.status as SessionStatus)
+            : 'completed'
+        status.value = finalStatus
         if (event.finalReport !== undefined && event.finalReport !== null) {
           finalReport.value = event.finalReport
-        } else {
-          void refreshSessionMemory()
         }
+        if (typeof event.error === 'string' && event.error) {
+          pushError(event.error)
+        }
+        scheduleMemoryRefresh()
         break
       }
       case 'error': {
         const msg = typeof event.error === 'string' ? event.error : 'Session error'
         status.value = 'error'
-        errors.value = [...errors.value, msg]
+        pushError(msg)
         toast.push({ kind: 'error', message: msg, ttlMs: 8000 })
         break
       }
@@ -322,7 +399,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     }
   }
 
-  let activeStream: ReturnType<typeof useSSEStream<SSEEvent>> | null = null
+  function attachStream(stream: ReturnType<typeof useSSEStream<SSEEvent>>): void {
+    stopStatusWatcher?.()
+    stopStatusWatcher = watch(
+      stream.status,
+      (v) => {
+        streamStatus.value = v
+      },
+      { immediate: true },
+    )
+  }
 
   async function createSession(payload: CreateSessionPayload): Promise<string> {
     reset()
@@ -342,7 +428,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       status.value = 'error'
       const body = (await res.json().catch(() => ({}))) as { error?: string }
       const msg = body.error || `Failed to create session (${res.status})`
-      errors.value = [...errors.value, msg]
+      pushError(msg)
       toast.push({ kind: 'error', message: msg })
       throw new Error(msg)
     }
@@ -356,70 +442,62 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     enabledTools?: string[]
   }): Promise<void> {
     if (!sessionId.value) throw new Error('No session to start')
+    activeStream?.abort()
     activeStream = useSSEStream<SSEEvent>({
       onEvent: handleEvent,
       onError: (err) => {
-        const msg = err.message || 'Stream error'
-        errors.value = [...errors.value, msg]
-        toast.push({ kind: 'error', message: msg })
-        if (status.value === 'running') status.value = 'error'
+        pushError(err.message || 'Stream error')
+        toast.push({ kind: 'error', message: err.message || 'Stream error' })
+        void reconcileAfterStreamError()
       },
       onDone: () => {
-        // Reconcile final memory in case last event raced ahead of the GET.
-        void refreshSessionMemory()
+        // Final reconcile in case the last memory event raced ahead of the GET.
+        scheduleMemoryRefresh()
       },
     })
+    attachStream(activeStream)
     void activeStream.start(`/api/agent/sessions/${sessionId.value}/start`, {
       body: {
         sectionOverrides: opts?.sectionOverrides,
         enabledTools: opts?.enabledTools,
       },
     })
-    // Track stream status (reactive ref) so UI can show "reconnecting" etc.
-    const s = activeStream.status
-    streamStatus.value = s.value
-    // Subscribe via watcher-like effect.
-    queueMicrotask(() => {
-      const sync = () => (streamStatus.value = s.value)
-      const interval = setInterval(sync, 250)
-      // Clear when stream resolves to a terminal state.
-      const stopWatch = () => {
-        if (s.value === 'done' || s.value === 'error' || s.value === 'idle') {
-          clearInterval(interval)
-        }
-      }
-      const stopInterval = setInterval(stopWatch, 500)
-      // Belt-and-braces cleanup after 10 minutes.
-      setTimeout(() => {
-        clearInterval(interval)
-        clearInterval(stopInterval)
-      }, 10 * 60 * 1000)
-    })
   }
 
   async function stop(): Promise<void> {
     if (!sessionId.value) return
-    activeStream?.abort()
-    const res = await fetch(`/api/agent/sessions/${sessionId.value}/stop`, { method: 'POST' })
-    if (res.ok) {
-      status.value = 'paused'
-    } else {
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      toast.push({ kind: 'error', message: body.error || 'Failed to stop session.' })
+    // We deliberately do NOT abort the stream or optimistically change
+    // status. The /stop endpoint just sets a flag; the orchestrator emits
+    // session_stopped + session_complete, and our event handlers settle on
+    // the authoritative final status. Aborting the stream early would race
+    // with the backend's session-lifecycle cleanup.
+    try {
+      const res = await fetch(`/api/agent/sessions/${sessionId.value}/stop`, { method: 'POST' })
+      if (!res.ok) {
+        const body = (await res.json().catch(() => ({}))) as { error?: string }
+        toast.push({ kind: 'error', message: body.error || 'Failed to stop session.' })
+        return
+      }
+      toast.push({ kind: 'info', message: 'Stop signal sent. Halting after this iteration.' })
+    } catch (err) {
+      toast.push({ kind: 'error', message: (err as Error).message || 'Failed to stop session.' })
     }
   }
 
   async function continueSession(prompt: string, additionalIterations?: number): Promise<void> {
     if (!sessionId.value) throw new Error('No session to continue')
     if (!prompt.trim()) return
+    activeStream?.abort()
     activeStream = useSSEStream<SSEEvent>({
       onEvent: handleEvent,
       onError: (err) => {
+        pushError(err.message || 'Stream error')
         toast.push({ kind: 'error', message: err.message || 'Stream error' })
-        if (status.value === 'running') status.value = 'error'
+        void reconcileAfterStreamError()
       },
-      onDone: () => void refreshSessionMemory(),
+      onDone: () => scheduleMemoryRefresh(),
     })
+    attachStream(activeStream)
     status.value = 'running'
     void activeStream.start(`/api/agent/sessions/${sessionId.value}/continue`, {
       body: { prompt, additionalIterations },

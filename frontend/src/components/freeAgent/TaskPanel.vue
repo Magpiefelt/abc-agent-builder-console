@@ -15,8 +15,36 @@ const customizerOpen = ref(false)
 const sectionOverrides = ref<Record<string, PromptSectionOverride>>({})
 
 const startDisabled = computed(
-  () => !prompt.value.trim() || (session.status !== 'idle' && session.status !== 'error' && session.status !== 'completed'),
+  () =>
+    !prompt.value.trim() ||
+    !selectedModelId.value ||
+    (session.status !== 'idle' &&
+      session.status !== 'error' &&
+      session.status !== 'completed'),
 )
+
+const startLabel = computed(() => {
+  if (session.status === 'creating') return 'Starting…'
+  if (session.status === 'running') return 'Running…'
+  if (session.status === 'completed' || session.status === 'error') return 'Start New Session'
+  return 'Start Agent'
+})
+
+const selectedModel = computed(() =>
+  modelsStore.models.find((m) => m.id === selectedModelId.value),
+)
+
+const classificationWarning = computed(() => {
+  const m = selectedModel.value
+  if (!m) return null
+  const order = ['unclassified', 'protected_a', 'protected_b']
+  const selectedRank = order.indexOf(classification.value)
+  const maxRank = order.indexOf(m.maxClassification)
+  if (selectedRank > maxRank) {
+    return `${m.name} only supports up to "${m.maxClassification.replace('_', ' ')}".`
+  }
+  return null
+})
 
 const overrideCount = computed(() => Object.keys(sectionOverrides.value).length)
 
@@ -30,12 +58,13 @@ onMounted(async () => {
 
 async function handleStart(): Promise<void> {
   if (startDisabled.value) return
+  if (classificationWarning.value) return
   try {
     await session.createSession({
       prompt: prompt.value.trim(),
       modelId: selectedModelId.value,
       classification: classification.value,
-      maxIterations: maxIterations.value,
+      maxIterations: Math.min(Math.max(maxIterations.value || 10, 1), 100),
     })
     await session.startStream({
       sectionOverrides: overrideCount.value > 0 ? sectionOverrides.value : undefined,
@@ -85,11 +114,21 @@ function handleSaveOverrides(overrides: Record<string, PromptSectionOverride>): 
         class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
       >
         <option v-if="modelsStore.loading" disabled value="">Loading models…</option>
+        <option v-else-if="modelsStore.models.length === 0" disabled value="">No models available</option>
         <option v-for="m in modelsStore.models" :key="m.id" :value="m.id">
           {{ m.name }}
         </option>
       </select>
-      <p v-if="modelsStore.error" class="text-xs text-[var(--goa-color-error)]">{{ modelsStore.error }}</p>
+      <div v-if="modelsStore.error" class="flex items-center gap-2 text-xs text-[var(--goa-color-error)]">
+        <span>{{ modelsStore.error }}</span>
+        <button
+          type="button"
+          @click="modelsStore.ensureLoaded()"
+          class="underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded"
+        >
+          Retry
+        </button>
+      </div>
     </div>
 
     <div class="flex flex-col gap-1">
@@ -133,13 +172,21 @@ function handleSaveOverrides(overrides: Record<string, PromptSectionOverride>): 
       </span>
     </button>
 
+    <p
+      v-if="classificationWarning"
+      class="text-xs text-[var(--goa-color-warning)] bg-yellow-50 border border-yellow-200 rounded p-2"
+      role="alert"
+    >
+      {{ classificationWarning }}
+    </p>
+
     <button
       type="button"
       @click="handleStart"
-      :disabled="startDisabled"
+      :disabled="startDisabled || !!classificationWarning"
       class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
     >
-      {{ session.status === 'creating' ? 'Starting…' : session.status === 'running' ? 'Running…' : 'Start Agent' }}
+      {{ startLabel }}
     </button>
 
     <button
