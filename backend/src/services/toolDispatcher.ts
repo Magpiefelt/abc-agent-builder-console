@@ -50,6 +50,12 @@ export interface ToolContext {
   ministryCode: string | null;
   iteration: number;
   memory: SessionMemory;
+  /**
+   * Optional sink for orchestrator-level SSE events emitted by tools
+   * (e.g. artifact_created). Kept optional so tools never depend on a
+   * Response object — the orchestrator wires this when streaming.
+   */
+  onEvent?: (event: { type: string; [key: string]: unknown }) => void;
 }
 
 // ============================================================================
@@ -424,21 +430,49 @@ async function storeArtifact(
   context: ToolContext,
   artifact: { title: string; type: string; content: string; mimeType?: string; description?: string }
 ): Promise<void> {
-  await query(
-    `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
-    [
-      context.sessionId,
-      context.userId,
-      artifact.type,
-      artifact.title,
-      artifact.content,
-      artifact.description || null,
-      artifact.mimeType || null,
-      Buffer.byteLength(artifact.content, "utf-8"),
-      context.iteration,
-    ]
-  );
+  const sizeBytes = Buffer.byteLength(artifact.content, "utf-8");
+  let id: string | null = null;
+  try {
+    const result = await query<{ id: string }>(
+      `INSERT INTO artifacts (session_id, user_id, artifact_type, title, content, description, mime_type, size_bytes, iteration)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+       RETURNING id`,
+      [
+        context.sessionId,
+        context.userId,
+        artifact.type,
+        artifact.title,
+        artifact.content,
+        artifact.description || null,
+        artifact.mimeType || null,
+        sizeBytes,
+        context.iteration,
+      ]
+    );
+    id = result.rows[0]?.id ?? null;
+  } catch (err) {
+    // Persistence failed (e.g. dev mode without a DB). The artifact is still
+    // surfaced to the live UI via the SSE event below; downstream consumers
+    // that need the row will retry/refresh on next session load.
+    logger.warn("Failed to persist artifact, emitting transient SSE only", {
+      sessionId: context.sessionId,
+      title: artifact.title,
+      error: (err as Error).message,
+    });
+  }
+
+  context.onEvent?.({
+    type: "artifact_created",
+    iteration: context.iteration,
+    artifact: {
+      id,
+      title: artifact.title,
+      type: artifact.type,
+      mimeType: artifact.mimeType ?? null,
+      description: artifact.description ?? null,
+      size: sizeBytes,
+    },
+  });
 }
 
 // ============================================================================

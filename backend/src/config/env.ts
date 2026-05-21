@@ -54,6 +54,8 @@ const envSchema = z.object({
   ANTHROPIC_API_KEY: z.string().optional(),
   /** Google AI API key (for Gemini via Google AI Studio) */
   GOOGLE_AI_API_KEY: z.string().optional(),
+  /** Dev-only: when "1", short-circuit LLM calls with a deterministic mock so the UI can be driven without an API key. */
+  LLM_MOCK: z.enum(["0", "1"]).default("0"),
 
   // ============================================================================
   // TOOL API KEYS

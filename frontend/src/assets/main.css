@@ -1,4 +1,6 @@
 @import "tailwindcss";
+@import "@vue-flow/core/dist/style.css";
+@import "@vue-flow/core/dist/theme-default.css";
 
 /* Alberta Design System - Base Tokens */
 :root {

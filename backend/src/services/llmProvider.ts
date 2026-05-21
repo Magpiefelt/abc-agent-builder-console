@@ -757,6 +757,129 @@ class GoogleGeminiProvider implements LLMProvider {
 }
 
 // ============================================================================
+// MOCK PROVIDER (dev only, gated on env.LLM_MOCK === "1")
+// ============================================================================
+
+/**
+ * Deterministic in-memory provider that lets the Free Agent UI be driven
+ * end-to-end without a real API key. Returns a small scripted sequence:
+ * scout → research → finalize.
+ *
+ * The orchestrator calls callLLM once per iteration. We track an internal
+ * counter keyed by an opaque "session" marker we extract from the prompt
+ * (the user's task is included verbatim, so we hash it).
+ */
+class MockProvider implements LLMProvider {
+  name = "mock";
+  private counters: Map<string, number> = new Map();
+
+  private keyFor(request: LLMRequest): string {
+    const userMsg = request.messages.find((m) => m.role === "user")?.content ?? "";
+    let hash = 0;
+    for (let i = 0; i < userMsg.length; i++) {
+      hash = ((hash << 5) - hash + userMsg.charCodeAt(i)) | 0;
+    }
+    return String(hash);
+  }
+
+  private scriptFor(step: number): { content: string; toolCalls: LLMToolCall[] } {
+    if (step === 0) {
+      return {
+        content: JSON.stringify({
+          thinking: "I'll scout the problem space and capture initial findings on the blackboard before planning concrete actions.",
+          tool_calls: [],
+          blackboard_updates: [
+            { category: "findings", title: "Initial scan", content: "Task understood. Identifying constraints and likely sub-goals." },
+            { category: "plan", title: "Approach", content: "Three-phase plan: scout, research, synthesize. Will produce a final report." },
+          ],
+          scratchpad: "## Working notes\n\n- Reading task description\n- Planning approach\n- Will use memory tools to track progress",
+          attribute_updates: { phase: "scouting", confidence: 0.4 },
+          status: "running",
+          user_message: "Scouting the problem and laying out a plan.",
+        }),
+        toolCalls: [],
+      };
+    }
+    if (step === 1) {
+      return {
+        content: JSON.stringify({
+          thinking: "Now collecting reference material and storing a representative artifact so the user has something to inspect.",
+          tool_calls: [
+            {
+              tool: "create_artifact",
+              params: {
+                title: "Research summary",
+                type: "text",
+                content: "# Research summary\n\nThis is a mock artifact produced by the dev-mode provider. In production this would be real research output.",
+                description: "Synthesized findings from the research phase.",
+              },
+            },
+          ],
+          blackboard_updates: [
+            { category: "research", title: "Sources reviewed", content: "Reviewed three illustrative sources (mock) and extracted three key points." },
+          ],
+          scratchpad: "## Working notes\n\n- Scout complete\n- Research phase underway\n- Artifact drafted",
+          attribute_updates: { phase: "research", confidence: 0.7 },
+          status: "running",
+          user_message: "Gathering research and producing a draft artifact.",
+        }),
+        toolCalls: [],
+      };
+    }
+    return {
+      content: JSON.stringify({
+        thinking: "All findings recorded. Producing the final synthesized report and marking the session complete.",
+        tool_calls: [],
+        blackboard_updates: [
+          { category: "synthesis", title: "Final analysis", content: "Synthesized findings into a recommendation. Ready to report." },
+        ],
+        scratchpad: "## Working notes\n\n- Scout complete\n- Research complete\n- Synthesis complete",
+        attribute_updates: { phase: "complete", confidence: 0.92 },
+        status: "completed",
+        user_message: "Session complete. Final report attached.",
+        final_report: {
+          summary: "Mock session completed successfully across three phases.",
+          phases: ["scouting", "research", "synthesis"],
+          recommendation: "Proceed with the proposed plan.",
+        },
+      }),
+      toolCalls: [],
+    };
+  }
+
+  async call(request: LLMRequest, modelName: string): Promise<LLMResponse> {
+    const key = this.keyFor(request);
+    const step = this.counters.get(key) ?? 0;
+    this.counters.set(key, step + 1);
+
+    const { content, toolCalls } = this.scriptFor(step);
+
+    // Tiny pause so the SSE stream actually streams in the UI instead of arriving in one tick.
+    await new Promise((r) => setTimeout(r, 350));
+
+    const promptTokens = Math.max(1, Math.ceil((request.systemPrompt.length + request.messages.reduce((n, m) => n + m.content.length, 0)) / 4));
+    const completionTokens = Math.max(1, Math.ceil(content.length / 4));
+
+    return {
+      content,
+      toolCalls,
+      finishReason: "stop",
+      usage: { promptTokens, completionTokens, totalTokens: promptTokens + completionTokens },
+      model: modelName,
+      provider: this.name,
+      latencyMs: 350,
+    };
+  }
+
+  async stream(request: LLMRequest, modelName: string, onEvent: LLMStreamCallback): Promise<LLMResponse> {
+    const response = await this.call(request, modelName);
+    onEvent({ type: "text_delta", content: response.content });
+    onEvent({ type: "done" });
+    return response;
+  }
+}
+
+// ============================================================================
 // PROVIDER FACTORY
 // ============================================================================
 
@@ -767,6 +890,11 @@ const providers: Map<string, LLMProvider> = new Map();
  * Providers are singletons cached by provider name.
  */
 function getProviderInstance(model: ModelRegistryEntry): LLMProvider {
+  if (env.LLM_MOCK === "1") {
+    if (!providers.has("mock")) providers.set("mock", new MockProvider());
+    return providers.get("mock")!;
+  }
+
   const key = model.provider;
 
   if (!providers.has(key)) {
@@ -916,6 +1044,7 @@ export async function validateModelClassification(
  * Check if the LLM provider is configured and ready.
  */
 export function isProviderConfigured(): boolean {
+  if (env.LLM_MOCK === "1") return true;
   return !!(env.ANTHROPIC_API_KEY || env.VERTEX_AI_API_KEY);
 }
 

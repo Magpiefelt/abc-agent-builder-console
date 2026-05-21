@@ -1,106 +1,166 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed } from 'vue'
+import { useAgentSessionStore } from '@/stores/agentSession'
+import TaskPanel from '@/components/freeAgent/TaskPanel.vue'
+import ControlBar from '@/components/freeAgent/ControlBar.vue'
+import IterationTimeline from '@/components/freeAgent/IterationTimeline.vue'
+import BlackboardViewer from '@/components/freeAgent/BlackboardViewer.vue'
+import ScratchpadViewer from '@/components/freeAgent/ScratchpadViewer.vue'
+import ArtifactsPanel from '@/components/freeAgent/ArtifactsPanel.vue'
+import FinalReportPanel from '@/components/freeAgent/FinalReportPanel.vue'
+import AgentCanvas from '@/components/freeAgent/AgentCanvas.vue'
 
-const prompt = ref('')
-const isRunning = ref(false)
-const selectedModel = ref('claude-sonnet-4.5')
+type MemoryTab = 'blackboard' | 'scratchpad' | 'artifacts'
 
-const models = [
-  { id: 'claude-sonnet-4.5', name: 'Claude Sonnet 4.5', provider: 'Vertex AI' },
-  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash', provider: 'Google' },
-]
+const session = useAgentSessionStore()
+const memoryTab = ref<MemoryTab>('blackboard')
+const taskOpenMobile = ref(true)
+const sheetOpenMobile = ref(false)
 
-async function startAgent() {
-  if (!prompt.value.trim()) return
-  isRunning.value = true
+const showFinalReport = computed(
+  () => session.status === 'completed' && session.finalReport !== null,
+)
 
-  try {
-    const response = await fetch('/api/agent/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        prompt: prompt.value,
-        modelId: selectedModel.value,
-      }),
-    })
-    const session = await response.json()
-    console.log('Session created:', session)
-
-    // TODO: Start SSE stream for execution updates
-  } catch (err) {
-    console.error('Failed to start agent:', err)
-  } finally {
-    isRunning.value = false
-  }
+function selectTab(tab: MemoryTab): void {
+  memoryTab.value = tab
+  sheetOpenMobile.value = true
 }
 </script>
 
 <template>
-  <div class="h-full flex">
-    <!-- Left Panel: Task Configuration -->
-    <aside class="w-80 bg-[var(--goa-color-surface)] border-r border-[var(--goa-color-border)] p-4 flex flex-col gap-4 overflow-y-auto">
-      <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">Task Configuration</h2>
-
-      <!-- Prompt Input -->
-      <div class="flex flex-col gap-1">
-        <label for="prompt" class="text-sm font-medium">Task Description</label>
-        <textarea
-          id="prompt"
-          v-model="prompt"
-          placeholder="Describe what you want the agent to do..."
-          class="w-full h-32 p-3 border border-[var(--goa-color-border)] rounded-md resize-none focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)] text-sm"
-        />
-      </div>
-
-      <!-- Model Selection -->
-      <div class="flex flex-col gap-1">
-        <label for="model" class="text-sm font-medium">Model</label>
-        <select
-          id="model"
-          v-model="selectedModel"
-          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-[var(--goa-color-primary)]"
-        >
-          <option v-for="model in models" :key="model.id" :value="model.id">
-            {{ model.name }} ({{ model.provider }})
-          </option>
-        </select>
-      </div>
-
-      <!-- Start Button -->
-      <button
-        @click="startAgent"
-        :disabled="!prompt.trim() || isRunning"
-        class="w-full py-2.5 px-4 bg-[var(--goa-color-primary)] text-white font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-      >
-        {{ isRunning ? 'Running...' : 'Start Agent' }}
-      </button>
+  <div class="h-full flex flex-col md:flex-row min-h-0">
+    <!-- Desktop: left panel -->
+    <aside class="hidden md:flex md:w-80 md:shrink-0 h-full">
+      <TaskPanel class="w-full" />
     </aside>
 
-    <!-- Center: Execution Canvas (placeholder) -->
-    <div class="flex-1 flex items-center justify-center bg-gray-50">
-      <div class="text-center text-gray-400">
-        <div class="text-5xl mb-4">🤖</div>
-        <h3 class="text-lg font-medium">No Active Session</h3>
-        <p class="text-sm mt-1">Enter a task and click "Start Agent" to begin.</p>
+    <!-- Mobile: collapsible task panel -->
+    <div class="md:hidden border-b border-[var(--goa-color-border)] bg-[var(--goa-color-surface)]">
+      <button
+        type="button"
+        @click="taskOpenMobile = !taskOpenMobile"
+        :aria-expanded="taskOpenMobile"
+        class="w-full px-4 py-3 flex items-center justify-between text-left text-sm font-semibold text-[var(--goa-color-primary-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+      >
+        <span>Task Configuration</span>
+        <span aria-hidden="true">{{ taskOpenMobile ? '▾' : '▸' }}</span>
+      </button>
+      <div v-if="taskOpenMobile" class="max-h-[60vh] overflow-y-auto">
+        <TaskPanel />
       </div>
     </div>
 
-    <!-- Right Panel: Memory Viewer -->
-    <aside class="w-80 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] p-4 flex flex-col overflow-y-auto">
-      <div class="flex gap-2 mb-4">
-        <button class="px-3 py-1 text-sm font-medium bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)] rounded">
-          Blackboard
-        </button>
-        <button class="px-3 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 rounded">
-          Artifacts
-        </button>
-        <button class="px-3 py-1 text-sm font-medium text-gray-500 hover:bg-gray-100 rounded">
-          Raw
+    <!-- Center column -->
+    <section class="flex-1 flex flex-col min-w-0 min-h-0">
+      <ControlBar />
+      <div class="flex-1 flex flex-col min-h-0 p-3 gap-3 overflow-hidden">
+        <FinalReportPanel v-if="showFinalReport" class="flex-1 min-h-[180px]" />
+        <template v-else>
+          <div class="flex-1 min-h-[200px]">
+            <AgentCanvas />
+          </div>
+          <div class="flex-1 min-h-[180px]">
+            <IterationTimeline />
+          </div>
+        </template>
+      </div>
+    </section>
+
+    <!-- Desktop: right memory column -->
+    <aside class="hidden md:flex md:flex-col md:w-80 md:shrink-0 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] h-full">
+      <div class="flex gap-1 p-2 border-b border-[var(--goa-color-border)]" role="tablist">
+        <button
+          v-for="tab in (['blackboard', 'scratchpad', 'artifacts'] as MemoryTab[])"
+          :key="tab"
+          type="button"
+          role="tab"
+          :aria-selected="memoryTab === tab"
+          @click="memoryTab = tab"
+          :class="[
+            'px-3 py-1.5 text-sm font-medium rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]',
+            memoryTab === tab
+              ? 'bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]'
+              : 'text-[var(--goa-color-text-secondary)] hover:bg-[var(--goa-color-background)]',
+          ]"
+        >
+          {{ tab === 'blackboard' ? 'Blackboard' : tab === 'scratchpad' ? 'Scratchpad' : 'Artifacts' }}
+          <span
+            v-if="tab === 'blackboard' && session.blackboard.length > 0"
+            class="ml-1 text-xs"
+          >({{ session.blackboard.length }})</span>
+          <span
+            v-else-if="tab === 'artifacts' && session.artifacts.length > 0"
+            class="ml-1 text-xs"
+          >({{ session.artifacts.length }})</span>
         </button>
       </div>
-      <div class="flex-1 flex items-center justify-center text-gray-400 text-sm">
-        No blackboard entries yet
+      <div class="flex-1 min-h-0 p-3 overflow-hidden">
+        <BlackboardViewer v-if="memoryTab === 'blackboard'" />
+        <ScratchpadViewer v-else-if="memoryTab === 'scratchpad'" />
+        <ArtifactsPanel v-else />
       </div>
     </aside>
+
+    <!-- Mobile bottom-sheet -->
+    <div class="md:hidden">
+      <div
+        v-if="sheetOpenMobile"
+        class="fixed inset-x-0 bottom-12 z-30 bg-[var(--goa-color-surface)] border-t border-[var(--goa-color-border)] shadow-lg max-h-[60vh] flex flex-col"
+        role="region"
+        aria-label="Memory viewer"
+      >
+        <header class="flex items-center justify-between px-3 py-2 border-b border-[var(--goa-color-border)]">
+          <span class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">
+            {{ memoryTab === 'blackboard' ? 'Blackboard' : memoryTab === 'scratchpad' ? 'Scratchpad' : 'Artifacts' }}
+          </span>
+          <button
+            type="button"
+            @click="sheetOpenMobile = false"
+            aria-label="Close memory sheet"
+            class="text-[var(--goa-color-text-secondary)] hover:text-[var(--goa-color-text)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded p-1"
+          >
+            <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+              <path d="M1 1l12 12M13 1L1 13" stroke="currentColor" stroke-width="2" fill="none" />
+            </svg>
+          </button>
+        </header>
+        <div class="flex-1 min-h-0 p-3 overflow-y-auto">
+          <BlackboardViewer v-if="memoryTab === 'blackboard'" />
+          <ScratchpadViewer v-else-if="memoryTab === 'scratchpad'" />
+          <ArtifactsPanel v-else />
+        </div>
+      </div>
+
+      <nav
+        class="fixed inset-x-0 bottom-0 z-30 h-12 bg-[var(--goa-color-surface)] border-t border-[var(--goa-color-border)] flex"
+        aria-label="Memory tabs"
+      >
+        <button
+          v-for="tab in (['blackboard', 'scratchpad', 'artifacts'] as MemoryTab[])"
+          :key="tab"
+          type="button"
+          @click="selectTab(tab)"
+          :aria-pressed="sheetOpenMobile && memoryTab === tab"
+          :class="[
+            'flex-1 text-xs font-medium flex flex-col items-center justify-center gap-0.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--goa-color-primary)]',
+            sheetOpenMobile && memoryTab === tab
+              ? 'text-[var(--goa-color-primary-dark)] bg-[var(--goa-color-primary-light)]'
+              : 'text-[var(--goa-color-text-secondary)]',
+          ]"
+        >
+          <span>
+            {{ tab === 'blackboard' ? 'Blackboard' : tab === 'scratchpad' ? 'Scratchpad' : 'Artifacts' }}
+          </span>
+          <span
+            v-if="tab === 'blackboard' && session.blackboard.length > 0"
+            class="text-[10px]"
+          >{{ session.blackboard.length }}</span>
+          <span
+            v-else-if="tab === 'artifacts' && session.artifacts.length > 0"
+            class="text-[10px]"
+          >{{ session.artifacts.length }}</span>
+        </button>
+      </nav>
+    </div>
   </div>
 </template>
