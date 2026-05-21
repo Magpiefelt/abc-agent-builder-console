@@ -410,6 +410,74 @@ router.get("/sessions/:id/artifacts/:artifactId", async (req: Request, res: Resp
 });
 
 // ============================================================================
+// ITERATIONS (per-session replay history)
+// ============================================================================
+
+interface IterationRow {
+  iteration_number: number;
+  status: string;
+  user_prompt: string | null;
+  raw_llm_response: string | null;
+  parsed_response: unknown;
+  tool_calls: unknown;
+  tool_results: unknown;
+  blackboard_entry: unknown;
+  error: string | null;
+  tokens_used: number | null;
+  duration_ms: number | null;
+  created_at: Date;
+}
+
+/**
+ * GET /api/agent/sessions/:id/iterations
+ *
+ * Replay-friendly view of the persisted iteration log. Capped at 500 rows
+ * (more than enough — sessions are bounded to 200 iterations per Stream B).
+ * Stream B's IterationTimeline can backfill this on session load instead of
+ * relying on the SSE stream having been observed live.
+ */
+router.get("/sessions/:id/iterations", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const result = await query<IterationRow>(
+      `SELECT iteration_number, status, user_prompt, raw_llm_response,
+              parsed_response, tool_calls, tool_results, blackboard_entry,
+              error, tokens_used, duration_ms, created_at
+         FROM agent_iterations
+         WHERE session_id = $1
+         ORDER BY iteration_number ASC
+         LIMIT 500`,
+      [id],
+    );
+    res.json({
+      iterations: result.rows.map((r) => ({
+        iterationNumber: r.iteration_number,
+        status: r.status,
+        userPrompt: r.user_prompt,
+        rawResponse: r.raw_llm_response,
+        parsedResponse: r.parsed_response,
+        toolCalls: r.tool_calls,
+        toolResults: r.tool_results,
+        blackboardEntry: r.blackboard_entry,
+        error: r.error,
+        tokensUsed: r.tokens_used,
+        durationMs: r.duration_ms,
+        createdAt: r.created_at,
+      })),
+    });
+  } catch (err) {
+    logger.error("Failed to list session iterations", err as Error, { sessionId: id });
+    res.status(500).json({ error: "Failed to list iterations." });
+  }
+});
+
+// ============================================================================
 // PROMPT TEMPLATE
 // ============================================================================
 

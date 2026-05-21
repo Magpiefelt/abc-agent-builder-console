@@ -34,7 +34,13 @@ import type { PIIScanResult } from "../services/piiDetector.js";
 import { logAudit, AuditAction } from "../services/auditLogger.js";
 import { logger } from "../services/logger.js";
 import { isProviderConfigured } from "../services/llmProvider.js";
-import { runWorkflow, abortExecution, type CanvasData, type WorkflowRecord } from "../services/workflowExecutor.js";
+import {
+  runWorkflow,
+  abortExecution,
+  isExecutionRunning,
+  type CanvasData,
+  type WorkflowRecord,
+} from "../services/workflowExecutor.js";
 import { getCatalog } from "../services/functionRegistry.js";
 
 const router: Router = Router();
@@ -182,7 +188,7 @@ async function auditPIIOnSave(
 // ============================================================================
 
 router.post("/", async (req: Request, res: Response) => {
-  const { name, description, classification, canvasData } = req.body ?? {};
+  const { name, description, classification, canvasData, isTemplate } = req.body ?? {};
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     res.status(400).json({ error: "Workflow name is required." });
@@ -199,6 +205,10 @@ router.post("/", async (req: Request, res: Response) => {
     res.status(400).json({ error: "Invalid canvasData. Expected { nodes, edges, version: 1 }." });
     return;
   }
+  if (isTemplate !== undefined && typeof isTemplate !== "boolean") {
+    res.status(400).json({ error: "isTemplate must be a boolean." });
+    return;
+  }
 
   const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 };
 
@@ -209,8 +219,8 @@ router.post("/", async (req: Request, res: Response) => {
   try {
     const result = await transaction(async (client) => {
       const insertRes = await client.query<{ id: string }>(
-        `INSERT INTO workflows (user_id, ministry_code, name, description, classification, canvas_data, version)
-         VALUES ($1, $2, $3, $4, $5, $6, 1)
+        `INSERT INTO workflows (user_id, ministry_code, name, description, classification, canvas_data, version, is_template)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
          RETURNING id`,
         [
           req.user!.id,
@@ -219,6 +229,7 @@ router.post("/", async (req: Request, res: Response) => {
           description ?? null,
           resolvedClassification,
           JSON.stringify(canvas),
+          isTemplate === true,
         ]
       );
       const workflowId = insertRes.rows[0].id;
@@ -260,11 +271,20 @@ router.post("/", async (req: Request, res: Response) => {
 // ============================================================================
 
 router.get("/", async (req: Request, res: Response) => {
+  // ?templates=true   → only is_template = true
+  // ?templates=false  → only is_template = false (default behavior is "any")
+  // (omit)            → both
+  const templatesParam = typeof req.query.templates === "string" ? req.query.templates : undefined;
+  let templateClause = "";
+  if (templatesParam === "true") templateClause = " AND is_template = true";
+  else if (templatesParam === "false") templateClause = " AND is_template = false";
+
   try {
     const result = await query(
       `SELECT id, user_id, ministry_code, name, description, classification, is_template, version, created_at, updated_at
        FROM workflows
-       WHERE ($1::text IS NULL AND user_id = $2) OR ministry_code = $1
+       WHERE (($1::text IS NULL AND user_id = $2) OR ministry_code = $1)
+       ${templateClause}
        ORDER BY updated_at DESC
        LIMIT 500`,
       [req.user!.ministryCode, req.user!.id]
@@ -314,7 +334,7 @@ router.get("/:id", async (req: Request, res: Response) => {
 
 router.put("/:id", async (req: Request, res: Response) => {
   const workflowId = req.params.id as string;
-  const { name, description, classification, canvasData } = req.body ?? {};
+  const { name, description, classification, canvasData, isTemplate } = req.body ?? {};
 
   if (classification !== undefined && !isValidClassification(classification)) {
     res.status(400).json({ error: "Invalid classification." });
@@ -322,6 +342,10 @@ router.put("/:id", async (req: Request, res: Response) => {
   }
   if (canvasData !== undefined && !isValidCanvasData(canvasData)) {
     res.status(400).json({ error: "Invalid canvasData." });
+    return;
+  }
+  if (isTemplate !== undefined && typeof isTemplate !== "boolean") {
+    res.status(400).json({ error: "isTemplate must be a boolean." });
     return;
   }
 
@@ -376,6 +400,10 @@ router.put("/:id", async (req: Request, res: Response) => {
         sets.push(`classification = $${idx++}`);
         values.push(classification);
       }
+      if (isTemplate !== undefined) {
+        sets.push(`is_template = $${idx++}`);
+        values.push(isTemplate);
+      }
       if (canvasData !== undefined) {
         sets.push(`canvas_data = $${idx++}`);
         values.push(JSON.stringify(canvasData));
@@ -426,6 +454,106 @@ router.put("/:id", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error("Failed to update workflow", err, { id: workflowId });
     res.status(500).json({ error: "Failed to update workflow." });
+  }
+});
+
+// ============================================================================
+// DUPLICATE
+// ============================================================================
+
+/**
+ * POST /:id/duplicate
+ *
+ * Creates a copy of the source workflow as a brand-new row owned by the
+ * caller. The new workflow starts at version 1 (its own version history is
+ * independent) and never inherits is_template — duplicating a template
+ * gives you a working copy, not another template.
+ *
+ * Body: { name?: string } — defaults to "<original> (copy)".
+ */
+router.post("/:id/duplicate", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+
+  const newName = req.body?.name;
+  if (newName !== undefined && (typeof newName !== "string" || newName.trim().length === 0)) {
+    res.status(400).json({ error: "name must be a non-empty string." });
+    return;
+  }
+  if (newName !== undefined && newName.length > 200) {
+    res.status(400).json({ error: "name must be 200 characters or fewer." });
+    return;
+  }
+
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+
+    const source = await query<{
+      name: string;
+      description: string | null;
+      classification: Classification;
+      canvas_data: CanvasData;
+    }>(
+      `SELECT name, description, classification, canvas_data FROM workflows WHERE id = $1`,
+      [workflowId],
+    );
+    if (source.rowCount === 0) {
+      // Race with delete; treat as not found.
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    const src = source.rows[0];
+    const copyName = (newName ?? `${src.name} (copy)`).trim().slice(0, 200);
+
+    const newId = await transaction(async (client) => {
+      const insertRes = await client.query<{ id: string }>(
+        `INSERT INTO workflows
+           (user_id, ministry_code, name, description, classification, canvas_data, version, is_template)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, false)
+         RETURNING id`,
+        [
+          req.user!.id,
+          req.user!.ministryCode,
+          copyName,
+          src.description,
+          src.classification,
+          JSON.stringify(src.canvas_data),
+        ],
+      );
+      const id = insertRes.rows[0].id;
+      await client.query(
+        `INSERT INTO workflow_versions (workflow_id, version, canvas_data, created_by)
+         VALUES ($1, 1, $2, $3)`,
+        [id, JSON.stringify(src.canvas_data), req.user!.id],
+      );
+      return id;
+    });
+
+    await logAudit({
+      userId: req.user!.id,
+      ministryCode: req.user!.ministryCode || undefined,
+      action: AuditAction.WORKFLOW_CREATED,
+      resourceType: "workflow",
+      resourceId: newId,
+      details: { duplicatedFrom: workflowId, name: copyName },
+    });
+
+    const refreshed = await query(
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+       FROM workflows WHERE id = $1`,
+      [newId],
+    );
+    res.status(201).json(refreshed.rows[0]);
+  } catch (err) {
+    logger.error("Failed to duplicate workflow", err, { id: workflowId });
+    res.status(500).json({ error: "Failed to duplicate workflow." });
   }
 });
 
@@ -930,5 +1058,170 @@ router.get("/:id/executions/:executionId", async (req: Request, res: Response) =
     res.status(500).json({ error: "Failed to load workflow execution." });
   }
 });
+
+/**
+ * POST /:id/executions/:executionId/stop
+ *
+ * Explicit abort for a still-running execution. The SSE consumer normally
+ * triggers abort by closing the connection, but a client that opened the
+ * stream from one tab and wants to stop it from another (or from a
+ * background tab whose SSE got suspended) needs a synchronous way to flip
+ * the abort flag. Returns:
+ *   - 200 with { aborted: true }  if the executor was running and the
+ *     abort signal was set (the next stage iteration observes it and
+ *     terminates).
+ *   - 404 if no in-memory execution matches that id; this is also returned
+ *     when the execution exists in the DB but has already completed.
+ */
+router.post("/:id/executions/:executionId/stop", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const executionId = req.params.executionId as string;
+  if (!UUID_RE.test(workflowId) || !UUID_RE.test(executionId)) {
+    res.status(400).json({ error: "Invalid id." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    // Verify the execution actually belongs to this workflow before we
+    // flip the abort flag; otherwise a leaked execution id from a different
+    // workflow could be aborted by anyone with access to ANY workflow.
+    const owned = await query<{ id: string }>(
+      `SELECT id FROM workflow_executions WHERE id = $1 AND workflow_id = $2`,
+      [executionId, workflowId],
+    );
+    if (owned.rowCount === 0) {
+      res.status(404).json({ error: "Execution not found." });
+      return;
+    }
+    if (!isExecutionRunning(executionId)) {
+      res.status(404).json({ error: "Execution is not currently running." });
+      return;
+    }
+    abortExecution(executionId);
+    res.json({ executionId, aborted: true });
+  } catch (err) {
+    logger.error("Failed to stop workflow execution", err, {
+      id: workflowId,
+      executionId,
+    });
+    res.status(500).json({ error: "Failed to stop execution." });
+  }
+});
+
+// ============================================================================
+// EXECUTION ARTIFACTS
+// ============================================================================
+
+interface ExecutionArtifactRow {
+  id: string;
+  artifact_type: string;
+  title: string;
+  description: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  iteration: number | null;
+  created_at: Date;
+}
+
+/**
+ * GET /:id/executions/:executionId/artifacts
+ *
+ * Lists artifacts produced by tool nodes during the given execution
+ * (workflow_execution_id pointing at this run). `content` is omitted — clients
+ * pull a single artifact's bytes via the next endpoint to avoid streaming
+ * base64 image / audio payloads in the list response.
+ */
+router.get("/:id/executions/:executionId/artifacts", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const executionId = req.params.executionId as string;
+  if (!UUID_RE.test(workflowId) || !UUID_RE.test(executionId)) {
+    res.status(400).json({ error: "Invalid id." });
+    return;
+  }
+  try {
+    const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+    if (!wf) {
+      res.status(404).json({ error: "Workflow not found." });
+      return;
+    }
+    // Confirm the execution actually belongs to this workflow so a leaked
+    // execution id can't dump artifacts from an unrelated run.
+    const owned = await query<{ id: string }>(
+      `SELECT id FROM workflow_executions WHERE id = $1 AND workflow_id = $2`,
+      [executionId, workflowId],
+    );
+    if (owned.rowCount === 0) {
+      res.status(404).json({ error: "Execution not found." });
+      return;
+    }
+
+    const result = await query<ExecutionArtifactRow>(
+      `SELECT id, artifact_type, title, description, mime_type, size_bytes, iteration, created_at
+         FROM artifacts
+         WHERE workflow_execution_id = $1
+         ORDER BY created_at DESC, id DESC`,
+      [executionId],
+    );
+    res.json({ artifacts: result.rows, count: result.rowCount });
+  } catch (err) {
+    logger.error("Failed to list execution artifacts", err, { id: workflowId, executionId });
+    res.status(500).json({ error: "Failed to list artifacts." });
+  }
+});
+
+/**
+ * GET /:id/executions/:executionId/artifacts/:artifactId
+ *
+ * Fetch a single artifact (with `content`) joined through its execution and
+ * back to the workflow, so the parent visibility check remains the sole
+ * gatekeeper.
+ */
+router.get(
+  "/:id/executions/:executionId/artifacts/:artifactId",
+  async (req: Request, res: Response) => {
+    const workflowId = req.params.id as string;
+    const executionId = req.params.executionId as string;
+    const artifactId = req.params.artifactId as string;
+    if (
+      !UUID_RE.test(workflowId) ||
+      !UUID_RE.test(executionId) ||
+      !UUID_RE.test(artifactId)
+    ) {
+      res.status(400).json({ error: "Invalid id." });
+      return;
+    }
+    try {
+      const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+      if (!wf) {
+        res.status(404).json({ error: "Workflow not found." });
+        return;
+      }
+      const result = await query<ExecutionArtifactRow & { content: string }>(
+        `SELECT a.id, a.artifact_type, a.title, a.description, a.content, a.mime_type,
+                a.size_bytes, a.iteration, a.created_at
+           FROM artifacts a
+           JOIN workflow_executions e ON e.id = a.workflow_execution_id
+           WHERE a.id = $1 AND a.workflow_execution_id = $2 AND e.workflow_id = $3`,
+        [artifactId, executionId, workflowId],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: "Artifact not found." });
+        return;
+      }
+      res.json({ artifact: result.rows[0] });
+    } catch (err) {
+      logger.error("Failed to fetch execution artifact", err, {
+        id: workflowId,
+        executionId,
+        artifactId,
+      });
+      res.status(500).json({ error: "Failed to fetch artifact." });
+    }
+  },
+);
 
 export default router;

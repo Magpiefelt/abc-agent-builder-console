@@ -136,9 +136,11 @@ describe("session JWT", () => {
 
   it("rejects a tampered session token with InvalidSignatureError", async () => {
     const token = await signSessionToken(SAMPLE_USER);
-    // Flip a character in the signature portion
+    // Flip the last signature byte deterministically (avoid no-op when it already equals 'A').
     const parts = token.split(".");
-    const tampered = parts[0] + "." + parts[1] + "." + parts[2].slice(0, -1) + "A";
+    const lastChar = parts[2].slice(-1);
+    const replacement = lastChar === "A" ? "B" : "A";
+    const tampered = parts[0] + "." + parts[1] + "." + parts[2].slice(0, -1) + replacement;
     await expect(verifySessionToken(tampered)).rejects.toBeInstanceOf(InvalidSignatureError);
   });
 

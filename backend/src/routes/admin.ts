@@ -260,6 +260,188 @@ router.get("/sessions", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// WORKFLOW EXECUTIONS (cross-system)
+// ============================================================================
+
+const workflowExecQuerySchema = z.object({
+  status: z.enum(["running", "completed", "error", "aborted"]).optional(),
+  workflow_id: z.string().uuid().optional(),
+  limit: z.coerce.number().int().min(1).max(500).default(100),
+});
+
+router.get("/workflow-executions", async (req: Request, res: Response) => {
+  const parsed = workflowExecQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid query parameters", details: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { status, workflow_id, limit } = parsed.data;
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (status) {
+    params.push(status);
+    conditions.push(`e.status = $${params.length}`);
+  }
+  if (workflow_id) {
+    params.push(workflow_id);
+    conditions.push(`e.workflow_id = $${params.length}`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(limit);
+
+  try {
+    const result = await query(
+      `SELECT e.id, e.workflow_id, w.name AS workflow_name, e.user_id,
+              u.email AS user_email, u.display_name AS user_display_name,
+              w.ministry_code, e.classification, e.status, e.error,
+              e.started_at, e.completed_at
+         FROM workflow_executions e
+         JOIN workflows w ON w.id = e.workflow_id
+         LEFT JOIN users u ON u.id = e.user_id
+         ${whereClause}
+         ORDER BY e.started_at DESC
+         LIMIT $${params.length}`,
+      params,
+    );
+
+    if (req.user) {
+      auditAction(
+        req.user.id,
+        AuditAction.ADMIN_WORKFLOW_EXECUTION_VIEWED,
+        "workflow_executions",
+        undefined,
+        { rowsReturned: result.rowCount, filterStatus: status, filterWorkflowId: workflow_id },
+      );
+    }
+
+    res.json({ executions: result.rows, count: result.rowCount });
+  } catch (err) {
+    logger.error("Failed to query workflow executions", err as Error);
+    res.status(500).json({ error: "Failed to query workflow executions." });
+  }
+});
+
+// ============================================================================
+// AUDIT LOG CSV EXPORT
+// ============================================================================
+
+const auditExportSchema = z.object({
+  action: z.string().min(1).max(100).optional(),
+  user_id: z.string().min(1).max(100).optional(),
+  from: z.string().datetime().optional(),
+  to: z.string().datetime().optional(),
+  limit: z.coerce.number().int().min(1).max(10000).default(1000),
+});
+
+/**
+ * CSV-escape a field per RFC 4180:
+ *   - Always wrap in double quotes
+ *   - Double any embedded double quotes
+ *   - Embedded newlines / commas are fine inside quotes
+ */
+function csvEscape(value: unknown): string {
+  if (value === null || value === undefined) return '""';
+  const s = typeof value === "string" ? value : JSON.stringify(value);
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
+router.get("/audit/export.csv", async (req: Request, res: Response) => {
+  const parsed = auditExportSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid query parameters", details: parsed.error.flatten().fieldErrors });
+    return;
+  }
+
+  const { action, user_id, from, to, limit } = parsed.data;
+  const conditions: string[] = [];
+  const params: unknown[] = [];
+  if (action) {
+    params.push(action);
+    conditions.push(`action = $${params.length}`);
+  }
+  if (user_id) {
+    params.push(user_id);
+    conditions.push(`user_id = $${params.length}`);
+  }
+  if (from) {
+    params.push(from);
+    conditions.push(`created_at >= $${params.length}`);
+  }
+  if (to) {
+    params.push(to);
+    conditions.push(`created_at <= $${params.length}`);
+  }
+  const whereClause = conditions.length ? `WHERE ${conditions.join(" AND ")}` : "";
+  params.push(limit);
+
+  try {
+    const result = await query<{
+      id: string;
+      user_id: string | null;
+      ministry_code: string | null;
+      action: string;
+      resource_type: string | null;
+      resource_id: string | null;
+      details: unknown;
+      ip_address: string | null;
+      created_at: Date;
+    }>(
+      `SELECT id, user_id, ministry_code, action, resource_type, resource_id,
+              details, ip_address, created_at
+         FROM audit_log
+         ${whereClause}
+         ORDER BY created_at DESC
+         LIMIT $${params.length}`,
+      params,
+    );
+
+    auditAction(req.user!.id, AuditAction.ADMIN_AUDIT_EXPORTED, "audit_log", undefined, {
+      rowsExported: result.rowCount,
+      filters: { action, user_id, from, to },
+    });
+
+    const header = [
+      "id",
+      "created_at",
+      "user_id",
+      "ministry_code",
+      "action",
+      "resource_type",
+      "resource_id",
+      "ip_address",
+      "details",
+    ].join(",");
+    const lines = [header];
+    for (const row of result.rows) {
+      lines.push(
+        [
+          csvEscape(row.id),
+          csvEscape(row.created_at instanceof Date ? row.created_at.toISOString() : row.created_at),
+          csvEscape(row.user_id),
+          csvEscape(row.ministry_code),
+          csvEscape(row.action),
+          csvEscape(row.resource_type),
+          csvEscape(row.resource_id),
+          csvEscape(row.ip_address),
+          csvEscape(row.details),
+        ].join(","),
+      );
+    }
+    const body = lines.join("\n") + "\n";
+
+    const filename = `audit-${new Date().toISOString().replace(/[:.]/g, "-")}.csv`;
+    res.setHeader("Content-Type", "text/csv; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.send(body);
+  } catch (err) {
+    logger.error("Failed to export audit log", err as Error);
+    res.status(500).json({ error: "Failed to export audit log." });
+  }
+});
+
+// ============================================================================
 // RETENTION JOB (manual trigger)
 // ============================================================================
 

@@ -135,6 +135,11 @@ export function abortExecution(executionId: string): void {
   if (e) e.abort = true;
 }
 
+/** True when the executor is still iterating stages for this execution id. */
+export function isExecutionRunning(executionId: string): boolean {
+  return activeExecutions.has(executionId);
+}
+
 // ============================================================================
 // AGENT TEMPLATE LOADING
 // ============================================================================
