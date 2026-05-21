@@ -251,6 +251,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       status: 'running',
       stages,
       startedAt: Date.now(),
+      piiBlockedTotal: 0,
     }
     events.value = []
 
@@ -288,6 +289,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
           s.status = 'completed'
           s.durationMs = event.durationMs
           s.value = event.value
+          s.tokens = event.tokens
         }
         break
       }
@@ -305,6 +307,14 @@ export const useWorkflowStore = defineStore('workflow', () => {
           s.status = 'error'
           s.error = event.error
         }
+        break
+      }
+      case 'pii_warning': {
+        const s = execution.value.stages.get(event.nodeId)
+        if (s) {
+          s.piiBlockedCount = (s.piiBlockedCount ?? 0) + event.blockedCount
+        }
+        execution.value.piiBlockedTotal += event.blockedCount
         break
       }
       case 'workflow_complete':
