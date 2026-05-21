@@ -14,7 +14,7 @@
  * - GET  /api/agent/models             — List available models
  */
 
-import { Router, Request, Response } from "express";
+import express, { Router, Request, Response } from "express";
 import { authenticate } from "../middleware/auth.js";
 import { logAudit, auditAgentEvent, AuditAction } from "../services/auditLogger.js";
 import { logger } from "../services/logger.js";
@@ -30,7 +30,7 @@ import {
 import { getActiveModels, validateModelClassification, isProviderConfigured } from "../services/llmProvider.js";
 import { scanForPII } from "../services/piiDetector.js";
 
-const router = Router();
+const router: express.Router = Router();
 
 // All agent routes require authentication
 router.use(authenticate);
@@ -58,7 +58,7 @@ router.post("/sessions", async (req: Request, res: Response) => {
   }
 
   // PII scan on the user prompt
-  const piiScan = scanForPII(prompt);
+  const piiScan = scanForPII(prompt, { userId: req.user!.id });
   if (piiScan.blockedCount > 0) {
     logAudit({
       userId: req.user!.id,
@@ -227,7 +227,7 @@ router.post("/sessions/:id/continue", async (req: Request, res: Response) => {
   }
 
   // PII scan
-  const piiScan = scanForPII(prompt);
+  const piiScan = scanForPII(prompt, { userId: req.user!.id, sessionId: id });
   if (piiScan.blockedCount > 0) {
     res.status(422).json({
       error: "Continuation prompt contains blocked content.",
@@ -277,7 +277,7 @@ router.post("/sessions/:id/interject", async (req: Request, res: Response) => {
     return;
   }
 
-  const piiScan = scanForPII(message);
+  const piiScan = scanForPII(message, { userId: req.user!.id, sessionId: id });
   if (piiScan.blockedCount > 0) {
     res.status(422).json({ error: "Interjection contains blocked content." });
     return;

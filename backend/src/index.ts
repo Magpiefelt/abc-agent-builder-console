@@ -16,16 +16,21 @@ import { logger } from "./services/logger.js";
 import { installProcessMonitor } from "./services/processMonitor.js";
 import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
+import { authenticate } from "./middleware/auth.js";
 import { registerAllTools } from "./tools/register.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
+import adminRoutes from "./routes/admin.js";
+import { logVaultFingerprint } from "./services/secretsVault.js";
+import { startRetentionScheduler, stopRetentionScheduler } from "./services/retentionJob.js";
 
 // ============================================================================
 // PROCESS MONITOR (must be first — catches unhandled errors)
 // ============================================================================
 
 installProcessMonitor(async () => {
-  // Graceful shutdown: close database pool
+  // Graceful shutdown: stop retention scheduler, close database pool
+  stopRetentionScheduler();
   await closePool();
 });
 
@@ -36,10 +41,17 @@ installProcessMonitor(async () => {
 registerAllTools();
 
 // ============================================================================
+// COMPLIANCE INITIALIZATION (Stream F)
+// ============================================================================
+
+logVaultFingerprint();
+startRetentionScheduler();
+
+// ============================================================================
 // EXPRESS APP
 // ============================================================================
 
-const app = express();
+const app: express.Application = express();
 
 // ============================================================================
 // SECURITY MIDDLEWARE (order matters)
@@ -90,16 +102,20 @@ app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
 app.use("/api/health", healthRoutes);
 
+// Current user identity — used by the frontend auth store
+app.get("/api/me", authenticate, (req, res) => {
+  res.json({ user: req.user });
+});
+
 // Agent routes with granular per-endpoint rate limiting
 app.use("/api/agent", agentRateLimit, agentRoutes);
+
+// Admin routes (authenticate + requireRole('admin') + auditAdminAccess applied inside the router)
+app.use("/api/admin", adminRoutes);
 
 // Placeholder routes for future phases
 app.use("/api/workflows", (_req, res) => {
   res.json({ message: "Workflow routes - Phase 5" });
-});
-
-app.use("/api/admin", (_req, res) => {
-  res.json({ message: "Admin routes - Phase 6" });
 });
 
 // ============================================================================
