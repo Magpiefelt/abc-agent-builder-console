@@ -1,18 +1,20 @@
 {
-  "name": "Smoke — minimal session round-trip",
-  "description": "Confirms the agent route accepts a session, opens an SSE stream, and emits at least one iteration boundary. Run with LLM_MOCK=1 so no provider is required.",
-  "request": {
-    "prompt": "Say hello and set status to completed.",
-    "modelId": "claude-haiku-4-5",
-    "classification": "unclassified",
-    "maxIterations": 2
-  },
-  "llmMock": "1",
-  "expect": {
-    "creationStatus": 200,
-    "events": {
-      "mustContain": ["session_start", "iteration_start"]
-    },
-    "piiDetected": false
+  "name": "01 — Smoke: minimal session round-trip",
+  "description": "Confirms create + start + SSE round-trip end-to-end. Single mock response completes the session immediately with no tool calls or blackboard entries.",
+  "prompt": "Say hello and finish.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [
+    {
+      "thinking": "Greet and complete.",
+      "status": "completed",
+      "userMessage": "Hello."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": ["session_start", "iteration_start", "iteration_complete", "session_complete"],
+    "finalStatus": "completed"
   }
 }
