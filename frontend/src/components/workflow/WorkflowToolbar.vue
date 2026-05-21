@@ -29,6 +29,17 @@ const statusLabel = computed(() => {
     default: return ''
   }
 })
+
+const modKey = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform) ? '⌘' : 'Ctrl'
+
+const saveTitle = computed(() =>
+  props.dirty ? `Save changes (${modKey}+S)` : 'No unsaved changes',
+)
+
+const runTitle = computed(() => {
+  if (props.dirty) return 'Save your changes before running'
+  return `Run the workflow (${modKey}+Enter)`
+})
 </script>
 
 <script lang="ts">
@@ -93,6 +104,7 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
       type="secondary"
       size="compact"
       :disabled="!dirty || undefined"
+      :title="saveTitle"
       @_click="emit('save')"
     >
       Save
@@ -103,7 +115,7 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
       type="primary"
       size="compact"
       :disabled="dirty || undefined"
-      :title="dirty ? 'Save your changes before running' : 'Run the workflow'"
+      :title="runTitle"
       @_click="emit('run')"
     >
       Run

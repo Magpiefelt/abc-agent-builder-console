@@ -3,10 +3,12 @@ import { computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import { useUserMemoryStore } from '@/stores/userMemory'
+import { useToast } from '@/composables/useToast'
 
 const auth = useAuthStore()
 const memory = useUserMemoryStore()
 const router = useRouter()
+const toast = useToast()
 
 const ministryLabel = computed(() => auth.user?.ministryCode ?? 'Not assigned')
 
@@ -21,6 +23,15 @@ async function handleLogout(): Promise<void> {
   await auth.logout()
   memory.reset()
   await router.push({ name: 'login' })
+}
+
+function openFavorite(workflowId: string): void {
+  router.push(`/workflows/${workflowId}`)
+}
+
+function usePrompt(promptText: string, title: string): void {
+  router.push({ name: 'free-agent', query: { prompt: promptText } })
+  toast.push({ kind: 'info', message: `Loaded "${title}" into Free Agent.` })
 }
 
 function fmt(date: string | null): string {
@@ -95,14 +106,23 @@ function fmt(date: string | null): string {
               Updated {{ fmt(p.updatedAt) }}
             </p>
           </div>
-          <goa-button
-            type="tertiary"
-            variant="destructive"
-            size="compact"
-            @_click="memory.deletePrompt(p.id)"
-          >
-            Delete
-          </goa-button>
+          <div class="flex flex-col gap-1 items-end shrink-0">
+            <goa-button
+              type="tertiary"
+              size="compact"
+              @_click="usePrompt(p.prompt, p.title)"
+            >
+              Use
+            </goa-button>
+            <goa-button
+              type="tertiary"
+              variant="destructive"
+              size="compact"
+              @_click="memory.deletePrompt(p.id)"
+            >
+              Delete
+            </goa-button>
+          </div>
         </li>
       </ul>
     </div>
@@ -123,8 +143,13 @@ function fmt(date: string | null): string {
           :key="f.workflowId"
           class="py-3 flex items-start gap-3"
         >
-          <div class="flex-1 min-w-0">
-            <h3 class="font-medium truncate">
+          <button
+            type="button"
+            class="flex-1 min-w-0 text-left p-1 -m-1 rounded hover:bg-[var(--goa-color-primary-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+            @click="openFavorite(f.workflowId)"
+            :aria-label="`Open ${f.name ?? 'workflow'}`"
+          >
+            <h3 class="font-medium truncate text-[var(--goa-color-primary)]">
               {{ f.name ?? 'Workflow ' + f.workflowId.slice(0, 8) }}
             </h3>
             <p
@@ -136,7 +161,7 @@ function fmt(date: string | null): string {
             <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
               Favorited {{ fmt(f.favoritedAt) }}
             </p>
-          </div>
+          </button>
           <goa-button
             type="tertiary"
             variant="destructive"
