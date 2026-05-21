@@ -62,7 +62,7 @@ export async function getTime(params: Record<string, unknown>): Promise<TimeResu
       date: dateStr,
       dayOfWeek,
     };
-  } catch (err) {
+  } catch {
     return {
       success: false,
       error: `Invalid timezone: "${timezone}". Use IANA format (e.g., America/Edmonton, UTC, Europe/London).`,

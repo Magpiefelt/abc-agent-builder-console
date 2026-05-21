@@ -1,27 +1,20 @@
 {
-  "name": "Smoke — minimal session round-trip",
-  "description": "Confirms the agent route accepts a session, opens an SSE stream, and emits at least one iteration boundary and a session_complete event. Uses the mock LLM provider so no real API key is required.",
-  "prompt": "Say hello and report task complete.",
+  "name": "01 — Smoke: minimal session round-trip",
+  "description": "Confirms create + start + SSE round-trip end-to-end. Single mock response completes the session immediately with no tool calls or blackboard entries.",
+  "prompt": "Say hello and finish.",
   "modelId": "mock-llm",
   "classification": "unclassified",
   "llmResponses": [
     {
-      "thinking": "The task is to say hello and complete.",
-      "blackboardUpdates": [
-        {
-          "category": "summary",
-          "title": "Greeting",
-          "content": "Hello! Task is complete."
-        }
-      ],
+      "thinking": "Greet and complete.",
       "status": "completed",
-      "userMessage": "Hello! I have completed the task."
+      "userMessage": "Hello."
     }
   ],
   "expectations": {
     "createStatus": 201,
     "startStatus": 200,
-    "sseSubsequence": ["session_start", "iteration_start", "session_complete"],
+    "sseSubsequence": ["session_start", "iteration_start", "iteration_complete", "session_complete"],
     "finalStatus": "completed"
   }
 }
