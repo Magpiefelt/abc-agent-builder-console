@@ -339,3 +339,54 @@ describe("POST /api/agent/sessions/:id/continue", () => {
     expect(res.status).toBe(422);
   });
 });
+
+describe("GET /api/agent/sessions/:id/iterations", () => {
+  it("returns 404 when the session is not found", async () => {
+    loadSessionMock.mockResolvedValueOnce(null);
+    const res = await request(makeApp()).get("/api/agent/sessions/missing/iterations");
+    expect(res.status).toBe(404);
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the persisted iterations for a visible session", async () => {
+    loadSessionMock.mockResolvedValueOnce({
+      id: "sess-1",
+      status: "completed",
+      userId: "user-1",
+      ministryCode: "INFRA",
+    });
+    queryMock.mockResolvedValueOnce({
+      rows: [
+        {
+          iteration_number: 1,
+          status: "completed",
+          user_prompt: "go",
+          raw_llm_response: "{}",
+          parsed_response: { action: "done" },
+          tool_calls: null,
+          tool_results: null,
+          blackboard_entry: { category: "fact", value: "x" },
+          error: null,
+          tokens_used: 42,
+          duration_ms: 100,
+          created_at: new Date("2026-05-21T12:00:00Z"),
+        },
+      ],
+      rowCount: 1,
+    });
+
+    const res = await request(makeApp()).get("/api/agent/sessions/sess-1/iterations");
+    expect(res.status).toBe(200);
+    expect(res.body.iterations).toHaveLength(1);
+    expect(res.body.iterations[0].iterationNumber).toBe(1);
+    expect(res.body.iterations[0].tokensUsed).toBe(42);
+    expect(res.body.iterations[0].blackboardEntry.category).toBe("fact");
+  });
+
+  it("returns 500 on DB error", async () => {
+    loadSessionMock.mockResolvedValueOnce({ id: "sess-1", userId: "user-1" });
+    queryMock.mockRejectedValueOnce(new Error("connection refused"));
+    const res = await request(makeApp()).get("/api/agent/sessions/sess-1/iterations");
+    expect(res.status).toBe(500);
+  });
+});

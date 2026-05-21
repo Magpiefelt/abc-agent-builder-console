@@ -437,6 +437,208 @@ router.delete("/:id", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// EXECUTION HISTORY
+// ============================================================================
+
+/**
+ * Confirm the caller can see this workflow (owner or same ministry). Returns
+ * the workflow's ministry_code on success, or null + writes the 403/404
+ * response on failure. The execution-history endpoints below reuse the
+ * same access rule as the GET /:id route.
+ */
+async function assertWorkflowVisible(
+  req: Request,
+  res: Response,
+  workflowId: string,
+): Promise<{ ministryCode: string | null } | null> {
+  const result = await query<{ user_id: string; ministry_code: string | null }>(
+    `SELECT user_id, ministry_code FROM workflows WHERE id = $1`,
+    [workflowId],
+  );
+  if (result.rowCount === 0) {
+    res.status(404).json({ error: "Workflow not found." });
+    return null;
+  }
+  const wf = result.rows[0];
+  const isOwner = wf.user_id === req.user!.id;
+  const sameMinistry =
+    wf.ministry_code !== null &&
+    req.user!.ministryCode !== null &&
+    wf.ministry_code === req.user!.ministryCode;
+  if (!isOwner && !sameMinistry) {
+    res.status(403).json({ error: "Access denied." });
+    return null;
+  }
+  return { ministryCode: wf.ministry_code };
+}
+
+interface ExecutionRow {
+  id: string;
+  workflow_id: string;
+  user_id: string;
+  classification: Classification;
+  status: "running" | "completed" | "error" | "aborted";
+  error: string | null;
+  started_at: Date;
+  completed_at: Date | null;
+}
+
+interface ExecutionDetailRow extends ExecutionRow {
+  stage_results: unknown;
+}
+
+router.get("/:id/executions", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!(await assertWorkflowVisible(req, res, workflowId))) return;
+
+  const limitParam = parseInt((req.query.limit as string) || "50", 10);
+  const limit = Number.isFinite(limitParam) ? Math.max(1, Math.min(limitParam, 200)) : 50;
+
+  try {
+    const result = await query<ExecutionRow & { user_email: string | null; user_display_name: string | null }>(
+      `SELECT e.id, e.workflow_id, e.user_id, e.classification, e.status, e.error,
+              e.started_at, e.completed_at,
+              u.email AS user_email, u.display_name AS user_display_name
+         FROM workflow_executions e
+         LEFT JOIN users u ON u.id = e.user_id
+         WHERE e.workflow_id = $1
+         ORDER BY e.started_at DESC
+         LIMIT $2`,
+      [workflowId, limit],
+    );
+    res.json({
+      executions: result.rows.map((r) => ({
+        id: r.id,
+        workflowId: r.workflow_id,
+        userId: r.user_id,
+        userEmail: r.user_email,
+        userDisplayName: r.user_display_name,
+        classification: r.classification,
+        status: r.status,
+        error: r.error,
+        startedAt: r.started_at,
+        completedAt: r.completed_at,
+        durationMs:
+          r.completed_at && r.started_at
+            ? new Date(r.completed_at).getTime() - new Date(r.started_at).getTime()
+            : null,
+      })),
+    });
+  } catch (err) {
+    logger.error("Failed to list workflow executions", err, { workflowId });
+    res.status(500).json({ error: "Failed to list executions." });
+  }
+});
+
+router.get("/:id/executions/:executionId", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const executionId = req.params.executionId as string;
+  if (!(await assertWorkflowVisible(req, res, workflowId))) return;
+
+  try {
+    const result = await query<ExecutionDetailRow>(
+      `SELECT id, workflow_id, user_id, classification, status, error,
+              started_at, completed_at, stage_results
+         FROM workflow_executions
+         WHERE id = $1 AND workflow_id = $2`,
+      [executionId, workflowId],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Execution not found." });
+      return;
+    }
+    const row = result.rows[0];
+    res.json({
+      id: row.id,
+      workflowId: row.workflow_id,
+      userId: row.user_id,
+      classification: row.classification,
+      status: row.status,
+      error: row.error,
+      startedAt: row.started_at,
+      completedAt: row.completed_at,
+      stageResults: row.stage_results ?? [],
+    });
+  } catch (err) {
+    logger.error("Failed to load workflow execution", err, { workflowId, executionId });
+    res.status(500).json({ error: "Failed to load execution." });
+  }
+});
+
+interface WorkflowArtifactRow {
+  id: string;
+  artifact_type: string;
+  title: string;
+  description: string | null;
+  mime_type: string | null;
+  size_bytes: number | null;
+  iteration: number | null;
+  created_at: Date;
+}
+
+router.get("/:id/executions/:executionId/artifacts", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  const executionId = req.params.executionId as string;
+  if (!(await assertWorkflowVisible(req, res, workflowId))) return;
+
+  try {
+    const owned = await query<{ id: string }>(
+      `SELECT id FROM workflow_executions WHERE id = $1 AND workflow_id = $2`,
+      [executionId, workflowId],
+    );
+    if (owned.rowCount === 0) {
+      res.status(404).json({ error: "Execution not found." });
+      return;
+    }
+
+    const result = await query<WorkflowArtifactRow>(
+      `SELECT id, artifact_type, title, description, mime_type, size_bytes, iteration, created_at
+         FROM artifacts
+         WHERE workflow_execution_id = $1
+         ORDER BY created_at DESC, id DESC`,
+      [executionId],
+    );
+    res.json({ artifacts: result.rows });
+  } catch (err) {
+    logger.error("Failed to list execution artifacts", err, { workflowId, executionId });
+    res.status(500).json({ error: "Failed to list artifacts." });
+  }
+});
+
+router.get(
+  "/:id/executions/:executionId/artifacts/:artifactId",
+  async (req: Request, res: Response) => {
+    const workflowId = req.params.id as string;
+    const executionId = req.params.executionId as string;
+    const artifactId = req.params.artifactId as string;
+    if (!(await assertWorkflowVisible(req, res, workflowId))) return;
+
+    try {
+      const result = await query<WorkflowArtifactRow & { content: string }>(
+        `SELECT a.id, a.artifact_type, a.title, a.description, a.content, a.mime_type,
+                a.size_bytes, a.iteration, a.created_at
+           FROM artifacts a
+           JOIN workflow_executions e ON e.id = a.workflow_execution_id
+           WHERE a.id = $1 AND a.workflow_execution_id = $2 AND e.workflow_id = $3`,
+        [artifactId, executionId, workflowId],
+      );
+      if (result.rowCount === 0) {
+        res.status(404).json({ error: "Artifact not found." });
+        return;
+      }
+      res.json({ artifact: result.rows[0] });
+    } catch (err) {
+      logger.error("Failed to fetch execution artifact", err, {
+        workflowId,
+        executionId,
+        artifactId,
+      });
+      res.status(500).json({ error: "Failed to fetch artifact." });
+    }
+  },
+);
+
+// ============================================================================
 // EXECUTE (SSE)
 // ============================================================================
 

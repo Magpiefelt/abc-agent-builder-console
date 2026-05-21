@@ -308,6 +308,46 @@ router.delete("/me/favorite-workflows/:workflowId", async (req: Request, res: Re
 // RECENT SESSIONS
 // ============================================================================
 
+router.get("/me/recent-workflow-executions", async (req: Request, res: Response) => {
+  if (!requireUser(req, res)) return;
+  try {
+    const result = await query<{
+      id: string;
+      workflow_id: string;
+      workflow_name: string;
+      status: string;
+      classification: string;
+      started_at: Date;
+      completed_at: Date | null;
+      error: string | null;
+    }>(
+      `SELECT e.id, e.workflow_id, w.name AS workflow_name, e.status, e.classification,
+              e.started_at, e.completed_at, e.error
+         FROM workflow_executions e
+         JOIN workflows w ON w.id = e.workflow_id
+         WHERE e.user_id = $1
+         ORDER BY e.started_at DESC
+         LIMIT 20`,
+      [req.user!.id],
+    );
+    res.json({
+      executions: result.rows.map((r) => ({
+        id: r.id,
+        workflowId: r.workflow_id,
+        workflowName: r.workflow_name,
+        status: r.status,
+        classification: r.classification,
+        startedAt: r.started_at,
+        completedAt: r.completed_at,
+        error: r.error,
+      })),
+    });
+  } catch (err) {
+    logger.error("Failed to load recent workflow executions", err as Error);
+    res.json({ executions: [] });
+  }
+});
+
 router.get("/me/recent-sessions", async (req: Request, res: Response) => {
   if (!requireUser(req, res)) return;
   try {

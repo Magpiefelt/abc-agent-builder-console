@@ -65,6 +65,8 @@ export enum AuditAction {
   ADMIN_RETENTION_RUN = "admin.retention.run",
   ADMIN_PII_VIEWED = "admin.pii.viewed",
   ADMIN_SESSION_VIEWED = "admin.session.viewed",
+  ADMIN_WORKFLOW_EXECUTION_VIEWED = "admin.workflow_execution.viewed",
+  ADMIN_AUDIT_EXPORTED = "admin.audit.exported",
 
   // Secrets Vault
   SECRET_CREATED = "secret.created",
