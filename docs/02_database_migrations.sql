@@ -489,10 +489,58 @@ VALUES
 ON CONFLICT DO NOTHING;
 
 -- ============================================================================
+-- STREAM A — User Memory (Identity, SSO & per-user persistence)
+-- Idempotent and additive. Safe to re-run.
+-- ============================================================================
+
+-- Per-user preferences (one row per user)
+CREATE TABLE IF NOT EXISTS cohen_mcleod.user_preferences (
+    user_id UUID PRIMARY KEY REFERENCES cohen_mcleod.users(id) ON DELETE CASCADE,
+    default_model_id TEXT,
+    default_classification TEXT,
+    theme TEXT DEFAULT 'light',
+    notification_preferences JSONB NOT NULL DEFAULT '{}'::jsonb,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Saved prompts (per-user; may be shared with same-ministry users when is_public)
+CREATE TABLE IF NOT EXISTS cohen_mcleod.saved_prompts (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_id UUID NOT NULL REFERENCES cohen_mcleod.users(id) ON DELETE CASCADE,
+    ministry_code TEXT,
+    title TEXT NOT NULL,
+    prompt TEXT NOT NULL,
+    tags TEXT[],
+    is_public BOOLEAN NOT NULL DEFAULT false,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_saved_prompts_user     ON cohen_mcleod.saved_prompts(user_id);
+CREATE INDEX IF NOT EXISTS idx_saved_prompts_ministry ON cohen_mcleod.saved_prompts(ministry_code);
+
+DROP TRIGGER IF EXISTS trg_saved_prompts_updated ON cohen_mcleod.saved_prompts;
+CREATE TRIGGER trg_saved_prompts_updated BEFORE UPDATE ON cohen_mcleod.saved_prompts
+  FOR EACH ROW EXECUTE FUNCTION cohen_mcleod.update_timestamp();
+
+-- Workflow favorites (composite PK; cascading cleanup on user/workflow delete)
+CREATE TABLE IF NOT EXISTS cohen_mcleod.workflow_favorites (
+    user_id      UUID NOT NULL REFERENCES cohen_mcleod.users(id)     ON DELETE CASCADE,
+    workflow_id  UUID NOT NULL REFERENCES cohen_mcleod.workflows(id) ON DELETE CASCADE,
+    favorited_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (user_id, workflow_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workflow_favorites_user ON cohen_mcleod.workflow_favorites(user_id);
+
+-- ============================================================================
 -- VERIFICATION
 -- ============================================================================
 -- SELECT 'features' as tbl, count(*) FROM cohen_mcleod.features
 -- UNION ALL SELECT 'vulnerabilities', count(*) FROM cohen_mcleod.vulnerabilities
 -- UNION ALL SELECT 'migration', count(*) FROM cohen_mcleod.migration
 -- UNION ALL SELECT 'plan', count(*) FROM cohen_mcleod.plan
--- UNION ALL SELECT 'privacy_controls', count(*) FROM cohen_mcleod.privacy_controls;
+-- UNION ALL SELECT 'privacy_controls', count(*) FROM cohen_mcleod.privacy_controls
+-- UNION ALL SELECT 'user_preferences', count(*) FROM cohen_mcleod.user_preferences
+-- UNION ALL SELECT 'saved_prompts', count(*) FROM cohen_mcleod.saved_prompts
+-- UNION ALL SELECT 'workflow_favorites', count(*) FROM cohen_mcleod.workflow_favorites;

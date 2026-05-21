@@ -9,6 +9,7 @@
 import express from "express";
 import cors from "cors";
 import helmet from "helmet";
+import cookieParser from "cookie-parser";
 import rateLimit from "express-rate-limit";
 import { env } from "./config/env.js";
 import { closePool } from "./config/database.js";
@@ -16,9 +17,12 @@ import { logger } from "./services/logger.js";
 import { installProcessMonitor } from "./services/processMonitor.js";
 import { requestValidation } from "./middleware/requestValidation.js";
 import { agentRateLimit } from "./middleware/agentRateLimit.js";
+import { authenticate } from "./middleware/auth.js";
 import { registerAllTools } from "./tools/register.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
+import authRoutes from "./routes/auth.js";
+import userRoutes from "./routes/users.js";
 
 // ============================================================================
 // PROCESS MONITOR (must be first — catches unhandled errors)
@@ -84,11 +88,20 @@ app.use(globalLimiter);
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ extended: true, limit: "1mb" }));
 
+// 6. Cookie parsing (signed cookies use SESSION_SECRET; we sign our own JWTs separately)
+app.use(cookieParser(env.SESSION_SECRET));
+
 // ============================================================================
 // ROUTES
 // ============================================================================
 
 app.use("/api/health", healthRoutes);
+
+// Authentication routes (login/callback are public; logout and /me have their own auth middleware)
+app.use("/api/auth", authRoutes);
+
+// User memory routes (preferences, saved prompts, favorite workflows, recent sessions)
+app.use("/api/users", authenticate, userRoutes);
 
 // Agent routes with granular per-endpoint rate limiting
 app.use("/api/agent", agentRateLimit, agentRoutes);

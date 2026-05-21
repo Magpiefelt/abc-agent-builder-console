@@ -4,6 +4,7 @@
 
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
+import { apiFetch } from '@/composables/useApiFetch'
 
 export interface ModelEntry {
   id: string
@@ -27,11 +28,7 @@ export const useModelsStore = defineStore('models', () => {
     loading.value = true
     error.value = null
     try {
-      const res = await fetch('/api/agent/models')
-      if (!res.ok) {
-        throw new Error(`Failed to load models (${res.status})`)
-      }
-      const data = (await res.json()) as { models: ModelEntry[] }
+      const data = await apiFetch<{ models: ModelEntry[] }>('/api/agent/models')
       models.value = data.models ?? []
       loaded = true
     } catch (err) {

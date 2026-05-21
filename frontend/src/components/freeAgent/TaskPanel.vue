@@ -1,11 +1,17 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useAgentSessionStore, type PromptSectionOverride } from '@/stores/agentSession'
+import { useAuthStore } from '@/stores/auth'
 import { useModelsStore } from '@/stores/models'
+import { useUserMemoryStore } from '@/stores/userMemory'
+import { useToast } from '@/composables/useToast'
 import PromptCustomizer from './PromptCustomizer.vue'
 
 const session = useAgentSessionStore()
 const modelsStore = useModelsStore()
+const memory = useUserMemoryStore()
+const auth = useAuthStore()
+const toast = useToast()
 
 const prompt = ref('')
 const selectedModelId = ref<string>('')
@@ -13,6 +19,12 @@ const classification = ref<'unclassified' | 'protected_a' | 'protected_b'>('uncl
 const maxIterations = ref(10)
 const customizerOpen = ref(false)
 const sectionOverrides = ref<Record<string, PromptSectionOverride>>({})
+
+// Save-prompt inline form (Stream A's user-memory feature).
+const showSaveForm = ref(false)
+const saveTitle = ref('')
+const saveStatus = ref<'idle' | 'saving' | 'saved' | 'error'>('idle')
+let savedToastTimer: ReturnType<typeof setTimeout> | null = null
 
 const startDisabled = computed(
   () =>
@@ -54,6 +66,25 @@ onMounted(async () => {
   if (!selectedModelId.value && first) {
     selectedModelId.value = first.id
   }
+  if (auth.isAuthenticated) {
+    void memory.fetchRecentSessions()
+    void memory.fetchSavedPrompts()
+  }
+})
+
+// When the user authenticates after the panel mounted, lazy-fetch memory.
+watch(
+  () => auth.isAuthenticated,
+  (next) => {
+    if (next) {
+      void memory.fetchRecentSessions()
+      void memory.fetchSavedPrompts()
+    }
+  },
+)
+
+onBeforeUnmount(() => {
+  if (savedToastTimer) clearTimeout(savedToastTimer)
 })
 
 async function handleStart(): Promise<void> {
@@ -69,6 +100,7 @@ async function handleStart(): Promise<void> {
     await session.startStream({
       sectionOverrides: overrideCount.value > 0 ? sectionOverrides.value : undefined,
     })
+    if (auth.isAuthenticated) void memory.fetchRecentSessions()
   } catch {
     // error already surfaced via toast in the store
   }
@@ -78,11 +110,48 @@ function handleNewSession(): void {
   session.reset()
   prompt.value = ''
   sectionOverrides.value = {}
+  if (auth.isAuthenticated) void memory.fetchRecentSessions()
 }
 
 function handleSaveOverrides(overrides: Record<string, PromptSectionOverride>): void {
   sectionOverrides.value = overrides
   customizerOpen.value = false
+}
+
+function openSaveForm(): void {
+  saveTitle.value = prompt.value.slice(0, 60).trim() || 'Untitled prompt'
+  showSaveForm.value = true
+  saveStatus.value = 'idle'
+}
+
+function cancelSave(): void {
+  showSaveForm.value = false
+  saveTitle.value = ''
+  saveStatus.value = 'idle'
+}
+
+async function confirmSave(): Promise<void> {
+  if (!saveTitle.value.trim() || !prompt.value.trim()) return
+  saveStatus.value = 'saving'
+  const result = await memory.savePrompt({
+    title: saveTitle.value.trim(),
+    prompt: prompt.value,
+  })
+  if (result) {
+    saveStatus.value = 'saved'
+    showSaveForm.value = false
+    saveTitle.value = ''
+    toast.push({ kind: 'success', message: 'Prompt saved to your library.' })
+    if (savedToastTimer) clearTimeout(savedToastTimer)
+    savedToastTimer = setTimeout(() => (saveStatus.value = 'idle'), 2200)
+  } else {
+    saveStatus.value = 'error'
+  }
+}
+
+function loadFromRecent(p: string): void {
+  if (session.status === 'running' || session.status === 'creating') return
+  prompt.value = p
 }
 </script>
 
@@ -91,6 +160,53 @@ function handleSaveOverrides(overrides: Record<string, PromptSectionOverride>): 
     class="bg-[var(--goa-color-surface)] border-r border-[var(--goa-color-border)] flex flex-col gap-4 p-4 overflow-y-auto h-full"
     aria-label="Task configuration"
   >
+    <!-- Recent sessions (Stream A user-memory feature) -->
+    <details v-if="memory.recentSessions.length > 0" class="group">
+      <summary
+        class="text-sm font-semibold text-[var(--goa-color-primary-dark)] cursor-pointer select-none flex items-center justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded"
+      >
+        <span>Recent sessions</span>
+        <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ memory.recentSessions.length }}</span>
+      </summary>
+      <ul class="mt-2 space-y-1 max-h-48 overflow-y-auto">
+        <li v-for="s in memory.recentSessions" :key="s.id">
+          <button
+            type="button"
+            class="w-full text-left p-2 rounded hover:bg-[var(--goa-color-primary-light)] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+            @click="loadFromRecent(s.prompt)"
+            :title="s.prompt"
+          >
+            <div class="font-medium line-clamp-1">{{ s.prompt }}</div>
+            <div class="text-[var(--goa-color-text-secondary)] mt-0.5">
+              {{ s.status }} &middot; {{ new Date(s.createdAt).toLocaleString() }}
+            </div>
+          </button>
+        </li>
+      </ul>
+    </details>
+
+    <!-- Saved prompts -->
+    <details v-if="memory.savedPrompts.length > 0" class="group">
+      <summary
+        class="text-sm font-semibold text-[var(--goa-color-primary-dark)] cursor-pointer select-none flex items-center justify-between focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded"
+      >
+        <span>Saved prompts</span>
+        <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ memory.savedPrompts.length }}</span>
+      </summary>
+      <ul class="mt-2 space-y-1 max-h-48 overflow-y-auto">
+        <li v-for="p in memory.savedPrompts" :key="p.id">
+          <button
+            type="button"
+            class="w-full text-left p-2 rounded hover:bg-[var(--goa-color-primary-light)] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+            @click="loadFromRecent(p.prompt)"
+            :title="p.prompt"
+          >
+            <div class="font-medium line-clamp-1">{{ p.title }}</div>
+          </button>
+        </li>
+      </ul>
+    </details>
+
     <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">Task Configuration</h2>
 
     <div class="flex flex-col gap-1">
@@ -188,6 +304,49 @@ function handleSaveOverrides(overrides: Record<string, PromptSectionOverride>): 
     >
       {{ startLabel }}
     </button>
+
+    <!-- Save current prompt to user library (Stream A user-memory feature) -->
+    <div v-if="auth.isAuthenticated" class="border-t border-[var(--goa-color-border)] pt-3">
+      <button
+        v-if="!showSaveForm"
+        type="button"
+        @click="openSaveForm"
+        :disabled="!prompt.trim()"
+        class="w-full py-2 px-3 text-sm font-medium border border-[var(--goa-color-primary)] text-[var(--goa-color-primary)] rounded-md hover:bg-[var(--goa-color-primary-light)] disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+      >
+        Save this prompt
+      </button>
+      <div v-else class="space-y-2" role="region" aria-label="Save prompt">
+        <label for="fa-save-title" class="text-sm font-medium">Prompt title</label>
+        <input
+          id="fa-save-title"
+          v-model="saveTitle"
+          type="text"
+          maxlength="200"
+          class="w-full p-2 border border-[var(--goa-color-border)] rounded-md text-sm focus:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        />
+        <div class="flex gap-2">
+          <button
+            type="button"
+            @click="confirmSave"
+            :disabled="!saveTitle.trim() || saveStatus === 'saving'"
+            class="flex-1 py-2 px-3 bg-[var(--goa-color-primary)] text-white text-sm font-medium rounded-md hover:bg-[var(--goa-color-primary-dark)] disabled:opacity-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-[var(--goa-color-primary)]"
+          >
+            {{ saveStatus === 'saving' ? 'Saving…' : 'Save' }}
+          </button>
+          <button
+            type="button"
+            @click="cancelSave"
+            class="px-3 py-2 text-sm border border-[var(--goa-color-border)] rounded-md hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+          >
+            Cancel
+          </button>
+        </div>
+        <p v-if="saveStatus === 'error'" class="text-xs text-[var(--goa-color-error)]">
+          Could not save. Please try again.
+        </p>
+      </div>
+    </div>
 
     <button
       v-if="session.status === 'completed' || session.status === 'error' || session.status === 'paused' || session.status === 'needs_assistance'"

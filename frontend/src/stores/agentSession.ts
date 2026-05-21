@@ -16,6 +16,7 @@ import { defineStore } from 'pinia'
 import { computed, ref, watch } from 'vue'
 import { useSSEStream } from '@/composables/useSSEStream'
 import { useToast } from '@/composables/useToast'
+import { apiFetch, type ApiError } from '@/composables/useApiFetch'
 
 export type SessionStatus =
   | 'idle'
@@ -204,15 +205,13 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     if (!sessionId.value || memoryRefreshInFlight) return
     memoryRefreshInFlight = true
     try {
-      const res = await fetch(`/api/agent/sessions/${sessionId.value}`)
-      if (!res.ok) return
-      const data = (await res.json()) as {
+      const data = await apiFetch<{
         blackboard?: BlackboardEntry[]
         scratchpad?: string
         attributes?: Record<string, unknown>
         finalReport?: unknown
         status?: SessionStatus
-      }
+      }>(`/api/agent/sessions/${sessionId.value}`)
       if (Array.isArray(data.blackboard)) blackboard.value = data.blackboard
       if (typeof data.scratchpad === 'string') scratchpad.value = data.scratchpad
       if (data.attributes && typeof data.attributes === 'object') {
@@ -232,9 +231,9 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
   async function reconcileAfterStreamError(): Promise<void> {
     if (!sessionId.value) return
     try {
-      const res = await fetch(`/api/agent/sessions/${sessionId.value}`)
-      if (!res.ok) return
-      const data = (await res.json()) as { status?: SessionStatus; isRunning?: boolean }
+      const data = await apiFetch<{ status?: SessionStatus; isRunning?: boolean }>(
+        `/api/agent/sessions/${sessionId.value}`,
+      )
       if (data.status) status.value = data.status
     } catch {
       // Ignore — UI keeps its current status until the user acts.
@@ -419,22 +418,21 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
       classification: payload.classification,
       maxIterations: payload.maxIterations,
     }
-    const res = await fetch('/api/agent/sessions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    })
-    if (!res.ok) {
+    try {
+      const data = await apiFetch<{ id: string }>('/api/agent/sessions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+      sessionId.value = data.id
+      return data.id
+    } catch (err) {
       status.value = 'error'
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      const msg = body.error || `Failed to create session (${res.status})`
+      const msg = (err as ApiError).message || 'Failed to create session.'
       pushError(msg)
       toast.push({ kind: 'error', message: msg })
-      throw new Error(msg)
+      throw err
     }
-    const data = (await res.json()) as { id: string }
-    sessionId.value = data.id
-    return data.id
   }
 
   async function startStream(opts?: {
@@ -472,12 +470,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     // the authoritative final status. Aborting the stream early would race
     // with the backend's session-lifecycle cleanup.
     try {
-      const res = await fetch(`/api/agent/sessions/${sessionId.value}/stop`, { method: 'POST' })
-      if (!res.ok) {
-        const body = (await res.json().catch(() => ({}))) as { error?: string }
-        toast.push({ kind: 'error', message: body.error || 'Failed to stop session.' })
-        return
-      }
+      await apiFetch(`/api/agent/sessions/${sessionId.value}/stop`, { method: 'POST' })
       toast.push({ kind: 'info', message: 'Stop signal sent. Halting after this iteration.' })
     } catch (err) {
       toast.push({ kind: 'error', message: (err as Error).message || 'Failed to stop session.' })
@@ -506,17 +499,16 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
 
   async function interject(message: string): Promise<void> {
     if (!sessionId.value || !message.trim()) return
-    const res = await fetch(`/api/agent/sessions/${sessionId.value}/interject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
-    })
-    if (!res.ok) {
-      const body = (await res.json().catch(() => ({}))) as { error?: string }
-      toast.push({ kind: 'error', message: body.error || 'Failed to send interjection.' })
-      return
+    try {
+      await apiFetch(`/api/agent/sessions/${sessionId.value}/interject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message }),
+      })
+      toast.push({ kind: 'info', message: 'Interjection queued for the next iteration.' })
+    } catch (err) {
+      toast.push({ kind: 'error', message: (err as Error).message || 'Failed to send interjection.' })
     }
-    toast.push({ kind: 'info', message: 'Interjection queued for the next iteration.' })
   }
 
   return {

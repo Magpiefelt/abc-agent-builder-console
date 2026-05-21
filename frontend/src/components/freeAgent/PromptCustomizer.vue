@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import type { PromptSectionOverride } from '@/stores/agentSession'
 import { useFocusTrap } from '@/composables/useFocusTrap'
+import { apiFetch } from '@/composables/useApiFetch'
 
 interface PromptSection {
   id: string
@@ -31,9 +32,7 @@ useFocusTrap(dialogRef, { onEscape: () => emit('close') })
 onMounted(async () => {
   loading.value = true
   try {
-    const res = await fetch('/api/agent/prompt-template')
-    if (!res.ok) throw new Error(`Failed to load prompt sections (${res.status})`)
-    const data = (await res.json()) as { sections: PromptSection[] }
+    const data = await apiFetch<{ sections: PromptSection[] }>('/api/agent/prompt-template')
     sections.value = data.sections ?? []
     for (const s of sections.value) {
       baseSections.value[s.id] = s
