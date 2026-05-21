@@ -23,6 +23,7 @@ import { validateConnectionAllowlist, closeDatabaseToolPools } from "./tools/dat
 import { validateEmailAllowlist } from "./tools/communication.js";
 import healthRoutes from "./routes/health.js";
 import agentRoutes from "./routes/agent.js";
+import workflowRoutes from "./routes/workflow.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
 
@@ -116,10 +117,8 @@ app.use("/api/users", authenticate, userRoutes);
 // Agent routes with granular per-endpoint rate limiting
 app.use("/api/agent", agentRateLimit, agentRoutes);
 
-// Placeholder routes for future phases
-app.use("/api/workflows", (_req, res) => {
-  res.json({ message: "Workflow routes - Phase 5" });
-});
+// Workflow canvas routes (Stream C)
+app.use("/api/workflows", agentRateLimit, workflowRoutes);
 
 app.use("/api/admin", (_req, res) => {
   res.json({ message: "Admin routes - Phase 6" });
