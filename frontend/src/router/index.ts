@@ -18,6 +18,13 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/sessions/:id',
+      name: 'session-replay',
+      component: FreeAgentView,
+      meta: { requiresAuth: true },
+      props: true,
+    },
+    {
       path: '/workflows',
       name: 'workflow-list',
       component: () => import('@/views/WorkflowListView.vue'),

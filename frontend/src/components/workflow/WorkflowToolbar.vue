@@ -141,7 +141,7 @@ const statusBadgeType: Record<ExecutionStatus, 'information' | 'success' | 'emer
       type="tertiary"
       size="compact"
       leadingicon="download"
-      title="Export workflow as JSON"
+      title="Export this workflow as a portable JSON file"
       @_click="emit('export')"
     >
       Export

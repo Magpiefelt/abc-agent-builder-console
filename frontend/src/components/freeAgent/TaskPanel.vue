@@ -9,12 +9,12 @@ import { useToast } from '@/composables/useToast'
 import PromptCustomizer from './PromptCustomizer.vue'
 
 const session = useAgentSessionStore()
+const route = useRoute()
+const router = useRouter()
 const modelsStore = useModelsStore()
 const memory = useUserMemoryStore()
 const auth = useAuthStore()
 const toast = useToast()
-const route = useRoute()
-const router = useRouter()
 
 const prompt = ref('')
 const selectedModelId = ref<string>('')
@@ -93,6 +93,26 @@ watch(
   },
 )
 
+// In replay mode, mirror the session's persisted metadata into the local form
+// state so the (disabled) inputs show what the user originally configured.
+watch(
+  () => session.replayMode && session.sessionMeta,
+  (meta) => {
+    if (!meta) return
+    prompt.value = meta.prompt
+    selectedModelId.value = meta.modelId
+    if (
+      meta.classification === 'unclassified' ||
+      meta.classification === 'protected_a' ||
+      meta.classification === 'protected_b'
+    ) {
+      classification.value = meta.classification
+    }
+    maxIterations.value = meta.maxIterations
+  },
+  { immediate: true },
+)
+
 onBeforeUnmount(() => {
   if (savedToastTimer) clearTimeout(savedToastTimer)
 })
@@ -163,6 +183,15 @@ function loadFromRecent(p: string): void {
   if (session.status === 'running' || session.status === 'creating') return
   prompt.value = p
 }
+
+function viewSession(id: string): void {
+  router.push({ name: 'session-replay', params: { id } })
+}
+
+function exitReplayAndReset(): void {
+  session.reset()
+  router.push({ name: 'free-agent' })
+}
 </script>
 
 <template>
@@ -179,17 +208,26 @@ function loadFromRecent(p: string): void {
         <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ memory.recentSessions.length }}</span>
       </summary>
       <ul class="mt-2 space-y-1 max-h-48 overflow-y-auto">
-        <li v-for="s in memory.recentSessions" :key="s.id">
+        <li v-for="s in memory.recentSessions" :key="s.id" class="flex items-stretch gap-1">
           <button
             type="button"
-            class="w-full text-left p-2 rounded hover:bg-[var(--goa-color-primary-light)] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+            class="flex-1 text-left p-2 rounded hover:bg-[var(--goa-color-primary-light)] text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
             @click="loadFromRecent(s.prompt)"
-            :title="s.prompt"
+            :title="`Use this prompt: ${s.prompt}`"
           >
             <div class="font-medium line-clamp-1">{{ s.prompt }}</div>
             <div class="text-[var(--goa-color-text-secondary)] mt-0.5">
               {{ s.status }} &middot; {{ new Date(s.createdAt).toLocaleString() }}
             </div>
+          </button>
+          <button
+            type="button"
+            class="shrink-0 px-2 rounded text-xs text-[var(--goa-color-primary)] hover:bg-[var(--goa-color-primary-light)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+            :title="`View session ${s.id}`"
+            aria-label="View this session in replay mode"
+            @click="viewSession(s.id)"
+          >
+            View
           </button>
         </li>
       </ul>
@@ -217,7 +255,17 @@ function loadFromRecent(p: string): void {
       </ul>
     </details>
 
-    <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">Task Configuration</h2>
+    <h2 class="text-lg font-semibold text-[var(--goa-color-primary-dark)]">
+      {{ session.replayMode ? 'Session Replay' : 'Task Configuration' }}
+    </h2>
+
+    <goa-callout
+      v-if="session.replayMode"
+      type="information"
+      heading="Read-only replay"
+    >
+      You're viewing a past session. To run a new task, exit replay first.
+    </goa-callout>
 
     <goa-form-item label="Task Description">
       <goa-textarea
@@ -225,7 +273,7 @@ function loadFromRecent(p: string): void {
         :value="prompt"
         rows="6"
         placeholder="Describe what you want the agent to do..."
-        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        :disabled="session.status === 'running' || session.status === 'creating' || session.replayMode || undefined"
         @_change="(e: CustomEvent<{ value: string }>) => (prompt = e.detail.value)"
       ></goa-textarea>
     </goa-form-item>
@@ -234,7 +282,7 @@ function loadFromRecent(p: string): void {
       <goa-dropdown
         name="modelId"
         :value="selectedModelId"
-        :disabled="modelsStore.loading || session.status === 'running' || session.status === 'creating' || undefined"
+        :disabled="modelsStore.loading || session.status === 'running' || session.status === 'creating' || session.replayMode || undefined"
         width="100%"
         @_change="(e: CustomEvent<{ value: string }>) => (selectedModelId = e.detail.value)"
       >
@@ -257,7 +305,7 @@ function loadFromRecent(p: string): void {
       <goa-dropdown
         name="classification"
         :value="classification"
-        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        :disabled="session.status === 'running' || session.status === 'creating' || session.replayMode || undefined"
         width="100%"
         @_change="(e: CustomEvent<{ value: 'unclassified' | 'protected_a' | 'protected_b' }>) => (classification = e.detail.value)"
       >
@@ -274,7 +322,7 @@ function loadFromRecent(p: string): void {
         :value="String(maxIterations)"
         min="1"
         max="100"
-        :disabled="session.status === 'running' || session.status === 'creating' || undefined"
+        :disabled="session.status === 'running' || session.status === 'creating' || session.replayMode || undefined"
         width="100%"
         @_change="(e: CustomEvent<{ value: string }>) => (maxIterations = Number(e.detail.value) || 10)"
       ></goa-input>
@@ -301,6 +349,7 @@ function loadFromRecent(p: string): void {
     </goa-callout>
 
     <goa-button
+      v-if="!session.replayMode"
       type="primary"
       :disabled="startDisabled || !!classificationWarning || undefined"
       @_click="handleStart"
@@ -308,8 +357,16 @@ function loadFromRecent(p: string): void {
       {{ startLabel }}
     </goa-button>
 
+    <goa-button
+      v-else
+      type="primary"
+      @_click="exitReplayAndReset"
+    >
+      Exit replay
+    </goa-button>
+
     <!-- Save current prompt to user library (Stream A user-memory feature) -->
-    <div v-if="auth.isAuthenticated" class="border-t border-[var(--goa-color-border)] pt-3">
+    <div v-if="auth.isAuthenticated && !session.replayMode" class="border-t border-[var(--goa-color-border)] pt-3">
       <goa-button
         v-if="!showSaveForm"
         type="secondary"
@@ -345,7 +402,7 @@ function loadFromRecent(p: string): void {
     </div>
 
     <goa-button
-      v-if="session.status === 'completed' || session.status === 'error' || session.status === 'paused' || session.status === 'needs_assistance'"
+      v-if="!session.replayMode && (session.status === 'completed' || session.status === 'error' || session.status === 'paused' || session.status === 'needs_assistance')"
       type="secondary"
       @_click="handleNewSession"
     >

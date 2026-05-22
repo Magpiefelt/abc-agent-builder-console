@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useAgentSessionStore } from '@/stores/agentSession'
 import TaskPanel from '@/components/freeAgent/TaskPanel.vue'
 import ControlBar from '@/components/freeAgent/ControlBar.vue'
@@ -14,8 +15,11 @@ import { useDocumentTitle } from '@/composables/useDocumentTitle'
 type MemoryTab = 'blackboard' | 'scratchpad' | 'artifacts'
 
 const session = useAgentSessionStore()
+const route = useRoute()
+const router = useRouter()
 
 useDocumentTitle(() => {
+  if (session.replayMode) return 'Free Agent · replay'
   switch (session.status) {
     case 'running': return 'Free Agent · running'
     case 'paused': return 'Free Agent · paused'
@@ -25,6 +29,7 @@ useDocumentTitle(() => {
     default: return 'Free Agent'
   }
 })
+
 const memoryTab = ref<MemoryTab>('blackboard')
 const taskOpenMobile = ref(true)
 const sheetOpenMobile = ref(false)
@@ -33,6 +38,39 @@ const showFinalReport = computed(
   () => session.status === 'completed' && session.finalReport !== null,
 )
 
+const replayId = computed(() => {
+  // `route` is undefined when this view is mounted outside a router (e.g. in
+  // isolated unit tests that don't install vue-router).
+  const id = route?.params?.id
+  return typeof id === 'string' && id ? id : null
+})
+
+async function hydrateReplay(id: string): Promise<void> {
+  await session.loadReplay(id)
+}
+
+onMounted(() => {
+  if (replayId.value) {
+    void hydrateReplay(replayId.value)
+  } else if (session.replayMode) {
+    // Returning to "/" from a replay route should clear the read-only state.
+    session.reset()
+  }
+})
+
+watch(replayId, (id, prev) => {
+  if (id && id !== prev) {
+    void hydrateReplay(id)
+  } else if (!id && session.replayMode) {
+    session.reset()
+  }
+})
+
+function exitReplay(): void {
+  session.reset()
+  router?.push({ name: 'free-agent' })
+}
+
 function selectTab(tab: MemoryTab): void {
   memoryTab.value = tab
   sheetOpenMobile.value = true
@@ -40,7 +78,34 @@ function selectTab(tab: MemoryTab): void {
 </script>
 
 <template>
-  <div class="h-full flex flex-col md:flex-row min-h-0">
+  <div class="h-full flex flex-col min-h-0">
+    <!-- Replay banner: only when viewing a past session -->
+    <div
+      v-if="session.replayMode"
+      class="px-4 py-2 bg-[var(--goa-color-primary-light)] border-b border-[var(--goa-color-border)] flex items-center justify-between text-sm"
+      role="status"
+      aria-live="polite"
+    >
+      <div class="flex items-center gap-3">
+        <span class="font-semibold text-[var(--goa-color-primary-dark)]">
+          Viewing past session
+        </span>
+        <span v-if="session.replayLoading" class="text-[var(--goa-color-text-secondary)]">
+          Loading…
+        </span>
+        <span v-else-if="session.replayError" class="text-[var(--goa-color-emergency)]">
+          {{ session.replayError }}
+        </span>
+        <span v-else class="text-[var(--goa-color-text-secondary)]">
+          Status: {{ session.status }} &middot; {{ session.iterations.length }} iteration(s)
+        </span>
+      </div>
+      <goa-button type="tertiary" size="compact" leadingicon="close" @_click="exitReplay">
+        Exit replay
+      </goa-button>
+    </div>
+
+  <div class="flex-1 flex flex-col md:flex-row min-h-0">
     <!-- Desktop: left panel -->
     <aside class="hidden md:flex md:w-80 md:shrink-0 h-full" aria-label="Task configuration">
       <TaskPanel class="w-full" />
@@ -161,5 +226,6 @@ function selectTab(tab: MemoryTab): void {
         </button>
       </nav>
     </div>
+  </div>
   </div>
 </template>

@@ -109,7 +109,7 @@ describe("Accessibility (axe-core, WCAG 2.1 A+AA)", () => {
   });
 
   it("FreeAgentView has no serious/critical violations", async () => {
-    const results = await runAxeOnMount(FreeAgentView);
+    const results = await runAxeOnMount(FreeAgentView, { withRouter: true });
     expect(() => failOnSeriousOrCritical(results, "FreeAgentView")).not.toThrow();
   });
 });

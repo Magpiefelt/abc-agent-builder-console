@@ -236,3 +236,90 @@ describe("POST /api/admin/retention/run", () => {
     expect(res.body.error).toBeDefined();
   });
 });
+
+// ---------------------------------------------------------------------------
+// GET /api/admin/dashboard
+// ---------------------------------------------------------------------------
+
+describe("GET /api/admin/dashboard", () => {
+  // The route fires ten parallel queries via Promise.all; setup queues
+  // matching responses in declaration order. The leading audit-log insert
+  // from the auditAdminAccess middleware uses the default mock above.
+  function queueDashboardResponses(): void {
+    queryMock
+      .mockResolvedValueOnce({ rows: [{ d24h: "5", d7d: "30", d30d: "120" }], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [
+          { status: "completed", count: "80" },
+          { status: "error", count: "10" },
+        ],
+        rowCount: 2,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ classification: "unclassified", count: "100" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ d24h: "2", d7d: "15", d30d: "40" }], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{ status: "completed", count: "35" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [
+          { tool: "web_search", calls: "20", successes: "18" },
+          { tool: "web_scrape", calls: "12", successes: "12" },
+        ],
+        rowCount: 2,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ model_id: "claude-sonnet-4-6", sessions: "60" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({ rows: [{ count: "4" }], rowCount: 1 })
+      .mockResolvedValueOnce({
+        rows: [{ detection_type: "sin", count: "3" }],
+        rowCount: 1,
+      })
+      .mockResolvedValueOnce({
+        rows: [{ action_taken: "blocked", count: "4" }],
+        rowCount: 1,
+      });
+  }
+
+  it("returns 200 with a complete dashboard payload", async () => {
+    queueDashboardResponses();
+
+    const res = await request(makeApp()).get("/api/admin/dashboard");
+    expect(res.status).toBe(200);
+    expect(res.body.generatedAt).toBeDefined();
+    // Sessions
+    expect(res.body.sessions.totals).toEqual([
+      { windowLabel: "24h", count: 5 },
+      { windowLabel: "7d", count: 30 },
+      { windowLabel: "30d", count: 120 },
+    ]);
+    expect(res.body.sessions.byStatus).toHaveLength(2);
+    expect(res.body.sessions.byClassification).toHaveLength(1);
+    // Workflow executions
+    expect(res.body.workflowExecutions.totals[1]).toEqual({ windowLabel: "7d", count: 15 });
+    // Tools — counts should be coerced from string to number.
+    expect(res.body.tools[0]).toEqual({ tool: "web_search", calls: 20, successes: 18 });
+    // Models
+    expect(res.body.models[0]).toEqual({ modelId: "claude-sonnet-4-6", sessions: 60 });
+    // PII
+    expect(res.body.pii.last7Days).toBe(4);
+    expect(res.body.pii.byType).toEqual([{ detectionType: "sin", count: 3 }]);
+    expect(res.body.pii.byAction).toEqual([{ action: "blocked", count: 4 }]);
+  });
+
+  it("returns 500 when an aggregation query fails", async () => {
+    // First query succeeds (it's the audit_log insert from middleware), then
+    // the dashboard fan-out rejects. Promise.all surfaces the rejection.
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    queryMock.mockRejectedValue(new Error("connection refused"));
+
+    const res = await request(makeApp()).get("/api/admin/dashboard");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/dashboard/i);
+  });
+});

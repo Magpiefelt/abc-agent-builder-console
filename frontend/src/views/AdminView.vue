@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref, computed, watch, markRaw, type Component } from 'vue'
+import DashboardPanel from '@/components/admin/DashboardPanel.vue'
 import AuditLogViewer from '@/components/admin/AuditLogViewer.vue'
 import PIIDetectionViewer from '@/components/admin/PIIDetectionViewer.vue'
 import ModelRegistryEditor from '@/components/admin/ModelRegistryEditor.vue'
@@ -16,11 +17,12 @@ interface Tab {
 // markRaw: components do not need to be reactive themselves; this avoids
 // Vue wrapping them in a Proxy on every render.
 const tabs: Tab[] = [
-  { id: 'audit',    label: 'Audit Log',          component: markRaw(AuditLogViewer) },
-  { id: 'pii',      label: 'PII Detections',     component: markRaw(PIIDetectionViewer) },
-  { id: 'models',   label: 'Model Registry',     component: markRaw(ModelRegistryEditor) },
-  { id: 'sessions', label: 'Sessions',           component: markRaw(SessionInspector) },
-  { id: 'health',   label: 'Health Diagnostics', component: markRaw(HealthDiagnostics) },
+  { id: 'dashboard', label: 'Dashboard',          component: markRaw(DashboardPanel) },
+  { id: 'audit',     label: 'Audit Log',          component: markRaw(AuditLogViewer) },
+  { id: 'pii',       label: 'PII Detections',     component: markRaw(PIIDetectionViewer) },
+  { id: 'models',    label: 'Model Registry',     component: markRaw(ModelRegistryEditor) },
+  { id: 'sessions',  label: 'Sessions',           component: markRaw(SessionInspector) },
+  { id: 'health',    label: 'Health Diagnostics', component: markRaw(HealthDiagnostics) },
 ]
 
 const tabIds = tabs.map((t) => t.id)

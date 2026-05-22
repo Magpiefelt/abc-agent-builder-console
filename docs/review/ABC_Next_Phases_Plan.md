@@ -1,8 +1,36 @@
 # ABC Agent Builder Console — Next Phases Work Plan
 
-**Date:** May 21, 2026
+**Date:** May 21, 2026 (updated with Feature-Depth slice)
 **Author:** Manus AI
 **Target Repository:** `Magpiefelt/abc-agent-builder-console`
+
+## 0. Feature-Depth Slice (delivered)
+
+The following items from the recommendations document have landed:
+
+- **Operational dashboard (3.2)** — new `GET /api/admin/dashboard` returns
+  pre-aggregated session counts (24h/7d/30d), workflow-execution counts,
+  session status + classification breakdowns, top tools (7d, with success
+  rate), top models (30d), and PII detections by type/action. The Admin
+  view gains a new "Dashboard" tab (now the default landing tab) backed by
+  `DashboardPanel.vue`. Aggregation happens in SQL via `FILTER` /
+  `jsonb_array_elements` rather than client-side reduce, so the call stays
+  fast even with large audit tables.
+- **Session replay / history view (3.4)** — new `/sessions/:id` route,
+  `loadReplay()` action on the agent session store, read-only banner +
+  disabled controls in `FreeAgentView`/`TaskPanel`, and a "View"
+  affordance on each recent-session entry. Hydrates from the existing
+  `GET /api/agent/sessions/:id`, `…/iterations`, and `…/artifacts`
+  endpoints.
+- **Parallel branch execution (3.5)** — `analyzeGraph()` now returns
+  layered topological order; `runWorkflow()` executes each layer with
+  `Promise.all()` and only advances when the layer settles. Branch
+  pruning happens between layers so siblings never affect each other.
+
+Already delivered on `main` ahead of this branch (PRs #19, #20):
+workflow export/import (3.3), GoA agent templates (3.1), inbound PII
+scan, model registry wiring in WorkflowView (2.3), ministry filter
+(2.4), document titles, keyboard shortcuts, toast feedback.
 
 ## 1. Context and Current State
 

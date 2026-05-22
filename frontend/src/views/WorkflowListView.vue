@@ -199,6 +199,7 @@ function formatDate(iso: string): string {
           type="file"
           accept="application/json,.json"
           class="sr-only"
+          aria-label="Workflow JSON file to import"
           @change="onImportFileChosen"
         />
         <goa-button type="primary" leadingicon="add" @_click="toggleCreate">

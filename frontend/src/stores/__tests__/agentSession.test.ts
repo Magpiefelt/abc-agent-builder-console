@@ -603,3 +603,128 @@ describe("useAgentSessionStore — refreshSessionMemory", () => {
     expect(store.blackboard).toEqual([]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Session replay
+// ---------------------------------------------------------------------------
+
+describe("useAgentSessionStore — loadReplay", () => {
+  function mockReplayResponses(): void {
+    apiFetchMock.mockImplementation(async (url: string) => {
+      if (url.endsWith("/iterations")) {
+        return {
+          iterations: [
+            {
+              iterationNumber: 1,
+              status: "completed",
+              userPrompt: null,
+              parsedResponse: {
+                thinking: "think 1",
+                status: "in_progress",
+                toolCallCount: 1,
+              },
+              toolCalls: [{ tool: "web_search" }],
+              toolResults: [
+                { tool: "web_search", success: true, durationMs: 42 },
+              ],
+              error: null,
+              tokensUsed: 100,
+              durationMs: 200,
+            },
+            {
+              iterationNumber: 2,
+              status: "completed",
+              userPrompt: null,
+              parsedResponse: { status: "complete" },
+              toolCalls: [],
+              toolResults: [],
+              error: null,
+              tokensUsed: 50,
+              durationMs: 80,
+            },
+          ],
+        };
+      }
+      if (url.endsWith("/artifacts")) {
+        return {
+          artifacts: [
+            {
+              id: "a1",
+              artifact_type: "document",
+              title: "Notes",
+              description: null,
+              mime_type: "text/markdown",
+              size_bytes: 1234,
+              iteration: 1,
+            },
+          ],
+        };
+      }
+      // Base session payload
+      return {
+        id: "sess-1",
+        status: "completed",
+        prompt: "Research topic X",
+        modelId: "claude-sonnet-4-6",
+        maxIterations: 10,
+        currentIteration: 2,
+        classification: "unclassified",
+        blackboard: [{ category: "facts", title: "f1", content: "v", iteration: 1 }],
+        scratchpad: "draft notes",
+        attributes: { topic: "X" },
+        finalReport: { summary: "done" },
+        error: null,
+      };
+    });
+  }
+
+  it("hydrates the store from the three replay endpoints and flips into replay mode", async () => {
+    mockReplayResponses();
+    const store = useAgentSessionStore();
+    await store.loadReplay("sess-1");
+
+    expect(store.replayMode).toBe(true);
+    expect(store.replayLoading).toBe(false);
+    expect(store.replayError).toBeNull();
+    expect(store.sessionId).toBe("sess-1");
+    expect(store.status).toBe("completed");
+    expect(store.sessionMeta?.prompt).toBe("Research topic X");
+    expect(store.blackboard).toHaveLength(1);
+    expect(store.scratchpad).toBe("draft notes");
+    expect(store.attributes).toEqual({ topic: "X" });
+    expect(store.finalReport).toEqual({ summary: "done" });
+    expect(store.iterations).toHaveLength(2);
+    expect(store.iterations[0].toolCalls).toHaveLength(1);
+    expect(store.toolCallLog).toHaveLength(1);
+    expect(store.artifacts).toHaveLength(1);
+    expect(store.artifacts[0].title).toBe("Notes");
+  });
+
+  it("disables canStop/canContinue/canInterject in replay mode", async () => {
+    mockReplayResponses();
+    const store = useAgentSessionStore();
+    await store.loadReplay("sess-1");
+    expect(store.canStop).toBe(false);
+    expect(store.canContinue).toBe(false);
+    expect(store.canInterject).toBe(false);
+  });
+
+  it("reset() clears replay mode", async () => {
+    mockReplayResponses();
+    const store = useAgentSessionStore();
+    await store.loadReplay("sess-1");
+    expect(store.replayMode).toBe(true);
+    store.reset();
+    expect(store.replayMode).toBe(false);
+    expect(store.iterations).toEqual([]);
+    expect(store.sessionId).toBeNull();
+  });
+
+  it("records replayError when the session fetch fails", async () => {
+    apiFetchMock.mockRejectedValue(new Error("not found"));
+    const store = useAgentSessionStore();
+    await store.loadReplay("missing-id");
+    expect(store.replayError).toMatch(/not found/);
+    expect(store.status).toBe("error");
+  });
+});

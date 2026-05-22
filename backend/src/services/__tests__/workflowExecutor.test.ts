@@ -423,6 +423,88 @@ describe("runWorkflow — continueOnError = true", () => {
 // runWorkflow — classification validation failure
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// runWorkflow — parallel layer execution
+// ---------------------------------------------------------------------------
+
+describe("runWorkflow — parallel layer execution", () => {
+  it("emits stage_start for every independent sibling before any stage_complete", async () => {
+    // Three roots with no edges should all enter the running state together.
+    const canvas: CanvasData = {
+      version: 1,
+      nodes: [
+        { id: "p1", type: "function", position: { x: 0, y: 0 }, data: { kind: "function", label: "A", fnName: "to_upper", params: {} } },
+        { id: "p2", type: "function", position: { x: 0, y: 0 }, data: { kind: "function", label: "B", fnName: "to_upper", params: {} } },
+        { id: "p3", type: "function", position: { x: 0, y: 0 }, data: { kind: "function", label: "C", fnName: "to_upper", params: {} } },
+      ],
+      edges: [],
+    };
+
+    const res = makeMockRes();
+    await runWorkflow(makeWorkflow(canvas), res as never, ctx);
+
+    const events = res.events();
+    // The first three "stage_*" events must be stage_starts (not interleaved with completes).
+    const stageEvents = events.filter((e) => e.type === "stage_start" || e.type === "stage_complete");
+    expect(stageEvents.slice(0, 3).every((e) => e.type === "stage_start")).toBe(true);
+    // And we should see exactly three of each.
+    expect(stageEvents.filter((e) => e.type === "stage_start")).toHaveLength(3);
+    expect(stageEvents.filter((e) => e.type === "stage_complete")).toHaveLength(3);
+  });
+
+  it("runs siblings concurrently and dependents wait for the prior layer", async () => {
+    // Diamond: a → (b1, b2) → c
+    // b1 and b2 should run together, finishing before c starts.
+    let activeFnCalls = 0;
+    let maxConcurrent = 0;
+    callLLMMock.mockImplementation(async () => {
+      activeFnCalls++;
+      maxConcurrent = Math.max(maxConcurrent, activeFnCalls);
+      await new Promise((r) => setTimeout(r, 10));
+      activeFnCalls--;
+      return { content: "ok", usage: { totalTokens: 5 } };
+    });
+
+    const agentNode = (id: string) => ({
+      id,
+      type: "agent" as const,
+      position: { x: 0, y: 0 },
+      data: {
+        kind: "agent" as const,
+        label: id,
+        modelId: "claude-sonnet-4-6",
+        classification: "unclassified" as const,
+        tools: [],
+        temperature: 0.7,
+        maxTokens: 100,
+      },
+    });
+    const canvas: CanvasData = {
+      version: 1,
+      nodes: [agentNode("a"), agentNode("b1"), agentNode("b2"), agentNode("c")],
+      edges: [
+        { id: "e1", source: "a", target: "b1" },
+        { id: "e2", source: "a", target: "b2" },
+        { id: "e3", source: "b1", target: "c" },
+        { id: "e4", source: "b2", target: "c" },
+      ],
+    };
+
+    const res = makeMockRes();
+    await runWorkflow(makeWorkflow(canvas), res as never, ctx);
+
+    // b1 and b2 ran in the same layer, so the executor should have launched
+    // them concurrently.
+    expect(maxConcurrent).toBeGreaterThanOrEqual(2);
+
+    // All four stages completed.
+    const completes = res.events().filter((e) => e.type === "stage_complete");
+    expect(completes).toHaveLength(4);
+    // c is the last to complete (depends on b1 and b2).
+    expect(completes[completes.length - 1].nodeId).toBe("c");
+  });
+});
+
 describe("runWorkflow — classification validation", () => {
   it("sends classification error SSE when model is not allowed for workflow classification", async () => {
     validateModelClassificationMock.mockResolvedValueOnce({

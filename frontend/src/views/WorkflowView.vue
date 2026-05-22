@@ -28,9 +28,19 @@ useDocumentTitle(() => {
 })
 
 const classifications: Classification[] = ['unclassified', 'protected_a', 'protected_b']
-
+// Pull from the registry so new approved models appear in both Free Agent and
+// Workflow modes automatically; fall back to the four known models if the
+// registry call is still loading so the dropdowns aren't empty on first paint.
+const FALLBACK_MODELS: { id: string; name: string }[] = [
+  { id: 'claude-opus-4-7', name: 'Claude Opus 4.7' },
+  { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6' },
+  { id: 'claude-haiku-4-5', name: 'Claude Haiku 4.5' },
+  { id: 'gemini-2.5-flash', name: 'Gemini 2.5 Flash' },
+]
 const models = computed(() =>
-  modelsStore.models.map((m) => ({ id: m.id, name: m.name })),
+  modelsStore.models.length > 0
+    ? modelsStore.models.map((m) => ({ id: m.id, name: m.name }))
+    : FALLBACK_MODELS,
 )
 
 const runError = ref<string | null>(null)

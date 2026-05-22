@@ -13,6 +13,7 @@
  *   PUT  /api/admin/models/:id              { is_active: boolean }
  *   GET  /api/admin/sessions?status=&limit=
  *   POST /api/admin/retention/run
+ *   GET  /api/admin/dashboard                — pre-aggregated operational stats
  *
  * Note: detailed health diagnostics live at GET /api/health/detailed
  * (also admin-gated) to keep operational observability in one place.
@@ -452,6 +453,215 @@ router.post("/retention/run", async (req: Request, res: Response) => {
   } catch (err) {
     logger.error("Manual retention pass failed", err as Error);
     res.status(500).json({ error: "Retention pass failed.", message: (err as Error).message });
+  }
+});
+
+// ============================================================================
+// DASHBOARD — pre-aggregated operational stats
+// ============================================================================
+//
+// One round-trip the admin dashboard panel uses to draw all of its tiles.
+// Every numeric series is bucketed in SQL — aggregating thousands of audit
+// rows in the browser would be slow and brittle. Windows are fixed to "last
+// 24 hours", "last 7 days", and "last 30 days" so the SQL planner can use
+// the existing created_at indexes without scanning the full table.
+
+interface DashboardCount {
+  windowLabel: "24h" | "7d" | "30d";
+  count: number;
+}
+
+interface DashboardStatusBreakdown {
+  status: string;
+  count: number;
+}
+
+interface DashboardClassificationBreakdown {
+  classification: string;
+  count: number;
+}
+
+interface DashboardToolUsage {
+  tool: string;
+  calls: number;
+  successes: number;
+}
+
+interface DashboardModelUsage {
+  modelId: string;
+  sessions: number;
+}
+
+interface DashboardPiiByType {
+  detectionType: string;
+  count: number;
+}
+
+interface DashboardResponse {
+  generatedAt: string;
+  sessions: {
+    totals: DashboardCount[];
+    byStatus: DashboardStatusBreakdown[];
+    byClassification: DashboardClassificationBreakdown[];
+  };
+  workflowExecutions: {
+    totals: DashboardCount[];
+    byStatus: DashboardStatusBreakdown[];
+  };
+  tools: DashboardToolUsage[];
+  models: DashboardModelUsage[];
+  pii: {
+    last7Days: number;
+    byType: DashboardPiiByType[];
+    byAction: { action: string; count: number }[];
+  };
+}
+
+router.get("/dashboard", async (_req: Request, res: Response) => {
+  try {
+    const [
+      sessionTotals,
+      sessionByStatus,
+      sessionByClassification,
+      executionTotals,
+      executionByStatus,
+      toolUsage,
+      modelUsage,
+      piiTotal,
+      piiByType,
+      piiByAction,
+    ] = await Promise.all([
+      // Session totals across the three windows in a single row.
+      query<{ d24h: string; d7d: string; d30d: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '24 hours') AS d24h,
+           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '7 days')   AS d7d,
+           COUNT(*) FILTER (WHERE created_at >= NOW() - INTERVAL '30 days')  AS d30d
+         FROM agent_sessions`,
+      ),
+      query<{ status: string; count: string }>(
+        `SELECT status, COUNT(*) AS count
+           FROM agent_sessions
+          WHERE created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY status
+          ORDER BY count DESC`,
+      ),
+      query<{ classification: string; count: string }>(
+        `SELECT classification, COUNT(*) AS count
+           FROM agent_sessions
+          WHERE created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY classification
+          ORDER BY count DESC`,
+      ),
+      query<{ d24h: string; d7d: string; d30d: string }>(
+        `SELECT
+           COUNT(*) FILTER (WHERE started_at >= NOW() - INTERVAL '24 hours') AS d24h,
+           COUNT(*) FILTER (WHERE started_at >= NOW() - INTERVAL '7 days')   AS d7d,
+           COUNT(*) FILTER (WHERE started_at >= NOW() - INTERVAL '30 days')  AS d30d
+         FROM workflow_executions`,
+      ),
+      query<{ status: string; count: string }>(
+        `SELECT status, COUNT(*) AS count
+           FROM workflow_executions
+          WHERE started_at >= NOW() - INTERVAL '30 days'
+          GROUP BY status
+          ORDER BY count DESC`,
+      ),
+      // Tool usage from the last 7d of iteration logs. tool_results is a JSONB
+      // array of { tool, success, ... }; jsonb_array_elements unrolls it so we
+      // can group by tool name.
+      query<{ tool: string; calls: string; successes: string }>(
+        `SELECT
+           tr->>'tool' AS tool,
+           COUNT(*) AS calls,
+           COUNT(*) FILTER (WHERE (tr->>'success')::boolean) AS successes
+         FROM agent_iterations,
+              jsonb_array_elements(COALESCE(tool_results, '[]'::jsonb)) AS tr
+         WHERE created_at >= NOW() - INTERVAL '7 days'
+           AND tr ? 'tool'
+         GROUP BY tool
+         ORDER BY calls DESC
+         LIMIT 10`,
+      ),
+      query<{ model_id: string; sessions: string }>(
+        `SELECT model_id, COUNT(*) AS sessions
+           FROM agent_sessions
+          WHERE created_at >= NOW() - INTERVAL '30 days'
+          GROUP BY model_id
+          ORDER BY sessions DESC
+          LIMIT 10`,
+      ),
+      query<{ count: string }>(
+        `SELECT COUNT(*) AS count
+           FROM pii_detections
+          WHERE created_at >= NOW() - INTERVAL '7 days'`,
+      ),
+      query<{ detection_type: string; count: string }>(
+        `SELECT detection_type, COUNT(*) AS count
+           FROM pii_detections
+          WHERE created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY detection_type
+          ORDER BY count DESC`,
+      ),
+      query<{ action_taken: string; count: string }>(
+        `SELECT action_taken, COUNT(*) AS count
+           FROM pii_detections
+          WHERE created_at >= NOW() - INTERVAL '7 days'
+          GROUP BY action_taken
+          ORDER BY count DESC`,
+      ),
+    ]);
+
+    const toInt = (s: string | number | undefined): number =>
+      s === undefined || s === null ? 0 : Number(s);
+
+    const body: DashboardResponse = {
+      generatedAt: new Date().toISOString(),
+      sessions: {
+        totals: [
+          { windowLabel: "24h", count: toInt(sessionTotals.rows[0]?.d24h) },
+          { windowLabel: "7d", count: toInt(sessionTotals.rows[0]?.d7d) },
+          { windowLabel: "30d", count: toInt(sessionTotals.rows[0]?.d30d) },
+        ],
+        byStatus: sessionByStatus.rows.map((r) => ({ status: r.status, count: toInt(r.count) })),
+        byClassification: sessionByClassification.rows.map((r) => ({
+          classification: r.classification,
+          count: toInt(r.count),
+        })),
+      },
+      workflowExecutions: {
+        totals: [
+          { windowLabel: "24h", count: toInt(executionTotals.rows[0]?.d24h) },
+          { windowLabel: "7d", count: toInt(executionTotals.rows[0]?.d7d) },
+          { windowLabel: "30d", count: toInt(executionTotals.rows[0]?.d30d) },
+        ],
+        byStatus: executionByStatus.rows.map((r) => ({ status: r.status, count: toInt(r.count) })),
+      },
+      tools: toolUsage.rows.map((r) => ({
+        tool: r.tool,
+        calls: toInt(r.calls),
+        successes: toInt(r.successes),
+      })),
+      models: modelUsage.rows.map((r) => ({
+        modelId: r.model_id,
+        sessions: toInt(r.sessions),
+      })),
+      pii: {
+        last7Days: toInt(piiTotal.rows[0]?.count),
+        byType: piiByType.rows.map((r) => ({
+          detectionType: r.detection_type,
+          count: toInt(r.count),
+        })),
+        byAction: piiByAction.rows.map((r) => ({
+          action: r.action_taken,
+          count: toInt(r.count),
+        })),
+      },
+    };
+    res.json(body);
+  } catch (err) {
+    logger.error("Failed to build dashboard payload", err as Error);
+    res.status(500).json({ error: "Failed to load dashboard." });
   }
 });
 
