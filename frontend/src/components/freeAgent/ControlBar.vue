@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
 import { useAgentSessionStore } from '@/stores/agentSession'
+import { useKeyboardShortcuts } from '@/composables/useKeyboardShortcuts'
 import InterjectionModal from './InterjectionModal.vue'
 
 const session = useAgentSessionStore()
@@ -30,20 +31,24 @@ const statusLabel = computed(() => {
   return 'Unknown'
 })
 
-const statusColor = computed(() => {
+// DESIGN.md "Color" section maps each status to a canonical goa-badge variant
+// so the badge reads correctly in both light and dark themes without raw
+// Tailwind palette names (which DESIGN.md treats as a Hard rule violation).
+const statusBadgeType = computed<
+  'information' | 'success' | 'important' | 'emergency' | 'midtone'
+>(() => {
   switch (session.status) {
     case 'running':
-      return 'bg-[var(--goa-color-primary-light)] text-[var(--goa-color-primary-dark)]'
-    case 'paused':
-      return 'bg-yellow-100 text-yellow-900'
+      return 'information'
     case 'completed':
-      return 'bg-green-100 text-[var(--goa-color-success)]'
-    case 'error':
-      return 'bg-red-100 text-[var(--goa-color-error)]'
+      return 'success'
+    case 'paused':
     case 'needs_assistance':
-      return 'bg-orange-100 text-orange-900'
+      return 'important'
+    case 'error':
+      return 'emergency'
     default:
-      return 'bg-gray-100 text-[var(--goa-color-text-secondary)]'
+      return 'midtone'
   }
 })
 
@@ -71,6 +76,27 @@ async function submitContinue(): Promise<void> {
   )
   continueOpen.value = false
 }
+
+// Power-user shortcuts. Each is gated so it doesn't fight the modal's own
+// keyboard handling (the interject modal has its own Cmd+Enter; goa-modal
+// handles Escape for close).
+useKeyboardShortcuts([
+  {
+    combo: 'escape',
+    enabled: () => session.canStop && !interjectOpen.value && !continueOpen.value,
+    handler: () => {
+      void handleStop()
+    },
+  },
+  {
+    combo: 'mod+i',
+    preventDefault: true,
+    enabled: () => session.canInterject && !interjectOpen.value,
+    handler: () => {
+      interjectOpen.value = true
+    },
+  },
+])
 </script>
 
 <template>
@@ -80,14 +106,13 @@ async function submitContinue(): Promise<void> {
     aria-label="Session controls"
   >
     <div class="flex flex-wrap items-center gap-3 px-4 py-3">
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2" aria-live="polite">
         <span class="text-xs uppercase tracking-wide text-[var(--goa-color-text-secondary)]">Status</span>
-        <span
-          aria-live="polite"
-          :class="['px-2.5 py-1 rounded-full text-xs font-semibold', statusColor]"
-        >
-          {{ statusLabel }}
-        </span>
+        <goa-badge
+          data-testid="session-status-badge"
+          :type="statusBadgeType"
+          :content="statusLabel"
+        ></goa-badge>
       </div>
 
       <div class="flex items-center gap-2">

@@ -28,6 +28,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { authenticate } from "../middleware/auth.js";
+import { env } from "../config/env.js";
 import { query, transaction } from "../config/database.js";
 import { scanForPII } from "../services/piiDetector.js";
 import type { PIIScanResult } from "../services/piiDetector.js";
@@ -42,6 +43,10 @@ import {
   type WorkflowRecord,
 } from "../services/workflowExecutor.js";
 import { getCatalog } from "../services/functionRegistry.js";
+import {
+  estimateWorkflowCost,
+  type EstimatorAgentTemplate,
+} from "../services/workflowCostEstimator.js";
 
 const router: Router = Router();
 router.use(authenticate);
@@ -125,6 +130,11 @@ function hashCanvas(canvas: unknown): string {
  * Returns the workflow row when the caller has read access (owner or same
  * ministry), or null if the workflow doesn't exist. Throws on infrastructure
  * errors. Callers handle the response when null is returned.
+ *
+ * Soft-deleted rows (`deleted_at IS NOT NULL`) are invisible to this helper
+ * so duplicate / version / execution / estimate paths all 404 once a workflow
+ * is in the Trash. Admin restore/purge runs through `routes/admin.ts` against
+ * raw SQL with `deleted_at IS NOT NULL`.
  */
 async function loadWorkflowForRead(
   workflowId: string,
@@ -132,7 +142,7 @@ async function loadWorkflowForRead(
   ministryCode: string | null,
 ): Promise<{ user_id: string; ministry_code: string | null; access: "owner" | "ministry" } | null> {
   const result = await query<{ user_id: string; ministry_code: string | null }>(
-    `SELECT user_id, ministry_code FROM workflows WHERE id = $1`,
+    `SELECT user_id, ministry_code FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
     [workflowId],
   );
   if (result.rowCount === 0) return null;
@@ -145,6 +155,83 @@ async function loadWorkflowForRead(
 }
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// ---------------------------------------------------------------------------
+// Tags (Bot 17, F5)
+// ---------------------------------------------------------------------------
+//
+// Tags are stored permissively in the database (`TEXT[] NOT NULL DEFAULT '{}'`)
+// but validated strictly at the route layer so a future tooling change can
+// loosen the rules without a schema migration. The vocabulary chosen here
+// matches the constraints the design system imposes on `goa-chip` labels and
+// what fits comfortably in the workflow-list row chips.
+
+const TAG_MAX_LENGTH = 32;
+const TAGS_PER_WORKFLOW_MAX = 12;
+const TAG_RE = /^[a-z0-9][a-z0-9_-]*$/;
+
+type TagNormalizeResult = { tags: string[] } | { error: string };
+
+/**
+ * Normalize and validate a `tags` array from a request body. Lowercases,
+ * trims, drops empties, dedupes, enforces length + alphabet + count caps.
+ * Returns the cleaned array or a single user-readable error string.
+ */
+function normalizeTags(input: unknown): TagNormalizeResult {
+  if (input === undefined || input === null) return { tags: [] };
+  if (!Array.isArray(input)) {
+    return { error: "tags must be an array of strings." };
+  }
+  const seen = new Set<string>();
+  const cleaned: string[] = [];
+  for (const raw of input) {
+    if (typeof raw !== "string") {
+      return { error: "tags must be an array of strings." };
+    }
+    const norm = raw.trim().toLowerCase();
+    if (norm.length === 0) continue;
+    if (norm.length > TAG_MAX_LENGTH) {
+      return {
+        error: `Tag "${norm.slice(0, 16)}…" exceeds ${TAG_MAX_LENGTH} characters.`,
+      };
+    }
+    if (!TAG_RE.test(norm)) {
+      return {
+        error: `Tag "${norm}" must be lowercase alphanumeric, plus '-' or '_', and start with a letter or digit.`,
+      };
+    }
+    if (seen.has(norm)) continue;
+    seen.add(norm);
+    cleaned.push(norm);
+  }
+  if (cleaned.length > TAGS_PER_WORKFLOW_MAX) {
+    return {
+      error: `Too many tags (max ${TAGS_PER_WORKFLOW_MAX}).`,
+    };
+  }
+  return { tags: cleaned };
+}
+
+/**
+ * Pull the `tag` filter from a query string. Express parses `?tag=a&tag=b`
+ * into an array and `?tag=a` into a single string; both shapes funnel into
+ * the same `string[]` here. Filter values are validated with the same rules
+ * as stored tags so a bad URL returns 400 instead of silently matching
+ * nothing.
+ */
+function parseTagFilter(input: unknown): { tags: string[] } | { error: string } {
+  if (input === undefined) return { tags: [] };
+  const raw = Array.isArray(input) ? input : [input];
+  return normalizeTags(raw);
+}
+
+function arraysShallowEqual(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
 
 function piiBlockResponse(res: Response, scan: PIIScanResult): void {
   res.status(422).json({
@@ -188,7 +275,7 @@ async function auditPIIOnSave(
 // ============================================================================
 
 router.post("/", async (req: Request, res: Response) => {
-  const { name, description, classification, canvasData, isTemplate } = req.body ?? {};
+  const { name, description, classification, canvasData, isTemplate, tags } = req.body ?? {};
 
   if (!name || typeof name !== "string" || name.trim().length === 0) {
     res.status(400).json({ error: "Workflow name is required." });
@@ -209,6 +296,12 @@ router.post("/", async (req: Request, res: Response) => {
     res.status(400).json({ error: "isTemplate must be a boolean." });
     return;
   }
+  const tagResult = normalizeTags(tags);
+  if ("error" in tagResult) {
+    res.status(400).json({ error: tagResult.error });
+    return;
+  }
+  const resolvedTags = tagResult.tags;
 
   const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 };
 
@@ -219,8 +312,8 @@ router.post("/", async (req: Request, res: Response) => {
   try {
     const result = await transaction(async (client) => {
       const insertRes = await client.query<{ id: string }>(
-        `INSERT INTO workflows (user_id, ministry_code, name, description, classification, canvas_data, version, is_template)
-         VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
+        `INSERT INTO workflows (user_id, ministry_code, name, description, classification, canvas_data, version, is_template, tags)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, $7, $8)
          RETURNING id`,
         [
           req.user!.id,
@@ -230,6 +323,7 @@ router.post("/", async (req: Request, res: Response) => {
           resolvedClassification,
           JSON.stringify(canvas),
           isTemplate === true,
+          resolvedTags,
         ]
       );
       const workflowId = insertRes.rows[0].id;
@@ -247,12 +341,12 @@ router.post("/", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_CREATED,
       resourceType: "workflow",
       resourceId: result,
-      details: { name: name.trim(), classification: resolvedClassification, piiBlockedOnSave: scan.blockedCount },
+      details: { name: name.trim(), classification: resolvedClassification, piiBlockedOnSave: scan.blockedCount, tags: resolvedTags },
     });
     await auditPIIOnSave(scan, req.user!.id, req.user!.ministryCode || undefined, result, 'created');
 
     const row = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, tags, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [result]
     );
@@ -279,15 +373,32 @@ router.get("/", async (req: Request, res: Response) => {
   if (templatesParam === "true") templateClause = " AND is_template = true";
   else if (templatesParam === "false") templateClause = " AND is_template = false";
 
+  // ?tag=foo or ?tag=foo&tag=bar — matches workflows with ANY of the supplied
+  // tags (array overlap). Empty filter → no tag predicate.
+  const tagFilter = parseTagFilter(req.query.tag);
+  if ("error" in tagFilter) {
+    res.status(400).json({ error: tagFilter.error });
+    return;
+  }
+
+  const params: unknown[] = [req.user!.ministryCode, req.user!.id];
+  let tagClause = "";
+  if (tagFilter.tags.length > 0) {
+    params.push(tagFilter.tags);
+    tagClause = ` AND tags && $${params.length}::text[]`;
+  }
+
   try {
     const result = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, is_template, version, created_at, updated_at
+      `SELECT id, user_id, ministry_code, name, description, classification, is_template, tags, version, created_at, updated_at
        FROM workflows
-       WHERE (($1::text IS NULL AND user_id = $2) OR ministry_code = $1)
+       WHERE deleted_at IS NULL
+         AND (($1::text IS NULL AND user_id = $2) OR ministry_code = $1)
        ${templateClause}
+       ${tagClause}
        ORDER BY updated_at DESC
        LIMIT 500`,
-      [req.user!.ministryCode, req.user!.id]
+      params
     );
     res.json({ workflows: result.rows });
   } catch (err) {
@@ -303,8 +414,8 @@ router.get("/", async (req: Request, res: Response) => {
 router.get("/:id", async (req: Request, res: Response) => {
   try {
     const result = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
-       FROM workflows WHERE id = $1`,
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, tags, version, created_at, updated_at
+       FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [req.params.id]
     );
     if (result.rowCount === 0) {
@@ -334,7 +445,7 @@ router.get("/:id", async (req: Request, res: Response) => {
 
 router.put("/:id", async (req: Request, res: Response) => {
   const workflowId = req.params.id as string;
-  const { name, description, classification, canvasData, isTemplate } = req.body ?? {};
+  const { name, description, classification, canvasData, isTemplate, tags } = req.body ?? {};
 
   if (classification !== undefined && !isValidClassification(classification)) {
     res.status(400).json({ error: "Invalid classification." });
@@ -348,6 +459,15 @@ router.put("/:id", async (req: Request, res: Response) => {
     res.status(400).json({ error: "isTemplate must be a boolean." });
     return;
   }
+  let nextTags: string[] | undefined;
+  if (tags !== undefined) {
+    const tagResult = normalizeTags(tags);
+    if ("error" in tagResult) {
+      res.status(400).json({ error: tagResult.error });
+      return;
+    }
+    nextTags = tagResult.tags;
+  }
 
   try {
     // Load existing
@@ -356,8 +476,10 @@ router.put("/:id", async (req: Request, res: Response) => {
       ministry_code: string | null;
       version: number;
       canvas_data: CanvasData;
+      tags: string[];
     }>(
-      `SELECT user_id, ministry_code, version, canvas_data FROM workflows WHERE id = $1`,
+      `SELECT user_id, ministry_code, version, canvas_data, tags
+         FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [workflowId]
     );
     if (existing.rowCount === 0) {
@@ -383,6 +505,8 @@ router.put("/:id", async (req: Request, res: Response) => {
       versionBumped = hashCanvas(canvasData) !== hashCanvas(wf.canvas_data);
     }
 
+    const tagsChanged = nextTags !== undefined && !arraysShallowEqual(wf.tags ?? [], nextTags);
+
     await transaction(async (client) => {
       // Build SET clause dynamically
       const sets: string[] = [];
@@ -403,6 +527,10 @@ router.put("/:id", async (req: Request, res: Response) => {
       if (isTemplate !== undefined) {
         sets.push(`is_template = $${idx++}`);
         values.push(isTemplate);
+      }
+      if (nextTags !== undefined) {
+        sets.push(`tags = $${idx++}`);
+        values.push(nextTags);
       }
       if (canvasData !== undefined) {
         sets.push(`canvas_data = $${idx++}`);
@@ -434,14 +562,20 @@ router.put("/:id", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_UPDATED,
       resourceType: "workflow",
       resourceId: workflowId,
-      details: { versionBumped, newVersion: versionBumped ? wf.version + 1 : wf.version, piiBlockedOnSave: saveScan?.blockedCount ?? 0 },
+      details: {
+        versionBumped,
+        newVersion: versionBumped ? wf.version + 1 : wf.version,
+        piiBlockedOnSave: saveScan?.blockedCount ?? 0,
+        tagsChanged,
+        tags: tagsChanged ? nextTags : undefined,
+      },
     });
     if (saveScan) {
       await auditPIIOnSave(saveScan, req.user!.id, req.user!.ministryCode || undefined, workflowId, 'updated');
     }
 
     const refreshed = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, tags, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [workflowId]
     );
@@ -500,23 +634,27 @@ router.post("/:id/duplicate", async (req: Request, res: Response) => {
       description: string | null;
       classification: Classification;
       canvas_data: CanvasData;
+      tags: string[];
     }>(
-      `SELECT name, description, classification, canvas_data FROM workflows WHERE id = $1`,
+      `SELECT name, description, classification, canvas_data, tags
+         FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [workflowId],
     );
     if (source.rowCount === 0) {
-      // Race with delete; treat as not found.
+      // Race with delete (or soft-delete); treat as not found.
       res.status(404).json({ error: "Workflow not found." });
       return;
     }
     const src = source.rows[0];
     const copyName = (newName ?? `${src.name} (copy)`).trim().slice(0, 200);
 
+    const inheritedTags = Array.isArray(src.tags) ? src.tags : [];
+
     const newId = await transaction(async (client) => {
       const insertRes = await client.query<{ id: string }>(
         `INSERT INTO workflows
-           (user_id, ministry_code, name, description, classification, canvas_data, version, is_template)
-         VALUES ($1, $2, $3, $4, $5, $6, 1, false)
+           (user_id, ministry_code, name, description, classification, canvas_data, version, is_template, tags)
+         VALUES ($1, $2, $3, $4, $5, $6, 1, false, $7)
          RETURNING id`,
         [
           req.user!.id,
@@ -525,6 +663,7 @@ router.post("/:id/duplicate", async (req: Request, res: Response) => {
           src.description,
           src.classification,
           JSON.stringify(src.canvas_data),
+          inheritedTags,
         ],
       );
       const id = insertRes.rows[0].id;
@@ -542,11 +681,11 @@ router.post("/:id/duplicate", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_CREATED,
       resourceType: "workflow",
       resourceId: newId,
-      details: { duplicatedFrom: workflowId, name: copyName },
+      details: { duplicatedFrom: workflowId, name: copyName, tags: inheritedTags },
     });
 
     const refreshed = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, tags, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [newId],
     );
@@ -558,14 +697,23 @@ router.post("/:id/duplicate", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
-// DELETE
+// DELETE (soft-delete — sets deleted_at)
 // ============================================================================
+//
+// Soft-delete: the row stays in the table with `deleted_at = NOW()` so an
+// admin can restore it from the Trash panel before the retention pass
+// eventually purges it. All user-facing read paths filter
+// `deleted_at IS NULL` so the workflow disappears from list / load /
+// duplicate / execute / version / estimate immediately. CASCADE children
+// (workflow_versions, workflow_executions, artifacts) stay intact so a
+// restore brings the full history back.
 
 router.delete("/:id", async (req: Request, res: Response) => {
   const workflowId = req.params.id as string;
   try {
     const existing = await query<{ user_id: string; ministry_code: string | null }>(
-      `SELECT user_id, ministry_code FROM workflows WHERE id = $1`,
+      `SELECT user_id, ministry_code
+         FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [workflowId]
     );
     if (existing.rowCount === 0) {
@@ -579,7 +727,15 @@ router.delete("/:id", async (req: Request, res: Response) => {
       return;
     }
 
-    await query(`DELETE FROM workflows WHERE id = $1`, [workflowId]);
+    const result = await query<{ deleted_at: Date }>(
+      `UPDATE workflows SET deleted_at = NOW() WHERE id = $1 RETURNING deleted_at`,
+      [workflowId],
+    );
+    const deletedAt = result.rows[0]?.deleted_at;
+    const recoverableUntil =
+      deletedAt instanceof Date
+        ? new Date(deletedAt.getTime() + env.WORKFLOW_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000)
+        : null;
 
     await logAudit({
       userId: req.user!.id,
@@ -587,9 +743,20 @@ router.delete("/:id", async (req: Request, res: Response) => {
       action: AuditAction.WORKFLOW_DELETED,
       resourceType: "workflow",
       resourceId: workflowId,
+      details: {
+        soft: true,
+        retentionDays: env.WORKFLOW_TRASH_RETENTION_DAYS,
+        recoverableUntil: recoverableUntil?.toISOString() ?? null,
+      },
     });
 
-    res.json({ id: workflowId, deleted: true });
+    res.json({
+      id: workflowId,
+      deleted: true,
+      soft: true,
+      deletedAt: deletedAt instanceof Date ? deletedAt.toISOString() : null,
+      recoverableUntil: recoverableUntil?.toISOString() ?? null,
+    });
   } catch (err) {
     logger.error("Failed to delete workflow", err, { id: workflowId });
     res.status(500).json({ error: "Failed to delete workflow." });
@@ -602,7 +769,10 @@ router.delete("/:id", async (req: Request, res: Response) => {
 
 router.post("/:id/execute", async (req: Request, res: Response) => {
   const workflowId = req.params.id as string;
-  const { continueOnError } = req.body ?? {};
+  const { continueOnError, dryRun } = req.body ?? {};
+  // Coerce loosely so tests/clients can pass "true"/1/etc. without surprises,
+  // but never accept arbitrary truthy strings outside the documented values.
+  const dryRunFlag = dryRun === true || dryRun === "true" || dryRun === 1;
 
   try {
     const result = await query<{
@@ -615,7 +785,7 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
       version: number;
     }>(
       `SELECT id, user_id, ministry_code, name, classification, canvas_data, version
-       FROM workflows WHERE id = $1`,
+       FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [workflowId]
     );
     if (result.rowCount === 0) {
@@ -633,11 +803,14 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
       return;
     }
 
-    // LLM provider only required when the canvas contains agent nodes.
+    // LLM provider only required when the canvas contains agent nodes. A
+    // dry-run never calls the LLM, so the provider check is skipped — this
+    // lets users validate workflow plumbing on a brand-new install before
+    // the Anthropic/Vertex key has been wired up.
     const hasAgentNodes =
       Array.isArray(wf.canvas_data?.nodes) &&
       wf.canvas_data.nodes.some((n) => n.data?.kind === "agent");
-    if (hasAgentNodes && !isProviderConfigured()) {
+    if (!dryRunFlag && hasAgentNodes && !isProviderConfigured()) {
       res.status(503).json({ error: "LLM provider not configured. This workflow contains agent nodes." });
       return;
     }
@@ -676,6 +849,7 @@ router.post("/:id/execute", async (req: Request, res: Response) => {
       userId: req.user!.id,
       ministryCode: req.user!.ministryCode,
       continueOnError: !!continueOnError,
+      dryRun: dryRunFlag,
       onExecutionCreated: (id) => {
         executionId = id;
       },
@@ -720,7 +894,7 @@ router.get("/:id/versions", async (req: Request, res: Response) => {
       return;
     }
     const current = await query<{ version: number }>(
-      `SELECT version FROM workflows WHERE id = $1`,
+      `SELECT version FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
       [workflowId],
     );
     const versions = await query<{
@@ -846,7 +1020,7 @@ router.post("/:id/versions/:version/restore", async (req: Request, res: Response
         return null;
       }
       const current = await client.query<{ version: number }>(
-        `SELECT version FROM workflows WHERE id = $1 FOR UPDATE`,
+        `SELECT version FROM workflows WHERE id = $1 AND deleted_at IS NULL FOR UPDATE`,
         [workflowId],
       );
       const next = (current.rows[0]?.version ?? 0) + 1;
@@ -878,7 +1052,7 @@ router.post("/:id/versions/:version/restore", async (req: Request, res: Response
     });
 
     const refreshed = await query(
-      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, version, created_at, updated_at
+      `SELECT id, user_id, ministry_code, name, description, classification, canvas_data, is_template, tags, version, created_at, updated_at
        FROM workflows WHERE id = $1`,
       [workflowId],
     );
@@ -1223,5 +1397,72 @@ router.get(
     }
   },
 );
+
+// ============================================================================
+// ESTIMATE (read-only pre-run cost preview, recommendations §4.3)
+// ============================================================================
+
+/**
+ * POST /:id/estimate
+ *
+ * Returns an upper-bound estimate of tokens and dollar cost for running the
+ * given workflow. Body may include `canvasData` to estimate against unsaved
+ * edits; otherwise the persisted canvas is used. Read-only computation — no
+ * audit log, no PII scan, no DB writes.
+ */
+router.post("/:id/estimate", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+
+  const wf = await loadWorkflowForRead(workflowId, req.user!.id, req.user!.ministryCode);
+  if (!wf) {
+    res.status(404).json({ error: "Workflow not found." });
+    return;
+  }
+
+  // Use canvasData from body if provided (estimate against unsaved edits),
+  // otherwise load the persisted canvas.
+  let canvas: CanvasData;
+  const bodyCanvas = (req.body ?? {}).canvasData as unknown;
+  if (bodyCanvas !== undefined) {
+    if (!isValidCanvasData(bodyCanvas)) {
+      res
+        .status(400)
+        .json({ error: "Invalid canvasData. Expected { nodes, edges, version: 1 }." });
+      return;
+    }
+    canvas = bodyCanvas;
+  } else {
+    try {
+      const row = await query<{ canvas_data: CanvasData }>(
+        `SELECT canvas_data FROM workflows WHERE id = $1 AND deleted_at IS NULL`,
+        [workflowId],
+      );
+      if (row.rowCount === 0) {
+        res.status(404).json({ error: "Workflow not found." });
+        return;
+      }
+      canvas = row.rows[0].canvas_data;
+    } catch (err) {
+      logger.error("Failed to load workflow for estimate", err, { id: workflowId });
+      res.status(500).json({ error: "Failed to load workflow." });
+      return;
+    }
+  }
+
+  try {
+    const estimatorTemplates: EstimatorAgentTemplate[] = (
+      templates.templates as { id: string; systemPrompt: string }[]
+    ).map((t) => ({ id: t.id, systemPrompt: t.systemPrompt }));
+    const estimate = estimateWorkflowCost(canvas, estimatorTemplates);
+    res.json(estimate);
+  } catch (err) {
+    logger.error("Failed to estimate workflow cost", err, { id: workflowId });
+    res.status(500).json({ error: "Failed to estimate workflow cost." });
+  }
+});
 
 export default router;

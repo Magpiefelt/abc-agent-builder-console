@@ -80,9 +80,43 @@ The full procedure lives in `docs/operations/deployment_nexus.md`. Summary:
 
 The required token claims are `oid`, `email`, `name`, and `groups` (with the **Security groups** claim source — drives `ministry_code` extraction from `AIM-G-{MINISTRY}-ALL_(EMPLOYEES|CONTRACTORS)`). Full step-by-step is in `docs/operations/deployment_nexus.md`.
 
+## API documentation
+
+The backend self-documents every public endpoint via an OpenAPI 3.1 spec
+built programmatically from typed building blocks in
+`backend/src/lib/openapi/spec.ts`.
+
+- `GET /api/openapi.json` — the full OpenAPI 3.1 document as JSON.
+- `GET /api/docs` — Swagger UI rendered against the same spec. Loads
+  CSS/JS from `cdn.jsdelivr.net/npm/swagger-ui-dist@5/` with a
+  per-response CSP that allows only the documentation CDN.
+
+Both endpoints are intentionally unauthenticated — the spec describes
+the public shape of the API and never contains secrets or user data.
+External integrators (and AI agent harnesses) can read the contract
+without an account; calls into the API itself still require a valid
+session cookie issued by the Entra ID OIDC flow.
+
+When you add a route under `backend/src/routes/`, add it to `spec.ts`
+too. The unit test in `backend/src/lib/openapi/__tests__/spec.test.ts`
+pins the full production-route list — adding a route without spec
+coverage trips a red test.
+
 ## Secret rotation
 
 Tool credentials are encrypted at rest in `cohen_mcleod.user_secrets` using pgcrypto with the `SECRETS_VAULT_KEY` env variable. Rotate annually or on suspected compromise — full procedure in **`docs/operations/key_rotation.md`**.
+
+## Secret scanning (pre-commit)
+
+This repo ships a `.pre-commit-config.yaml` that runs [`gitleaks`](https://github.com/gitleaks/gitleaks) on every commit so credentials never reach git history. One-time setup per developer:
+
+```bash
+pipx install pre-commit        # or: brew install pre-commit
+pre-commit install             # registers the hook in this repo
+pre-commit run --all-files     # one-shot sweep of the whole tree
+```
+
+The hook reads `.gitleaks.toml`, which layers a small project-specific allowlist (lockfiles, `.env.example`, fixture data) on top of gitleaks' upstream defaults. Anything else that looks like an Anthropic, AWS, Stripe, or generic high-entropy key blocks the commit until it's removed or scrubbed from history.
 
 ## Compliance posture
 

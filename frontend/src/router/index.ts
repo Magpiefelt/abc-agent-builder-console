@@ -18,6 +18,12 @@ const router = createRouter({
       meta: { requiresAuth: true },
     },
     {
+      path: '/sessions',
+      name: 'session-history',
+      component: () => import('@/views/SessionHistoryView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
       path: '/sessions/:id',
       name: 'session-replay',
       component: FreeAgentView,
@@ -28,6 +34,14 @@ const router = createRouter({
       path: '/workflows',
       name: 'workflow-list',
       component: () => import('@/views/WorkflowListView.vue'),
+      meta: { requiresAuth: true },
+    },
+    {
+      // Bot 17, F2 — defined before `/workflows/:id` so the literal segment
+      // wins the match; otherwise "templates" would be parsed as a workflow id.
+      path: '/workflows/templates',
+      name: 'workflow-templates',
+      component: () => import('@/views/WorkflowTemplatesView.vue'),
       meta: { requiresAuth: true },
     },
     {

@@ -203,7 +203,7 @@ function stringifyValue(value: unknown): string {
       aria-label="Workflow history"
     >
       <header class="px-4 py-3 border-b border-[var(--goa-color-border)] flex items-center gap-3">
-        <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] flex-1">History</h3>
+        <h3 class="text-sm font-semibold text-[var(--goa-color-text-default)] flex-1">History</h3>
         <goa-icon-button
           icon="close"
           size="small"

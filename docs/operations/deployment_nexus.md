@@ -139,3 +139,133 @@ If a destructive schema change is ever introduced (avoid this), gate it behind a
 - Tag the release in git (`vYYYY.MM.DD`).
 - Capture the audit-log row count baseline for the new release.
 - Notify users of any user-visible changes via Cohen McLeod's standard distribution list.
+
+---
+
+## Local dry-run findings (2026-05-22)
+
+A local read-through of `nexus/manifest.yaml`, `backend/src/config/env.ts`,
+`backend/src/index.ts`, and `backend/.env.example` was done as a manifest
+sanity-check before the first real Nexus push. The findings below are
+clarifications and small gaps a fresh operator will hit if not addressed
+**before** the first deploy. None of them block deployment — they shorten
+the time-to-success.
+
+### 1. Manifest secrets vs. env.ts schema — three gaps
+
+`backend/src/config/env.ts` validates **more** environment variables than
+`nexus/manifest.yaml` currently declares. The deploy will succeed without
+these (they are optional), but the operator should add them to the Nexus
+secret store **explicitly** so the audit trail of "what is reachable from
+this environment" is complete:
+
+| env.ts variable | In `nexus/manifest.yaml`? | Action |
+|---|---|---|
+| `ENT_TOOLS_API_KEY` | No | Add to `secrets:` block as `optional: true`. Without it, `brave_search` / `image_generation` fall back to direct vendor APIs. |
+| `ENT_TOOLS_BASE_URL` | No | Add to `config:` with the production URL. Default in `env.ts` is the sandbox. |
+| `ENT_TOOLS_BRAVE_PATH` / `ENT_TOOLS_IMAGE_PATH` | No | Add to `config:` only if the production proxy differs from the sandbox path defaults. |
+| `EMAIL_FROM` / `EMAIL_SMTP_*` | No | Add to `secrets:` (host/user/pass) and `config:` (port, secure, from-address) once the `send_email` tool is rolled out. Without these the tool returns a clear "SMTP not configured" error rather than crashing. |
+| `API_PROXY_ALLOWLIST` | No | Add to `config:` once a production allowlist is decided. Without it, only SSRF blocks apply — which is fine for first deploy but should be tightened later. |
+| `LLM_MOCK` | No | Do NOT add. This is a dev-only flag; setting `LLM_MOCK=1` in production would route every LLM call through a deterministic mock and silently break the app. |
+
+### 2. `frontend.healthCheck.path` is too permissive
+
+The manifest declares `frontend.healthCheck.path: /` with
+`expectedStatus: 200`. Vite's SPA fallback serves the index page for any
+unmatched route, so a request to `/healthz` or `/this-route-does-not-exist`
+also returns 200. The probe will report **healthy** even if the static
+bundle is partially missing as long as `index.html` is present.
+
+A tighter probe would be a static asset that ships with the bundle (e.g.
+`/favicon.ico` or a generated `/health.txt`). Not blocking for the first
+deploy, but flag this in the next manifest revision.
+
+### 3. The frontend has no public health endpoint distinct from the SPA
+
+There is no equivalent of the backend's `/api/health` on the frontend
+side. Operators need to know that an HTTP 200 from the frontend means
+"static server is up", **not** "the bundle is intact and the SPA mounts
+without errors". The actual SPA-mount health is only observable from a
+browser. Document this in incident triage: a frontend probe-green +
+backend probe-green can still leave users with a blank page if the
+bundle is corrupt.
+
+### 4. `MOCK_LLM=1` mounts test routes — confirm it is never set in prod
+
+`backend/src/index.ts` lines 136-140 conditionally mount `/api/test/*`
+when `MOCK_LLM=1`. These routes let a caller inject canned LLM responses
+into a session. In production this would be a critical control bypass.
+Two defenses are in place: the env validator does not accept `MOCK_LLM=1`
+in `production` config (it is dev-only), and the Nexus manifest does not
+declare `MOCK_LLM` at all. Belt-and-braces: confirm during the verify
+step (§4) that `curl $BASE/api/test/mock-llm -X POST` returns 404, not
+the test route handler.
+
+### 5. Port assignment vs. typical Nexus reverse-proxy patterns
+
+The manifest assigns the frontend to port 5173 (Vite's dev port) and the
+backend to port 3000. Nexus is expected to put a reverse proxy in front
+of both. Two concrete checks for the operator:
+
+1. **Cookie domain**: The session cookie is set on the backend response.
+   When the reverse proxy strips the `Host` header or rewrites the path,
+   the cookie domain may not match `FRONTEND_URL`, and the user is
+   silently logged out on every request. Verify this end-to-end during
+   the §5 admin smoke test.
+2. **CORS origin**: `backend/src/index.ts` line 91 sets the CORS origin
+   to `env.FRONTEND_URL` in production. If Nexus exposes the frontend
+   under a different hostname than `FRONTEND_URL` (e.g. an internal
+   `*.nexus.gov.ab.ca` alongside the public `abc-agent-builder.gov.ab.ca`),
+   API calls from the alias will be rejected by CORS. Set `FRONTEND_URL`
+   to the user-facing hostname, not the internal one.
+
+### 6. `MAX_CONCURRENT_SESSIONS=3` is per-user, not per-instance
+
+Operators reading the manifest may assume `MAX_CONCURRENT_SESSIONS=3`
+limits global concurrency. It actually limits **per-user** concurrent
+agent sessions (see `agentRateLimit`). Capacity planning for the first
+production rollout should use the per-user cap × expected concurrent
+users, not the raw value. A 50-user ministry sees up to 150 concurrent
+sessions.
+
+### 7. Migration script is idempotent — confirm with a no-op replay
+
+`docs/02_database_migrations.sql` is additive and `IF NOT EXISTS` /
+`ON CONFLICT DO NOTHING` throughout. The operator can — and should —
+replay the script against a freshly-migrated DB to confirm zero rows
+affected, before kicking off the first deploy. This proves both the
+script is safe to re-run and that the operator's DB credentials have
+the right grants.
+
+```bash
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM cohen_mcleod.features"
+# Capture this count.
+
+psql "$DATABASE_URL" < docs/02_database_migrations.sql
+# Should print mostly NOTICE: ... "already exists" lines, with seed
+# INSERTs reporting "INSERT 0 0".
+
+psql "$DATABASE_URL" -c "SELECT COUNT(*) FROM cohen_mcleod.features"
+# Should match the captured count exactly.
+```
+
+### 8. SSO callbacks block first deploy by design
+
+The "Prerequisites" section flags Stream A as a hard dependency for SSO,
+but a first-deploy operator may not realise they can ship the backend
+**without** SSO configured for an initial smoke test — the dev-mock auth
+path is gated on `NODE_ENV !== "production"`, so production deploys with
+no Entra config simply 401 every request. That is the safe failure mode;
+no special action needed. Just be clear in pre-deploy comms that
+SSO-without-Entra means "every user sees a sign-in failure", not "the
+backend is broken".
+
+### 9. Retention job: confirm it can read its own schema
+
+`RETENTION_JOB_ENABLED=true` in the manifest defaults the daily 02:00
+pass on. The job reads `retention_policy`, `agent_sessions`,
+`artifacts`, and `audit_log` and writes to the same tables. If the DB
+user the backend runs as has read but not delete privileges on these
+tables, the job logs an error every 24h and is otherwise silent. After
+the first deploy, run **§5.5 (Run retention pass now)** in a dev-mode
+admin login against a populated DB to confirm grants are correct.

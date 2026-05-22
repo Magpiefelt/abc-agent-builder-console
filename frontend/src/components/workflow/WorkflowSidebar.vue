@@ -128,7 +128,7 @@ function noteDefaults(): Partial<NodeData> {
 
       <!-- Agents -->
       <details v-if="!noMatches" open class="border-b border-[var(--goa-color-border)]">
-        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
+        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-text-default)] select-none">
           Agents
         </summary>
         <div class="px-2 pb-2 space-y-1">
@@ -147,7 +147,7 @@ function noteDefaults(): Partial<NodeData> {
 
       <!-- Functions -->
       <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
-        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
+        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-text-default)] select-none">
           Functions
         </summary>
         <div class="px-2 pb-2 space-y-2">
@@ -174,7 +174,7 @@ function noteDefaults(): Partial<NodeData> {
 
       <!-- Tools -->
       <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
-        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
+        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-text-default)] select-none">
           Tools
         </summary>
         <div class="px-2 pb-2 space-y-2">
@@ -196,14 +196,14 @@ function noteDefaults(): Partial<NodeData> {
 
       <!-- Notes -->
       <details v-if="!noMatches" class="border-b border-[var(--goa-color-border)]">
-        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-primary-dark)] select-none">
+        <summary class="px-3 py-2 cursor-pointer font-semibold text-sm text-[var(--goa-color-text-default)] select-none">
           Notes
         </summary>
         <div class="px-2 pb-2">
           <div
             draggable="true"
             @dragstart="dragStart($event, 'note', noteDefaults())"
-            class="px-2 py-1.5 text-sm rounded cursor-grab hover:bg-[var(--goa-color-warning)]/20 border border-transparent hover:border-[var(--goa-color-warning)]"
+            class="px-2 py-1.5 text-sm rounded cursor-grab hover:bg-[var(--goa-color-important-light)] border border-transparent hover:border-[var(--goa-color-warning)]"
           >
             <div class="font-medium">Sticky Note</div>
             <div class="text-xs text-[var(--goa-color-text-secondary)]">Annotate the canvas. Skipped at run time.</div>

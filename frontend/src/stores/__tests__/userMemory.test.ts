@@ -270,3 +270,136 @@ describe('useUserMemoryStore — updatePreferences()', () => {
     expect(store.preferences?.defaultModelId).toBe('claude-opus-4-7')
   })
 })
+
+// ---------------------------------------------------------------------------
+// Bot 19, F8: starred-only filter + toggleSessionStar
+// ---------------------------------------------------------------------------
+
+describe('useUserMemoryStore — starred filter and toggle', () => {
+  function mockSession(id: string, starred = false) {
+    return {
+      id,
+      prompt: `prompt for ${id}`,
+      modelId: 'claude-opus-4-7',
+      status: 'completed',
+      classification: 'unclassified',
+      createdAt: '2026-01-01T00:00:00Z',
+      completedAt: '2026-01-01T00:01:00Z',
+      starred,
+    }
+  }
+
+  it('defaults recentStarredOnly to false', () => {
+    const store = useUserMemoryStore()
+    expect(store.recentStarredOnly).toBe(false)
+  })
+
+  it('passes ?starred=true to the API when starredOnly is on', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({ sessions: [mockSession('s-1', true)] }),
+      text: vi.fn().mockResolvedValue(''),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useUserMemoryStore()
+    await store.fetchRecentSessions({ starredOnly: true })
+
+    expect(store.recentStarredOnly).toBe(true)
+    expect(store.recentSessions).toHaveLength(1)
+    expect(store.recentSessions[0].starred).toBe(true)
+    const url = fetchMock.mock.calls[0][0] as string
+    expect(url).toContain('/api/users/me/recent-sessions')
+    expect(url).toContain('starred=true')
+  })
+
+  it('omits the ?starred query when filter is off', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({ sessions: [mockSession('s-1')] }),
+      text: vi.fn().mockResolvedValue(''),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const store = useUserMemoryStore()
+    await store.fetchRecentSessions()
+    const url = fetchMock.mock.calls[0][0] as string
+    expect(url).not.toContain('starred=')
+  })
+
+  it('defaults missing starred field to false (older API responses)', async () => {
+    const legacy = { ...mockSession('s-1'), starred: undefined as unknown as boolean }
+    mockFetch(200, { sessions: [legacy] })
+    const store = useUserMemoryStore()
+    await store.fetchRecentSessions()
+    expect(store.recentSessions[0].starred).toBe(false)
+  })
+
+  it('toggleSessionStar PATCHes the star endpoint and flips local state', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({ id: 's-1', starred: true }),
+      text: vi.fn().mockResolvedValue(''),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const store = useUserMemoryStore()
+    store.recentSessions = [mockSession('s-1', false)]
+    await store.toggleSessionStar('s-1', true)
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      expect.stringContaining('/api/agent/sessions/s-1/star'),
+      expect.objectContaining({ method: 'PATCH' }),
+    )
+    expect(store.recentSessions[0].starred).toBe(true)
+  })
+
+  it('rolls back local state when the PATCH fails', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: false,
+      status: 500,
+      statusText: 'Server Error',
+      json: vi.fn().mockResolvedValue({}),
+      text: vi.fn().mockResolvedValue('error'),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const store = useUserMemoryStore()
+    store.recentSessions = [mockSession('s-1', false)]
+    await store.toggleSessionStar('s-1', true)
+
+    // Roll back: original starred:false restored.
+    expect(store.recentSessions[0].starred).toBe(false)
+    expect(store.error).toMatch(/500|Server Error/)
+  })
+
+  it('removes the unstarred row from the visible list when starred-only filter is on', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: vi.fn().mockResolvedValue({ id: 's-1', starred: false }),
+      text: vi.fn().mockResolvedValue(''),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const store = useUserMemoryStore()
+    store.recentStarredOnly = true
+    store.recentSessions = [mockSession('s-1', true), mockSession('s-2', true)]
+    await store.toggleSessionStar('s-1', false)
+
+    // The unstarred row drops out — leaving only s-2 visible.
+    expect(store.recentSessions.map((s) => s.id)).toEqual(['s-2'])
+  })
+
+  it('reset() clears recentStarredOnly back to false', () => {
+    const store = useUserMemoryStore()
+    store.recentStarredOnly = true
+    store.reset()
+    expect(store.recentStarredOnly).toBe(false)
+  })
+})

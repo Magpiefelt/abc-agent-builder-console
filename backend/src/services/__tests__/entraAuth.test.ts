@@ -136,11 +136,13 @@ describe("session JWT", () => {
 
   it("rejects a tampered session token with InvalidSignatureError", async () => {
     const token = await signSessionToken(SAMPLE_USER);
-    // Flip the last signature byte deterministically (avoid no-op when it already equals 'A').
+    // Mutate the FIRST signature char. The last char of a 32-byte HS256 sig is
+    // a partial group where the low 2 bits are base64url padding — flipping
+    // there can be a no-op after decoding. The first char is always real data.
     const parts = token.split(".");
-    const lastChar = parts[2].slice(-1);
-    const replacement = lastChar === "A" ? "B" : "A";
-    const tampered = parts[0] + "." + parts[1] + "." + parts[2].slice(0, -1) + replacement;
+    const firstChar = parts[2].slice(0, 1);
+    const replacement = firstChar === "A" ? "B" : "A";
+    const tampered = parts[0] + "." + parts[1] + "." + replacement + parts[2].slice(1);
     await expect(verifySessionToken(tampered)).rejects.toBeInstanceOf(InvalidSignatureError);
   });
 

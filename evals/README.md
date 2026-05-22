@@ -9,10 +9,20 @@ state match the scenario's expectations.
 
 | Scenario | Tests |
 |---|---|
+| `01_smoke.json` | Minimal session round-trip → create + start succeed, SSE delivers `iteration_started` → `iteration_completed` → `session_completed`, status persists as `completed` |
 | `01_research_task.json` | Two-iteration research flow → blackboard categories + completed status |
 | `02_loop_detection.json` | Forced 4× identical tool calls → `loop_warning` SSE event |
 | `03_pii_blocking.json` | SIN in prompt → 422 + PII detection list |
 | `04_classification_routing.json` | Protected B + US-residency model → 400 from classification gate |
+| `05_iteration_limit.json` | Agent never finishes → `iteration_limit` SSE event + status=completed at the cap |
+| `06_needs_assistance.json` | LLM emits `needs_assistance` → terminal status preserved, no iteration cap hit |
+| `07_outbound_pii_redaction.json` | SIN in LLM blackboard/scratchpad → `pii_warning` + `[REDACTED:social_insurance_number]` markers |
+| `08_attribute_updates.json` | Three `attribute_updates` patches merge into the persisted attributes object |
+| `09_llm_error_recovery.json` | Transient LLM failure → `llm_error` event, no session error, recovers on next iteration |
+| `10_tool_failure_recovery.json` | SSRF-blocked `web_scrape` → `tool_result` with `success=false`, session continues to completion |
+| `11_three_strike_kill.json` | 3 consecutive `llm_error` events → MAX_CONSECUTIVE_FAILURES kill threshold fires, session ends with status=error |
+| `12_scratchpad_evolution.json` | Three iterations rewriting the scratchpad with growing content → final persisted scratchpad contains all three checkpoints |
+| `13_multi_tool_iteration.json` | Single iteration with 3 simultaneous `get_time` calls → 3 `tool_result` events fan out, session completes |
 
 ## Running
 
@@ -55,6 +65,9 @@ The harness sets `MOCK_LLM=1` on the spawned backend, which:
      are explicitly testing PII blocking.
    - `modelId` (default `"mock-llm"`)
    - `classification` (default `"unclassified"`)
+   - `maxIterations` (integer 1-100, optional) — forwarded to `POST /sessions`.
+     Use a small value (e.g. 3) when pinning the iteration-cap path so the
+     scenario terminates quickly.
    - `llmResponses` (array of canned responses; each can have `thinking`,
      `toolCalls`, `blackboardUpdates`, `scratchpad`, `attributeUpdates`,
      `status`, `userMessage`, `error`, `usage`)
@@ -68,6 +81,15 @@ The harness sets `MOCK_LLM=1` on the spawned backend, which:
      - `errorMatches` — regex against the response body for negative cases
      - `expectCreateRejection` — true if the scenario expects the
        `POST /sessions` to fail before the orchestrator runs
+     - `scratchpadMatches` (regex string, case-insensitive) — asserts
+       against the final persisted scratchpad. Useful for PII redaction
+       checks.
+     - `attributesContain` (object) — required key/value subset of the
+       final persisted attributes object. Equality is deep, via JSON
+       comparison.
+     - `iterationLimitMessageContains` (substring, case-insensitive) —
+       when set, requires an `iteration_limit` SSE event whose `message`
+       field contains the substring.
 2. Run `pnpm test:evals` to verify.
 3. Add a one-line description to the table above.
 

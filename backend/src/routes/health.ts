@@ -1,8 +1,16 @@
 /**
  * Health Check Routes
  *
- * Two endpoints:
- *   - GET /api/health           — minimal, public, suitable for load balancers
+ * Four endpoints:
+ *   - GET /api/health           — minimal, public, summary suitable for load
+ *                                 balancers and external monitoring.
+ *   - GET /api/health/live      — Kubernetes-style liveness probe. Always 200
+ *                                 if the Node process is responsive; no DB or
+ *                                 downstream checks.
+ *   - GET /api/health/ready     — Kubernetes-style readiness probe. 200 when
+ *                                 the database is reachable; 503 otherwise so
+ *                                 the orchestrator can pull this instance out
+ *                                 of rotation while it heals.
  *   - GET /api/health/detailed  — full diagnostics, admin-only (pool stats,
  *                                 token usage, uptime, memory, node version)
  */
@@ -33,6 +41,50 @@ router.get("/", async (_req: Request, res: Response) => {
   };
 
   res.status(dbConnected ? 200 : 503).json(status);
+});
+
+/**
+ * GET /api/health/live
+ *
+ * Liveness probe — answers "is this process still running?" Always returns
+ * 200 if the request loop is responsive. Used by Kubernetes/Nexus to decide
+ * whether to restart the container. Deliberately does NOT touch the DB or
+ * downstream services: a transient DB outage must not trigger a container
+ * restart loop.
+ */
+router.get("/live", (_req: Request, res: Response) => {
+  res.status(200).json({
+    status: "alive",
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    version: APP_VERSION,
+  });
+});
+
+/**
+ * GET /api/health/ready
+ *
+ * Readiness probe — answers "is this instance ready to serve traffic?"
+ * Returns 200 only when the database is reachable, since every meaningful
+ * request needs it. 503 with a `reason` field otherwise so the orchestrator
+ * can pull this instance from rotation without flagging it for restart.
+ */
+router.get("/ready", async (_req: Request, res: Response) => {
+  const dbConnected = await checkConnection();
+
+  if (!dbConnected) {
+    res.status(503).json({
+      status: "not_ready",
+      reason: "database_disconnected",
+      timestamp: new Date().toISOString(),
+    });
+    return;
+  }
+
+  res.status(200).json({
+    status: "ready",
+    timestamp: new Date().toISOString(),
+  });
 });
 
 router.get(

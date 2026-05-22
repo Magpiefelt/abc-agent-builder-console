@@ -390,3 +390,78 @@ describe("GET /api/agent/sessions/:id/iterations", () => {
     expect(res.status).toBe(500);
   });
 });
+
+describe("GET /api/agent/sessions/:id/export", () => {
+  it("returns 404 when the session is not found", async () => {
+    loadSessionMock.mockResolvedValueOnce(null);
+    const res = await request(makeApp()).get("/api/agent/sessions/missing/export");
+    expect(res.status).toBe(404);
+    // The exporter must never run any DB query for a session that's invisible
+    // to the requesting user.
+    expect(queryMock).not.toHaveBeenCalled();
+  });
+
+  it("returns the markdown transcript with correct headers on the happy path", async () => {
+    loadSessionMock.mockResolvedValueOnce({
+      id: "11111111-2222-3333-4444-555555555555",
+      userId: "user-1",
+      ministryCode: "INFRA",
+      prompt: "summarize the speech",
+      modelId: "claude-sonnet-4-6",
+      maxIterations: 50,
+      currentIteration: 2,
+      status: "completed",
+      classification: "unclassified",
+      blackboard: [{ category: "facts", title: "Date", content: "2026", iteration: 1 }],
+      scratchpad: "thinking…",
+      attributes: { goal_met: true },
+      finalReport: { ok: true },
+      error: null,
+      createdAt: "2026-05-22T10:00:00.000Z",
+    });
+    // First query → iterations, second → artifacts. Both empty for this happy-path case.
+    queryMock
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 })
+      .mockResolvedValueOnce({ rows: [], rowCount: 0 });
+
+    const res = await request(makeApp()).get(
+      "/api/agent/sessions/11111111-2222-3333-4444-555555555555/export",
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.headers["content-type"]).toMatch(/text\/markdown/);
+    expect(res.headers["content-disposition"]).toBe(
+      'attachment; filename="abc-session-11111111.md"',
+    );
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    // Body should include the core sections produced by the exporter.
+    expect(res.text).toContain("# ABC Free Agent — Session Transcript");
+    expect(res.text).toContain("summarize the speech");
+    expect(res.text).toContain('| `goal_met` | true |');
+    expect(queryMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("returns 500 on DB error during export", async () => {
+    loadSessionMock.mockResolvedValueOnce({
+      id: "sess-1",
+      userId: "user-1",
+      ministryCode: null,
+      prompt: "",
+      modelId: "claude-sonnet-4-6",
+      maxIterations: 50,
+      currentIteration: 0,
+      status: "completed",
+      classification: "unclassified",
+      blackboard: [],
+      scratchpad: "",
+      attributes: {},
+      finalReport: null,
+      error: null,
+      createdAt: "2026-05-21T12:00:00Z",
+    });
+    queryMock.mockRejectedValueOnce(new Error("connection refused"));
+    const res = await request(makeApp()).get("/api/agent/sessions/sess-1/export");
+    expect(res.status).toBe(500);
+    expect(res.body.error).toMatch(/export/i);
+  });
+});

@@ -28,6 +28,9 @@ import { runFunction, isBranchFunction } from "./functionRegistry.js";
 import { scanForPII } from "./piiDetector.js";
 import { logAudit, AuditAction } from "./auditLogger.js";
 import { logger } from "./logger.js";
+import { M } from "./metrics.js";
+import { checkBudget, recordWorkflowTokens } from "./budgetGuard.js";
+import { dispatchWebhookEvent } from "./webhookDispatcher.js";
 
 // ============================================================================
 // TYPES
@@ -106,6 +109,13 @@ export interface ExecutionContext {
   userId: string;
   ministryCode: string | null;
   continueOnError: boolean;
+  /**
+   * When true, every leaf-level expensive call (LLM, tool, non-branch function)
+   * is stubbed with a deterministic placeholder. Graph walking, template
+   * expansion, branch evaluation, PII scanning, and persistence still run.
+   * Audit logs the run as WORKFLOW_DRY_RUN. Cost: zero tokens, zero external calls.
+   */
+  dryRun?: boolean;
   /** Called with the newly created workflow_executions.id once persisted. */
   onExecutionCreated?: (executionId: string) => void;
 }
@@ -124,6 +134,10 @@ interface StageOutput {
   status: "completed" | "skipped" | "error";
   error?: string;
   reason?: string;
+  /** Optional machine-readable error code. Set for stop-the-workflow cases
+   *  like `"budget_exceeded"` so the dispatcher can audit + emit a specific
+   *  SSE event in addition to the generic `stage_error`. */
+  errorCode?: string;
 }
 
 // ============================================================================
@@ -354,10 +368,31 @@ async function executeAgentStage(
   node: CanvasNode & { data: AgentNodeData },
   parentIds: string[],
   outputs: Map<string, StageOutput>,
-  _workflowClassification: Classification
+  _workflowClassification: Classification,
+  userId: string,
+  ministryCode: string | null,
 ): Promise<StageOutput> {
   const start = Date.now();
   const systemPrompt = resolveSystemPrompt(node.data);
+
+  // Token-budget pre-flight. Workflow runs share the same monthly cap as
+  // Free Agent sessions (user > ministry > global). Each agent stage checks
+  // independently so a single workflow can't burn through the cap with a
+  // big parallel fan-out before we notice.
+  const budget = await checkBudget(userId, ministryCode);
+  if (budget.enforced && budget.exceeded) {
+    return {
+      nodeId: node.id,
+      kind: "agent",
+      value: null,
+      durationMs: Date.now() - start,
+      status: "error",
+      errorCode: "budget_exceeded",
+      error:
+        `Monthly token budget exceeded (${budget.effective.resolvedScope}). ` +
+        `Used ${budget.used.toLocaleString()} / ${(budget.effective.monthlyTokenLimit ?? 0).toLocaleString()}.`,
+    };
+  }
 
   let upstreamContext = "";
   for (const pid of parentIds) {
@@ -458,6 +493,140 @@ async function executeToolStage(
     nodeId: node.id,
     kind: "tool",
     value: result.result,
+    durationMs: Date.now() - start,
+    status: "completed",
+  };
+}
+
+// ============================================================================
+// DRY-RUN STUBS
+// ============================================================================
+//
+// Goal: walk the real graph, exercise the real PII scan / template expansion /
+// branch pruning / persistence, but never hit a real LLM, tool, or external
+// API. Each stub returns a deterministic placeholder so users can see the
+// SSE timeline end-to-end and verify parameter expansion before paying for
+// real tokens. Branch functions are NOT stubbed — we run them for real so
+// the prune behavior is exercised; they are pure and cheap.
+
+function dryRunAgentStage(
+  node: CanvasNode & { data: AgentNodeData },
+  parentIds: string[],
+  outputs: Map<string, StageOutput>,
+): StageOutput {
+  const start = Date.now();
+  const systemPrompt = resolveSystemPrompt(node.data);
+
+  // Build the same upstream context a real run would build, then PII-scan it.
+  // This way the dry-run still catches outbound PII before the user spends
+  // tokens discovering it.
+  let upstreamContext = "";
+  for (const pid of parentIds) {
+    const out = outputs.get(pid);
+    if (!out || out.status !== "completed") continue;
+    upstreamContext += `\n--- Upstream node ${pid} (${out.kind}) ---\n${serializeForPrompt(out.value)}\n`;
+  }
+  const fullSystemPrompt = upstreamContext
+    ? `${systemPrompt}\n\nUpstream context:${upstreamContext}`
+    : systemPrompt;
+
+  const piiScan = scanForPII(fullSystemPrompt);
+  if (piiScan.blockedCount > 0) {
+    return {
+      nodeId: node.id,
+      kind: "agent",
+      value: null,
+      durationMs: Date.now() - start,
+      status: "error",
+      error: "Outbound content blocked by PII scan.",
+    };
+  }
+
+  // Deterministic stub output. Includes the resolved model + a short marker so
+  // an operator inspecting the SSE timeline immediately understands the
+  // stage's output is synthetic.
+  const stub =
+    `[dry-run] Agent stage "${node.data.label || node.id}" using model ${node.data.modelId}. ` +
+    `${parentIds.length} upstream input(s). Replace with real run to see actual LLM output.`;
+
+  return {
+    nodeId: node.id,
+    kind: "agent",
+    value: stub,
+    durationMs: Date.now() - start,
+    tokens: 0,
+    status: "completed",
+  };
+}
+
+async function dryRunFunctionStage(
+  node: CanvasNode & { data: FunctionNodeData },
+  parentIds: string[],
+  outputs: Map<string, StageOutput>,
+): Promise<StageOutput> {
+  const start = Date.now();
+  const expandedParams = expandTemplates(node.data.params, outputs);
+
+  // Branch functions are evaluated for real — they are pure, cheap, and the
+  // prune behavior is one of the things dry-run is meant to validate.
+  if (isBranchFunction(node.data.fnName)) {
+    const input =
+      parentIds.length === 1
+        ? outputs.get(parentIds[0])?.value
+        : mergedUpstream(parentIds, outputs);
+    try {
+      const value = await runFunction(node.data.fnName, input, expandedParams);
+      return {
+        nodeId: node.id,
+        kind: "function",
+        value,
+        durationMs: Date.now() - start,
+        status: "completed",
+      };
+    } catch (err) {
+      return {
+        nodeId: node.id,
+        kind: "function",
+        value: null,
+        durationMs: Date.now() - start,
+        status: "error",
+        error: (err as Error).message,
+      };
+    }
+  }
+
+  // Other functions return a deterministic stub describing the call so the
+  // operator can verify template expansion landed without actually running
+  // anything that could mutate state or hit an external service.
+  return {
+    nodeId: node.id,
+    kind: "function",
+    value: {
+      __dryRun: true,
+      fnName: node.data.fnName,
+      params: expandedParams,
+      note: `Dry-run stub for ${node.data.fnName}; output deferred to real execution.`,
+    },
+    durationMs: Date.now() - start,
+    status: "completed",
+  };
+}
+
+function dryRunToolStage(
+  node: CanvasNode & { data: ToolNodeData },
+  outputs: Map<string, StageOutput>,
+): StageOutput {
+  const start = Date.now();
+  const expandedParams = expandTemplates(node.data.params, outputs);
+  return {
+    nodeId: node.id,
+    kind: "tool",
+    value: {
+      __dryRun: true,
+      toolName: node.data.toolName,
+      params: expandedParams,
+      note: `Dry-run stub for tool ${node.data.toolName}; no external call made.`,
+    },
     durationMs: Date.now() - start,
     status: "completed",
   };
@@ -579,13 +748,16 @@ export async function runWorkflow(
   await logAudit({
     userId: ctx.userId,
     ministryCode: ctx.ministryCode || undefined,
-    action: AuditAction.WORKFLOW_EXECUTED,
+    action: ctx.dryRun ? AuditAction.WORKFLOW_DRY_RUN : AuditAction.WORKFLOW_EXECUTED,
     resourceType: "workflow",
     resourceId: workflow.id,
-    details: { executionId, stageCount: topoOrder.length },
+    details: { executionId, stageCount: topoOrder.length, dryRun: !!ctx.dryRun },
   });
 
-  // SSE headers should already be set by the route; emit start event.
+  // SSE headers should already be set by the route; emit start event. The
+  // `dryRun` flag is echoed back so the UI can render the dry-run banner
+  // from the very first event (rather than waiting for stage values to
+  // arrive and inferring from the __dryRun marker).
   const totalStages = topoOrder.length + noteNodeIds.size;
   sendSSE(res, {
     type: "workflow_start",
@@ -593,6 +765,7 @@ export async function runWorkflow(
     workflowId: workflow.id,
     totalStages,
     classification: workflow.classification,
+    dryRun: !!ctx.dryRun,
   });
 
   // Emit skipped events for notes (presented as stages in the UI).
@@ -623,14 +796,30 @@ export async function runWorkflow(
     const stageStart = Date.now();
     try {
       if (node.data.kind === "agent") {
+        if (ctx.dryRun) {
+          return dryRunAgentStage(
+            node as CanvasNode & { data: AgentNodeData },
+            parentIds,
+            outputs,
+          );
+        }
         return await executeAgentStage(
           node as CanvasNode & { data: AgentNodeData },
           parentIds,
           outputs,
           workflow.classification,
+          ctx.userId,
+          ctx.ministryCode,
         );
       }
       if (node.data.kind === "function") {
+        if (ctx.dryRun) {
+          return await dryRunFunctionStage(
+            node as CanvasNode & { data: FunctionNodeData },
+            parentIds,
+            outputs,
+          );
+        }
         return await executeFunctionStage(
           node as CanvasNode & { data: FunctionNodeData },
           parentIds,
@@ -638,6 +827,12 @@ export async function runWorkflow(
         );
       }
       if (node.data.kind === "tool") {
+        if (ctx.dryRun) {
+          return dryRunToolStage(
+            node as CanvasNode & { data: ToolNodeData },
+            outputs,
+          );
+        }
         return await executeToolStage(
           node as CanvasNode & { data: ToolNodeData },
           outputs,
@@ -730,7 +925,32 @@ export async function runWorkflow(
             nodeId,
             error: stageOutput.error || "Stage failed",
             stageIndex: stageIndexByNode.get(nodeId) ?? 0,
+            errorCode: stageOutput.errorCode,
           });
+          M.workflowStages.inc({ kind: node.data.kind, status: "error" });
+          if (stageOutput.errorCode === "budget_exceeded") {
+            // Surface a top-level signal so the UI can show a dedicated
+            // "Out of budget" banner instead of just a stage-level error.
+            sendSSE(res, {
+              type: "budget_exceeded",
+              executionId,
+              nodeId,
+              error: stageOutput.error,
+            });
+            logAudit({
+              userId: ctx.userId,
+              ministryCode: ctx.ministryCode || undefined,
+              action: AuditAction.BUDGET_EXCEEDED,
+              resourceType: "workflow_execution",
+              resourceId: executionId,
+              details: { nodeId, workflowId: workflow.id },
+            });
+            // Hard-stop the workflow: do not honour continueOnError. Burning
+            // through the cap is a governance event, not a flaky stage.
+            finalStatus = "error";
+            finalError = stageOutput.error;
+            break layerLoop;
+          }
           if (!ctx.continueOnError) {
             // Mark every later-layer node as pruned for the checkpoint record so
             // the persisted stage_results don't show them as "pending forever."
@@ -749,6 +969,7 @@ export async function runWorkflow(
             value: truncateForSSE(stageOutput.value),
             tokens: stageOutput.tokens,
           });
+          M.workflowStages.inc({ kind: node.data.kind, status: "completed" });
 
           // Branch pruning applies for subsequent layers, not for this one
           // (siblings in the same layer have no dependency on each other).
@@ -793,6 +1014,22 @@ export async function runWorkflow(
     logger.error("Failed to finalize workflow_executions row", err, { executionId });
   }
 
+  // Tally token usage across all completed stages and persist to the
+  // denormalized workflow_executions.total_tokens column so the budget guard
+  // and admin usage view see the cost of this run without re-scanning the
+  // JSONB stage_results blob. Skipped on dry-run (stage tokens are 0 anyway).
+  if (!ctx.dryRun) {
+    let totalTokens = 0;
+    for (const out of outputs.values()) {
+      if (typeof out.tokens === "number" && Number.isFinite(out.tokens)) {
+        totalTokens += out.tokens;
+      }
+    }
+    if (totalTokens > 0) {
+      await recordWorkflowTokens(executionId, totalTokens);
+    }
+  }
+
   sendSSE(res, {
     type: "workflow_complete",
     executionId,
@@ -800,7 +1037,31 @@ export async function runWorkflow(
     stageCount: outputs.size,
     durationMs: Date.now() - workflowStart,
     error: finalError,
+    dryRun: !!ctx.dryRun,
   });
+  // Tag dry-runs separately so a Grafana panel can distinguish real-run
+  // success rates from dry-run validation traffic.
+  M.workflowExecutions.inc({ status: ctx.dryRun ? `${finalStatus}_dry_run` : finalStatus });
+
+  // Bot 21 (Backlog B3) — fire any admin-registered webhook subscriptions for
+  // this event. Skipped on dry-run (no real artifact was produced; subscribers
+  // would be confused). Fire-and-forget — never blocks res.end().
+  if (!ctx.dryRun) {
+    dispatchWebhookEvent("workflow.completed", {
+      resourceId: executionId,
+      ministryCode: workflow.ministry_code,
+      body: {
+        executionId,
+        workflowId: workflow.id,
+        status: finalStatus,
+        classification: workflow.classification,
+        ministryCode: workflow.ministry_code,
+        stageCount: outputs.size,
+        durationMs: Date.now() - workflowStart,
+        error: finalError ?? null,
+      },
+    });
+  }
 
   res.end();
 }

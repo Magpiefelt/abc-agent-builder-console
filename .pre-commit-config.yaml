@@ -1,0 +1,36 @@
+# Pre-commit hooks for ABC Agent Builder Console.
+#
+# Install (one-time per developer):
+#   pipx install pre-commit       # or: brew install pre-commit
+#   pre-commit install            # registers the git hook
+#
+# Run on demand:
+#   pre-commit run --all-files
+#
+# CI parity: the same gitleaks rule set is referenced from .gitleaks.toml so
+# local and CI scans line up. Update the rev pin as new gitleaks releases land.
+
+repos:
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+        name: gitleaks (block committed secrets)
+        description: Scan staged changes for credentials, tokens, and other secrets before they reach git history.
+        args:
+          - "--config=.gitleaks.toml"
+          - "--redact"
+          - "--no-banner"
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.md$'
+      - id: end-of-file-fixer
+      - id: check-merge-conflict
+      - id: check-yaml
+        exclude: 'pnpm-lock\.yaml$'
+      - id: check-json
+      - id: check-added-large-files
+        args: ["--maxkb=512"]

@@ -75,6 +75,12 @@ export interface WorkflowSummary {
   classification: Classification;
   version: number;
   is_template: boolean;
+  /**
+   * Free-form discovery tags (Bot 17, F5). Always present as an array; the
+   * backend normalises to lowercase and dedupes, so list/search code can
+   * compare strings directly. Empty array when a workflow has no tags.
+   */
+  tags: string[];
   ministry_code: string | null;
   user_id: string;
   updated_at: string;
@@ -149,6 +155,12 @@ export interface ExecutionState {
   completedAt?: number;
   error?: string;
   piiBlockedTotal: number;
+  /**
+   * True when the active execution was launched in dry-run mode. The UI uses
+   * this to render a clear banner so an operator never confuses stub stage
+   * output with real output. Set on workflow_start; cleared on clearExecution.
+   */
+  dryRun?: boolean;
 }
 
 export interface WorkflowVersionSummary {
@@ -209,12 +221,47 @@ export interface WorkflowExecutionDetail extends WorkflowExecutionSummary {
   stageResults: WorkflowExecutionStageResult[];
 }
 
+export interface ModelPrice {
+  inputPerMillion: number;
+  outputPerMillion: number;
+}
+
+export interface PerNodeCostEstimate {
+  nodeId: string;
+  label: string;
+  modelId: string;
+  inputTokens: number;
+  outputTokens: number;
+  inputCost: number | null;
+  outputCost: number | null;
+  isPriced: boolean;
+}
+
+export interface WorkflowCostEstimate {
+  agentCallCount: number;
+  toolCallCount: number;
+  functionCallCount: number;
+  estimatedInputTokens: number;
+  estimatedOutputTokens: number;
+  perNode: PerNodeCostEstimate[];
+  total: {
+    inputCost: number;
+    outputCost: number;
+    totalCost: number;
+    currency: string;
+  };
+  unknownModels: string[];
+  assumesAllBranches: boolean;
+  pricingTable: Record<string, ModelPrice>;
+  currency: string;
+}
+
 export type SSEEvent =
-  | { type: 'workflow_start'; executionId: string; workflowId: string; totalStages: number; classification: Classification }
+  | { type: 'workflow_start'; executionId: string; workflowId: string; totalStages: number; classification: Classification; dryRun?: boolean }
   | { type: 'stage_start'; executionId: string; nodeId: string; kind: NodeKind; stageIndex: number }
   | { type: 'stage_complete'; executionId: string; nodeId: string; kind: NodeKind; stageIndex: number; durationMs: number; value: unknown; tokens?: number }
   | { type: 'stage_skipped'; executionId: string; nodeId: string; reason: 'branch_unmatched' | 'note' | 'pruned' }
   | { type: 'stage_error'; executionId: string; nodeId: string; error: string; stageIndex: number }
   | { type: 'pii_warning'; executionId: string; nodeId: string; blockedCount: number }
-  | { type: 'workflow_complete'; executionId: string; status: ExecutionStatus; stageCount: number; durationMs: number; error?: string }
+  | { type: 'workflow_complete'; executionId: string; status: ExecutionStatus; stageCount: number; durationMs: number; error?: string; dryRun?: boolean }
   | { type: 'error'; error: string; code?: string; nodeIds?: string[] };

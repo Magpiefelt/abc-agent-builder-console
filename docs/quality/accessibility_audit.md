@@ -2,7 +2,7 @@
 
 **Standard:** WCAG 2.1 Level A + AA
 **Tools:** axe-core 4.10 (via Vitest + jsdom), manual keyboard + screen reader passes.
-**Date:** 2026-05-21 (updated post-review)
+**Date:** 2026-05-22 (refreshed — reduced-motion follow-up landed)
 **Owner:** Stream E (Quality)
 
 This document records the automated and manual accessibility review of the
@@ -138,9 +138,15 @@ VM). Findings:
 ### Reduced motion
 
 The current build has minimal animations (Vue Flow edge animation). When
-`prefers-reduced-motion: reduce` is active, CSS transitions should be
-suppressed. The Vue Flow `animated` edge prop should be conditionally
-disabled based on the user's motion preference.
+`prefers-reduced-motion: reduce` is active, motion is suppressed via the
+`useReducedMotion` composable
+(`frontend/src/composables/useReducedMotion.ts`) — it watches the
+`(prefers-reduced-motion: reduce)` media query and exposes a reactive
+boolean. `WorkflowCanvas.vue` binds the Vue Flow edge `animated` prop to
+`!reducedMotion.value`, so edges stop pulsing as soon as the user toggles
+the OS setting. The composable is jsdom / SSR safe (defaults to `false`
+when `window.matchMedia` is missing) and supports both the modern
+`addEventListener` and legacy Safari `addListener` surfaces.
 
 ## Remaining limitations
 
@@ -148,7 +154,7 @@ disabled based on the user's motion preference.
 |---|---|---|
 | Colour contrast is not auto-tested in jsdom | Follow-up | Add a Playwright pass when end-to-end browser tests come in. |
 | Vue Flow canvas keyboard navigation | Follow-up | Vue Flow requires custom keyboard handling for canvas nodes. Track as P1 enhancement. |
-| `prefers-reduced-motion` not yet wired to Vue Flow edge animation | Follow-up | Conditionally disable `animated` prop based on media query. |
+| `prefers-reduced-motion` not yet wired to Vue Flow edge animation | **Resolved (2026-05-22)** | `useReducedMotion` composable now drives the `animated` prop on `WorkflowCanvas`'s edges; covered by `useReducedMotion.test.ts`. |
 | InterjectionModal focus trap | Verified | `useFocusTrap` composable handles tab cycling within the modal. |
 
 ## How to re-run

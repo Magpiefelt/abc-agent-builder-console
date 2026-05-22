@@ -1,0 +1,37 @@
+{
+  "name": "09 — Single LLM failure does not kill the session",
+  "description": "Iteration 1's mock LLM call throws (simulating a transient 5xx from the provider). The orchestrator must emit an llm_error SSE event but NOT a session error, increment consecutiveLLMFailures (still below the 3-strike kill threshold), and proceed to iteration 2. Iteration 2 returns a normal completed response. Final session status is 'completed' and exactly one blackboard entry exists — the one written in iteration 2. The absence of an iteration_complete event after the failed iteration is intentional: the orchestrator returns early on LLM failure without emitting iteration_complete for that iteration.",
+  "prompt": "Briefly note something for me; expect a transient provider hiccup on the first try.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 4,
+  "llmResponses": [
+    {
+      "error": "503 Service Unavailable (mock transient failure)"
+    },
+    {
+      "thinking": "Recovered. Writing the note now.",
+      "blackboardUpdates": [
+        { "category": "note", "title": "after recovery", "content": "Logged successfully on retry." }
+      ],
+      "status": "completed",
+      "userMessage": "Done after one transient failure."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "llm_error",
+      "iteration_start",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "sseAbsent": ["iteration_limit", "error"],
+    "finalStatus": "completed",
+    "blackboardCategories": ["note"],
+    "blackboardCount": 1
+  }
+}

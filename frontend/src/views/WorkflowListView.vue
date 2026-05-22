@@ -6,6 +6,7 @@ import { useWorkflowStore } from '@/stores/workflow'
 import { useAuthStore } from '@/stores/auth'
 import { useToast } from '@/composables/useToast'
 import { useDocumentTitle } from '@/composables/useDocumentTitle'
+import WorkflowTagsEditor from '@/components/workflow/WorkflowTagsEditor.vue'
 
 useDocumentTitle(() => 'Workflows')
 
@@ -17,6 +18,7 @@ const { list, loading, error } = storeToRefs(store)
 
 const search = ref('')
 const ministryFilter = ref<'mine' | 'ministry'>('mine')
+const tagFilter = ref<string>('')
 const showCreate = ref(false)
 const newName = ref('')
 const newNameInput = ref<HTMLElement | null>(null)
@@ -55,6 +57,21 @@ onMounted(() => {
   store.loadList()
 })
 
+const availableTags = computed<string[]>(() => {
+  const counts = new Map<string, number>()
+  for (const w of list.value) {
+    const tags = Array.isArray(w.tags) ? w.tags : []
+    for (const t of tags) {
+      counts.set(t, (counts.get(t) ?? 0) + 1)
+    }
+  }
+  // Sort by descending count, then alphabetically — most-used tags rise to
+  // the top, with ties broken predictably for the test harness.
+  return Array.from(counts.entries())
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([tag]) => tag)
+})
+
 const filtered = computed(() =>
   list.value.filter((w) => {
     if (
@@ -64,9 +81,15 @@ const filtered = computed(() =>
     ) {
       return false
     }
+    if (tagFilter.value && !(w.tags ?? []).includes(tagFilter.value)) {
+      return false
+    }
     if (search.value) {
       const needle = search.value.toLowerCase()
-      const haystack = `${w.name} ${w.description ?? ''}`.toLowerCase()
+      // Searching also matches against tags so a user can type a tag name to
+      // narrow without flipping the dropdown.
+      const tagText = (w.tags ?? []).join(' ')
+      const haystack = `${w.name} ${w.description ?? ''} ${tagText}`.toLowerCase()
       if (!haystack.includes(needle)) return false
     }
     return true
@@ -74,7 +97,10 @@ const filtered = computed(() =>
 )
 
 const hasActiveFilter = computed(
-  () => search.value.length > 0 || ministryFilter.value !== 'mine',
+  () =>
+    search.value.length > 0 ||
+    ministryFilter.value !== 'mine' ||
+    tagFilter.value.length > 0,
 )
 
 const resultLabel = computed(() => {
@@ -103,6 +129,7 @@ async function toggleCreate(): Promise<void> {
 function clearFilters(): void {
   search.value = ''
   ministryFilter.value = 'mine'
+  tagFilter.value = ''
 }
 
 async function createWorkflow(): Promise<void> {
@@ -186,6 +213,29 @@ function formatDate(iso: string): string {
           <goa-dropdown-item value="mine" label="My ministry"></goa-dropdown-item>
           <goa-dropdown-item value="ministry" label="All accessible"></goa-dropdown-item>
         </goa-dropdown>
+        <goa-dropdown
+          v-if="availableTags.length > 0"
+          name="tagFilter"
+          :value="tagFilter"
+          width="11rem"
+          aria-label="Filter by tag"
+          @_change="(e: CustomEvent<{ value: string }>) => (tagFilter = e.detail.value)"
+        >
+          <goa-dropdown-item value="" label="All tags"></goa-dropdown-item>
+          <goa-dropdown-item
+            v-for="tag in availableTags"
+            :key="tag"
+            :value="tag"
+            :label="`#${tag}`"
+          ></goa-dropdown-item>
+        </goa-dropdown>
+        <router-link
+          to="/workflows/templates"
+          class="text-xs text-[var(--goa-color-primary)] hover:underline"
+          data-testid="templates-link"
+        >
+          Browse templates
+        </router-link>
         <goa-button
           type="tertiary"
           leadingicon="cloud-upload"
@@ -273,6 +323,7 @@ function formatDate(iso: string): string {
         <thead>
           <tr>
             <th>Name</th>
+            <th>Tags</th>
             <th>Classification</th>
             <th>Version</th>
             <th>Updated</th>
@@ -289,6 +340,13 @@ function formatDate(iso: string): string {
                 {{ wf.name }}
               </router-link>
               <div v-if="wf.description" class="text-xs text-[var(--goa-color-text-secondary)] truncate">{{ wf.description }}</div>
+            </td>
+            <td>
+              <WorkflowTagsEditor
+                :tags="wf.tags ?? []"
+                readonly
+                compact
+              />
             </td>
             <td class="text-xs uppercase">{{ wf.classification }}</td>
             <td class="text-xs">v{{ wf.version }}</td>
@@ -319,7 +377,9 @@ function formatDate(iso: string): string {
       @_close="deleting ? null : (deleteTarget = null)"
     >
       <p>
-        Delete workflow "<strong>{{ deleteTarget.name }}</strong>"? This cannot be undone.
+        Delete workflow "<strong>{{ deleteTarget.name }}</strong>"? It will move
+        to the admin Trash for 30 days, after which it is purged permanently.
+        An administrator can restore it during that window.
       </p>
       <div slot="actions" class="flex justify-end gap-2">
         <goa-button

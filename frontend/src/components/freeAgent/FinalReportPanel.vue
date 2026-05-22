@@ -52,7 +52,7 @@ function handleDownload(): void {
     aria-label="Final report"
   >
     <header class="px-3 py-2 border-b border-[var(--goa-color-border)] flex items-center justify-between gap-2">
-      <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Final Report</h3>
+      <h3 class="text-sm font-semibold text-[var(--goa-color-text-default)]">Final Report</h3>
       <div class="flex items-center gap-2">
         <goa-button
           type="tertiary"

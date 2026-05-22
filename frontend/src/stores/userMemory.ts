@@ -28,6 +28,7 @@ export interface RecentSession {
   classification: string
   createdAt: string
   completedAt: string | null
+  starred: boolean
 }
 
 export interface UserPreferences {
@@ -153,11 +154,60 @@ export const useUserMemoryStore = defineStore('userMemory', () => {
 
   // ----- Recent sessions -----
 
-  async function fetchRecentSessions(): Promise<void> {
+  // Filter chip state (Bot 19, F8). The store owns it so the
+  // SessionHistoryView can toggle and re-fetch without juggling a separate
+  // ref. Defaults to `false` so existing callers see no behaviour change.
+  const recentStarredOnly = ref(false)
+
+  async function fetchRecentSessions(options?: { starredOnly?: boolean }): Promise<void> {
+    if (options?.starredOnly !== undefined) {
+      recentStarredOnly.value = options.starredOnly
+    }
+    const qs = recentStarredOnly.value ? '?starred=true' : ''
     try {
-      const data = await jsonFetch<{ sessions: RecentSession[] }>('/api/users/me/recent-sessions')
-      recentSessions.value = data.sessions
+      const data = await jsonFetch<{ sessions: RecentSession[] }>(
+        `/api/users/me/recent-sessions${qs}`,
+      )
+      // Default starred to false for older API responses that don't carry the
+      // field yet (e.g. mid-deploy ordering).
+      recentSessions.value = data.sessions.map((s) => ({ ...s, starred: s.starred ?? false }))
     } catch (err) {
+      setError(err)
+    }
+  }
+
+  /**
+   * Toggle the star flag on a recent session (Bot 19, F8). Optimistic: flip
+   * locally first so the UI feels instant, then PATCH and roll back on
+   * failure. The recent-sessions list is re-fetched only when the active
+   * "Starred only" filter would have changed visibility.
+   */
+  async function toggleSessionStar(id: string, nextStarred: boolean): Promise<void> {
+    const row = recentSessions.value.find((s) => s.id === id)
+    const previous = row?.starred ?? false
+    if (row) {
+      row.starred = nextStarred
+      recentSessions.value = [...recentSessions.value]
+    }
+    try {
+      await jsonFetch<{ id: string; starred: boolean }>(
+        `/api/agent/sessions/${encodeURIComponent(id)}/star`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ starred: nextStarred }),
+        },
+      )
+      // If the user is currently filtering to starred-only and they just
+      // unstarred a row, drop it from the visible list so it doesn't linger.
+      if (recentStarredOnly.value && !nextStarred) {
+        recentSessions.value = recentSessions.value.filter((s) => s.id !== id)
+      }
+    } catch (err) {
+      if (row) {
+        row.starred = previous
+        recentSessions.value = [...recentSessions.value]
+      }
       setError(err)
     }
   }
@@ -191,12 +241,14 @@ export const useUserMemoryStore = defineStore('userMemory', () => {
     recentSessions.value = []
     preferences.value = null
     error.value = null
+    recentStarredOnly.value = false
   }
 
   return {
     savedPrompts,
     favoriteWorkflows,
     recentSessions,
+    recentStarredOnly,
     preferences,
     loading,
     error,
@@ -207,6 +259,7 @@ export const useUserMemoryStore = defineStore('userMemory', () => {
     favoriteWorkflow,
     unfavoriteWorkflow,
     fetchRecentSessions,
+    toggleSessionStar,
     fetchPreferences,
     updatePreferences,
     reset,

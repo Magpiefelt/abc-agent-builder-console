@@ -117,7 +117,7 @@ function selectTab(tab: MemoryTab): void {
         type="button"
         @click="taskOpenMobile = !taskOpenMobile"
         :aria-expanded="taskOpenMobile"
-        class="w-full px-4 py-3 flex items-center justify-between text-left text-sm font-semibold text-[var(--goa-color-primary-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
+        class="w-full px-4 py-3 flex items-center justify-between text-left text-sm font-semibold text-[var(--goa-color-text-default)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
       >
         <span>Task Configuration</span>
         <span aria-hidden="true">{{ taskOpenMobile ? '▾' : '▸' }}</span>
@@ -174,7 +174,7 @@ function selectTab(tab: MemoryTab): void {
         aria-label="Memory viewer"
       >
         <header class="flex items-center justify-between px-3 py-2 border-b border-[var(--goa-color-border)]">
-          <span class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">
+          <span class="text-sm font-semibold text-[var(--goa-color-text-default)]">
             {{ memoryTab === 'blackboard' ? 'Blackboard' : memoryTab === 'scratchpad' ? 'Scratchpad' : 'Artifacts' }}
           </span>
           <button

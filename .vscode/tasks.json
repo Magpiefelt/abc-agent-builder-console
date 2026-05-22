@@ -1,0 +1,150 @@
+{
+  // One-click commands for ABC contributors. Run with `Ctrl/Cmd+Shift+P → Tasks: Run Task`,
+  // or chain via "compound" definitions where useful. Every task points at
+  // the existing pnpm scripts — there is no duplicated logic here.
+
+  "version": "2.0.0",
+  "tasks": [
+    // --------------------------------------------------------------------
+    // Dev servers
+    // --------------------------------------------------------------------
+    {
+      "label": "dev: backend",
+      "detail": "Start backend (tsx watch on port 3000) — used by the launch.json debug profile.",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "dev:backend"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "tsx",
+        "pattern": [
+          {
+            "regexp": "^([^\\s].*)\\((\\d+|\\d+,\\d+|\\d+,\\d+,\\d+,\\d+)\\):\\s+(error|warning|info)\\s+(TS\\d+)\\s*:\\s*(.*)$",
+            "file": 1,
+            "location": 2,
+            "severity": 3,
+            "code": 4,
+            "message": 5
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "starting",
+          "endsPattern": "Listening on http://localhost"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "dev: frontend",
+      "detail": "Start Vite dev server on port 5173.",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "dev:frontend"],
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": [
+          {
+            "regexp": "^([^\\s].*):(\\d+):(\\d+)$",
+            "file": 1,
+            "line": 2,
+            "column": 3
+          }
+        ],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "VITE",
+          "endsPattern": "ready in"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      }
+    },
+    {
+      "label": "dev: full stack",
+      "detail": "Start backend AND frontend concurrently.",
+      "dependsOn": ["dev: backend", "dev: frontend"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+
+    // --------------------------------------------------------------------
+    // Verification
+    // --------------------------------------------------------------------
+    {
+      "label": "test: backend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "backend", "run", "test"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "test: frontend",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["--filter", "frontend", "run", "test"],
+      "group": "test",
+      "problemMatcher": []
+    },
+    {
+      "label": "test: all",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "test"],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "type-check",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "type-check"],
+      "group": "build",
+      "problemMatcher": ["$tsc"]
+    },
+    {
+      "label": "lint",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "lint"],
+      "problemMatcher": ["$eslint-stylish"]
+    },
+    {
+      "label": "build",
+      "type": "shell",
+      "command": "pnpm",
+      "args": ["run", "build"],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "problemMatcher": ["$tsc"]
+    },
+
+    // --------------------------------------------------------------------
+    // Database
+    // --------------------------------------------------------------------
+    {
+      "label": "db: apply migrations",
+      "detail": "Run docs/02_database_migrations.sql against $DATABASE_URL. Idempotent.",
+      "type": "shell",
+      "command": "psql",
+      "args": ["$DATABASE_URL", "-f", "docs/02_database_migrations.sql"],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+{
+  "name": "07 — Inbound PII in LLM response is redacted before reaching state",
+  "description": "User prompt is clean. The LLM is instructed (via canned mock response) to emit a Luhn-valid SIN inside both a blackboard entry and the scratchpad — the kind of leak the inbound-PII scan exists to catch. The orchestrator must emit a pii_warning SSE event that explicitly references the model response, and the persisted blackboard + scratchpad must contain the literal '[REDACTED:social_insurance_number]' marker rather than the raw number. This pins the §4.5 'outbound PII scan after LLM response' invariant.",
+  "prompt": "Briefly describe Edmonton's role in Alberta governance.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [
+    {
+      "thinking": "I should answer this directly. (Mock will leak a fake SIN to test redaction.)",
+      "blackboardUpdates": [
+        {
+          "category": "fact",
+          "title": "verification record",
+          "content": "Subject SIN on file is 046-454-286 (this string MUST be redacted before storage)."
+        }
+      ],
+      "scratchpad": "Working notes — subject identifier: 046-454-286 (also must be redacted).",
+      "status": "completed",
+      "userMessage": "Edmonton is the provincial capital of Alberta and seat of the Legislative Assembly."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "pii_warning",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "finalStatus": "completed",
+    "blackboardCategories": ["fact"],
+    "scratchpadMatches": "\\[REDACTED:social_insurance_number\\]"
+  }
+}

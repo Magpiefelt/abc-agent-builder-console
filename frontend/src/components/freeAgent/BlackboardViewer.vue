@@ -57,25 +57,23 @@ function toggleCategory(c: string): void {
         @_change="(e: CustomEvent<{ value: string }>) => (search = e.detail.value)"
       ></goa-input>
       <div v-if="categories.length > 0" class="flex flex-wrap gap-1">
-        <goa-button
+        <goa-filter-chip
           v-for="c in categories"
           :key="c"
-          :type="activeCategories.has(c) ? 'primary' : 'secondary'"
-          size="compact"
+          :content="c"
+          :leadingicon="activeCategories.has(c) ? 'checkmark' : undefined"
           @_click="toggleCategory(c)"
-        >
-          {{ c }}
-        </goa-button>
+        ></goa-filter-chip>
       </div>
     </div>
 
-    <div class="overflow-y-auto flex-1 min-h-0 flex flex-col gap-3">
-      <div
+    <div class="overflow-y-auto flex-1 min-h-0">
+      <p
         v-if="session.blackboard.length === 0"
-        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center"
+        class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center m-0"
       >
-        Blackboard is empty.
-      </div>
+        The agent hasn't written to the blackboard yet. Entries appear as the iteration progresses.
+      </p>
       <div
         v-else-if="grouped.length === 0"
         class="text-sm text-[var(--goa-color-text-secondary)] p-4 text-center flex flex-col gap-2 items-center"
@@ -89,22 +87,28 @@ function toggleCategory(c: string): void {
           Clear filters
         </button>
       </div>
-      <div v-for="[cat, entries] in grouped" :key="cat" class="flex flex-col gap-2">
-        <h4 class="text-xs font-semibold uppercase tracking-wide text-[var(--goa-color-text-secondary)]">
-          {{ cat }}
-        </h4>
-        <article
-          v-for="(e, idx) in entries"
-          :key="`${cat}-${idx}`"
-          class="border border-[var(--goa-color-border)] rounded-md p-2 bg-[var(--goa-color-surface)]"
-        >
-          <header class="flex items-center justify-between gap-2 mb-1">
-            <h5 class="text-sm font-medium text-[var(--goa-color-text)]">{{ e.title }}</h5>
-            <goa-badge type="information" :content="`#${e.iteration}`"></goa-badge>
-          </header>
-          <div class="text-sm prose prose-sm max-w-none" v-html="renderMarkdown(e.content)" />
-        </article>
-      </div>
+      <goa-container v-else type="non-interactive" padding="compact">
+        <div class="flex flex-col gap-5">
+          <section v-for="[cat, entries] in grouped" :key="cat" class="flex flex-col">
+            <h4 class="text-xs font-semibold uppercase tracking-wide text-[var(--goa-color-text-secondary)] mb-1 m-0">
+              {{ cat }}
+            </h4>
+            <ul class="divide-y divide-[var(--goa-color-border)] m-0 p-0 list-none">
+              <li
+                v-for="(e, idx) in entries"
+                :key="`${cat}-${idx}`"
+                class="py-2"
+              >
+                <header class="flex items-center justify-between gap-2 mb-1">
+                  <h5 class="text-sm font-medium text-[var(--goa-color-text-default)] m-0">{{ e.title }}</h5>
+                  <goa-badge type="information" :content="`#${e.iteration}`"></goa-badge>
+                </header>
+                <div class="text-sm prose prose-sm max-w-none" v-html="renderMarkdown(e.content)" />
+              </li>
+            </ul>
+          </section>
+        </div>
+      </goa-container>
     </div>
   </div>
 </template>

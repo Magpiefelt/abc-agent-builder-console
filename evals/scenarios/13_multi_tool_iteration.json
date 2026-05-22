@@ -1,0 +1,50 @@
+{
+  "name": "13 — Multiple tool calls in a single iteration fan out and resolve",
+  "description": "The orchestrator routes every tool_call in a parsed LLM response through dispatchToolCalls sequentially (one toolDispatcher invocation, internal sequencing). This scenario asks the agent to call get_time three times with different timezones in a single iteration. Verifies the orchestrator emits one tool_calls event listing all three tools, then one tool_result event per call, and then proceeds to iteration_complete. The get_time tool is purely local — no external HTTP — so the run stays hermetic. Final session is completed with no errors.",
+  "prompt": "Tell me the current local time in Edmonton, UTC, and Tokyo.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 3,
+  "llmResponses": [
+    {
+      "thinking": "I'll get all three times in a single batch, then summarize.",
+      "toolCalls": [
+        { "name": "get_time", "arguments": { "timezone": "America/Edmonton" } },
+        { "name": "get_time", "arguments": { "timezone": "UTC" } },
+        { "name": "get_time", "arguments": { "timezone": "Asia/Tokyo" } }
+      ],
+      "status": "running"
+    },
+    {
+      "thinking": "All three lookups returned. Summarizing now.",
+      "blackboardUpdates": [
+        {
+          "category": "summary",
+          "title": "Time check",
+          "content": "Pulled current local times for Edmonton (America/Edmonton), UTC, and Tokyo (Asia/Tokyo) in a single batched iteration."
+        }
+      ],
+      "status": "completed",
+      "userMessage": "Three timezones reported."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "tool_calls",
+      "tool_result",
+      "tool_result",
+      "tool_result",
+      "iteration_complete",
+      "iteration_start",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "sseAbsent": ["error", "iteration_limit"],
+    "finalStatus": "completed",
+    "blackboardCategories": ["summary"]
+  }
+}

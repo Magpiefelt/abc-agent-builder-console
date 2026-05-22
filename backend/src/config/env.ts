@@ -124,6 +124,53 @@ const envSchema = z
   RETENTION_JOB_ENABLED: z.coerce.boolean().default(false),
   /** Local hour-of-day (0-23) for the daily retention pass. Default 02:00. */
   RETENTION_JOB_HOUR: z.coerce.number().min(0).max(23).default(2),
+  /**
+   * How long soft-deleted workflows survive in the Trash before the retention
+   * job purges them permanently. Default 30 days matches the Master Plan §10.2
+   * B4 specification ("nightly job purges after 30 days").
+   */
+  WORKFLOW_TRASH_RETENTION_DAYS: z.coerce.number().int().min(1).max(3650).default(30),
+
+  // ============================================================================
+  // WEBHOOK DELIVERY (Backlog B3 — Bot 21)
+  // ============================================================================
+  /** Per-attempt HTTP timeout for outbound webhook POSTs. */
+  WEBHOOK_TIMEOUT_MS: z.coerce.number().int().min(500).max(60_000).default(5000),
+  /** Maximum delivery attempts per event (initial try + retries). */
+  WEBHOOK_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(10).default(3),
+  /** Base backoff between attempts. Doubled each retry. */
+  WEBHOOK_BASE_BACKOFF_MS: z.coerce.number().int().min(100).max(60_000).default(1000),
+
+  // ============================================================================
+  // EVIDENCE COLLECTOR (Backlog S2 — Bot 22)
+  // ============================================================================
+  /** Whether the daily SOC2/ATO evidence-snapshot job runs automatically. Default OFF in dev. */
+  EVIDENCE_JOB_ENABLED: z.coerce.boolean().default(false),
+  /** Local hour-of-day (0-23) for the daily evidence pass. Default 03:00 — one hour after retention. */
+  EVIDENCE_JOB_HOUR: z.coerce.number().min(0).max(23).default(3),
+
+  // ============================================================================
+  // STRUCTURED LOGGING (Backlog O4 — Bot 23)
+  // ============================================================================
+  /**
+   * Log output format. `json` emits one JSON object per line (NDJSON) suitable
+   * for Vector / Fluent Bit / Promtail ingestion into Loki / ELK. `pretty`
+   * emits a colourised single-line human-readable form for local development.
+   * Default mirrors NODE_ENV: `json` in production, `pretty` everywhere else.
+   */
+  LOG_FORMAT: z.enum(["json", "pretty"]).optional(),
+  /**
+   * Minimum log level to emit. Lower-priority entries are dropped at the
+   * logger before any cost is paid. Default mirrors NODE_ENV: `info` in
+   * production, `debug` everywhere else.
+   */
+  LOG_LEVEL: z.enum(["debug", "info", "warn", "error"]).optional(),
+  /**
+   * Static service name embedded in every JSON log entry. Surfaces as the
+   * Loki / ELK `service` label so a shared aggregator can distinguish ABC
+   * backend lines from other GoA services that share the same cluster.
+   */
+  LOG_SERVICE_NAME: z.string().default("abc-backend"),
   })
   .superRefine((env, ctx) => {
     if (env.NODE_ENV === "production") {

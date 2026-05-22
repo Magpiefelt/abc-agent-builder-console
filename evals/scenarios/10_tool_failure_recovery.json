@@ -1,0 +1,48 @@
+{
+  "name": "10 — Tool failure recovery (SSRF block, then continue)",
+  "description": "Agent asks the orchestrator to web_scrape a private IP (which is blocked by SSRF protection). The orchestrator must emit a tool_result with success=false, continue to the next iteration, and complete the session normally. Verifies that a single failed tool call does not terminate the session and that the failure surfaces through the SSE stream.",
+  "prompt": "Try to retrieve content from the internal status page, then summarize what you learned.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "llmResponses": [
+    {
+      "thinking": "I'll try to fetch the internal status page first.",
+      "toolCalls": [
+        {
+          "name": "web_scrape",
+          "arguments": { "url": "http://10.0.0.1/status" }
+        }
+      ],
+      "status": "running"
+    },
+    {
+      "thinking": "The scrape was blocked because that's a private IP. I'll summarize what happened and finish.",
+      "blackboardUpdates": [
+        {
+          "category": "summary",
+          "title": "Outcome",
+          "content": "The internal status URL is on a private IP (10.0.0.1) and the SSRF guard blocked the scrape. No content was retrieved. Recommend the user provide a publicly reachable URL or grant the necessary internal-network access."
+        }
+      ],
+      "status": "completed",
+      "userMessage": "Couldn't reach internal IP; reported the SSRF block."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "tool_calls",
+      "tool_result",
+      "iteration_complete",
+      "iteration_start",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "sseAbsent": ["error"],
+    "finalStatus": "completed",
+    "blackboardCategories": ["summary"]
+  }
+}

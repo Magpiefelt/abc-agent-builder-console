@@ -11,6 +11,7 @@
  * - POST /api/agent/sessions/:id/continue — Resume with new prompt
  * - POST /api/agent/sessions/:id/interject — Inject guidance mid-execution
  * - GET  /api/agent/sessions/:id       — Get full session state
+ * - GET  /api/agent/sessions/:id/export — Download full session transcript as Markdown
  * - GET  /api/agent/models             — List available models
  */
 
@@ -30,6 +31,12 @@ import { getActiveModels, validateModelClassification, isProviderConfigured } fr
 import { getTemplateSections } from "../services/promptBuilder.js";
 import { scanForPII } from "../services/piiDetector.js";
 import { query } from "../config/database.js";
+import {
+  buildSessionTranscript,
+  buildExportFilename,
+  type ExporterArtifact,
+  type ExporterIteration,
+} from "../services/sessionExporter.js";
 
 const router: RouterType = Router();
 
@@ -315,6 +322,20 @@ router.get("/sessions/:id", async (req: Request, res: Response) => {
     return;
   }
 
+  // Side-load the bookmark flag without changing AgentSession's shape. Falls
+  // back to false if the column is absent (e.g. mock-mode in-memory store)
+  // so the response shape stays stable.
+  let starred = false;
+  try {
+    const starResult = await query<{ starred: boolean }>(
+      `SELECT starred FROM agent_sessions WHERE id = $1`,
+      [id],
+    );
+    starred = starResult.rows[0]?.starred ?? false;
+  } catch {
+    starred = false;
+  }
+
   res.json({
     id: session.id,
     status: session.status,
@@ -330,6 +351,7 @@ router.get("/sessions/:id", async (req: Request, res: Response) => {
     error: session.error,
     createdAt: session.createdAt,
     isRunning: isSessionRunning(id),
+    starred,
   });
 });
 
@@ -425,6 +447,7 @@ interface IterationRow {
   tokens_used: number | null;
   duration_ms: number | null;
   created_at: Date;
+  pinned?: boolean;
 }
 
 /**
@@ -447,7 +470,7 @@ router.get("/sessions/:id/iterations", async (req: Request, res: Response) => {
     const result = await query<IterationRow>(
       `SELECT iteration_number, status, user_prompt, raw_llm_response,
               parsed_response, tool_calls, tool_results, blackboard_entry,
-              error, tokens_used, duration_ms, created_at
+              error, tokens_used, duration_ms, created_at, pinned
          FROM agent_iterations
          WHERE session_id = $1
          ORDER BY iteration_number ASC
@@ -468,11 +491,110 @@ router.get("/sessions/:id/iterations", async (req: Request, res: Response) => {
         tokensUsed: r.tokens_used,
         durationMs: r.duration_ms,
         createdAt: r.created_at,
+        pinned: r.pinned ?? false,
       })),
     });
   } catch (err) {
     logger.error("Failed to list session iterations", err as Error, { sessionId: id });
     res.status(500).json({ error: "Failed to list iterations." });
+  }
+});
+
+// ============================================================================
+// EXPORT — full session transcript as Markdown
+// ============================================================================
+
+/**
+ * GET /api/agent/sessions/:id/export
+ *
+ * Returns the complete session record (prompt, iterations, blackboard,
+ * scratchpad, attributes, artifact metadata, final report) as a single
+ * Markdown document the user can save and attach to a briefing note.
+ *
+ * Audited as AGENT_SESSION_EXPORTED. Artifact payload bytes are NEVER
+ * included — only metadata; consumers who want the bytes follow up with
+ * the existing `/sessions/:id/artifacts/:artifactId` endpoint.
+ */
+router.get("/sessions/:id/export", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const [itersResult, artifactsResult] = await Promise.all([
+      query<IterationRow>(
+        `SELECT iteration_number, status, user_prompt, raw_llm_response,
+                parsed_response, tool_calls, tool_results, blackboard_entry,
+                error, tokens_used, duration_ms, created_at
+           FROM agent_iterations
+           WHERE session_id = $1
+           ORDER BY iteration_number ASC
+           LIMIT 500`,
+        [id],
+      ),
+      query<ArtifactRow>(
+        `SELECT id, artifact_type, title, description, mime_type, size_bytes, iteration, created_at
+           FROM artifacts
+           WHERE session_id = $1
+           ORDER BY created_at ASC, id ASC`,
+        [id],
+      ),
+    ]);
+
+    const iterations: ExporterIteration[] = itersResult.rows.map((r) => ({
+      iterationNumber: r.iteration_number,
+      status: r.status,
+      userPrompt: r.user_prompt,
+      rawResponse: r.raw_llm_response,
+      parsedResponse: r.parsed_response,
+      toolCalls: r.tool_calls,
+      toolResults: r.tool_results,
+      blackboardEntry: r.blackboard_entry,
+      error: r.error,
+      tokensUsed: r.tokens_used,
+      durationMs: r.duration_ms,
+      createdAt: r.created_at,
+    }));
+
+    const artifacts: ExporterArtifact[] = artifactsResult.rows.map((r) => ({
+      id: r.id,
+      artifact_type: r.artifact_type,
+      title: r.title,
+      description: r.description,
+      mime_type: r.mime_type,
+      size_bytes: r.size_bytes,
+      iteration: r.iteration,
+      created_at: r.created_at,
+    }));
+
+    const markdown = buildSessionTranscript({ session, iterations, artifacts });
+    const filename = buildExportFilename(id);
+
+    logAudit({
+      userId: req.user!.id,
+      ministryCode: req.user!.ministryCode || undefined,
+      action: AuditAction.AGENT_SESSION_EXPORTED,
+      resourceType: "agent_session",
+      resourceId: id,
+      details: {
+        iterationCount: iterations.length,
+        artifactCount: artifacts.length,
+        bytes: Buffer.byteLength(markdown, "utf8"),
+      },
+    }).catch(() => {});
+
+    res.setHeader("Content-Type", "text/markdown; charset=utf-8");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+    // Markdown export is user-specific evidence; instruct intermediaries not to cache it.
+    res.setHeader("Cache-Control", "private, no-store");
+    res.status(200).send(markdown);
+  } catch (err) {
+    logger.error("Failed to export session", err as Error, { sessionId: id });
+    res.status(500).json({ error: "Failed to export session." });
   }
 });
 
@@ -514,6 +636,106 @@ router.get("/models", async (_req: Request, res: Response) => {
   } catch (err) {
     logger.error("Failed to fetch models", err as Error);
     res.status(500).json({ error: "Failed to fetch model registry." });
+  }
+});
+
+// ============================================================================
+// STAR / PIN (Bot 19, Backlog F8)
+// ============================================================================
+//
+// Lightweight bookmark layer. Stars live on agent_sessions; pins live on
+// agent_iterations. Both endpoints are session-owner-only and audit-logged
+// so the same access record exists in the audit_log as for every other
+// mutation. The PATCH bodies accept a strict boolean — we never toggle
+// implicitly so a double-click never accidentally unstars.
+
+router.patch("/sessions/:id/star", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const { starred } = req.body ?? {};
+  if (typeof starred !== "boolean") {
+    res.status(400).json({ error: "Field 'starred' must be a boolean." });
+    return;
+  }
+
+  // Ownership check via the existing loader keeps the cross-user 404
+  // contract identical to every other /sessions/:id route.
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const result = await query<{ starred: boolean }>(
+      `UPDATE agent_sessions SET starred = $1 WHERE id = $2 AND user_id = $3 RETURNING starred`,
+      [starred, id, req.user!.id],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Session not found." });
+      return;
+    }
+
+    auditAgentEvent(req.user!.id, AuditAction.AGENT_SESSION_STARRED, id, {
+      starred,
+    });
+
+    res.json({ id, starred: result.rows[0]?.starred ?? starred });
+  } catch (err) {
+    logger.error("Failed to update session star", err as Error, { sessionId: id });
+    res.status(500).json({ error: "Failed to update star." });
+  }
+});
+
+router.patch("/sessions/:id/iterations/:n/pin", async (req: Request, res: Response) => {
+  const id = req.params.id as string;
+  const iterationNumberRaw = req.params.n as string;
+  const { pinned } = req.body ?? {};
+  if (typeof pinned !== "boolean") {
+    res.status(400).json({ error: "Field 'pinned' must be a boolean." });
+    return;
+  }
+
+  // Iteration number is unsigned integer; defend against accidental floats
+  // or NaN before we hit the database.
+  const iterationNumber = Number.parseInt(iterationNumberRaw, 10);
+  if (!Number.isInteger(iterationNumber) || iterationNumber < 0) {
+    res.status(400).json({ error: "Iteration number must be a non-negative integer." });
+    return;
+  }
+
+  const session = await loadSession(id, req.user!.id);
+  if (!session) {
+    res.status(404).json({ error: "Session not found." });
+    return;
+  }
+
+  try {
+    const result = await query<{ pinned: boolean }>(
+      `UPDATE agent_iterations SET pinned = $1
+        WHERE session_id = $2 AND iteration_number = $3
+        RETURNING pinned`,
+      [pinned, id, iterationNumber],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Iteration not found." });
+      return;
+    }
+
+    await logAudit({
+      userId: req.user!.id,
+      action: AuditAction.AGENT_ITERATION_PINNED,
+      resourceType: "agent_iteration",
+      resourceId: `${id}:${iterationNumber}`,
+      details: { sessionId: id, iterationNumber, pinned },
+    });
+
+    res.json({ sessionId: id, iterationNumber, pinned: result.rows[0]?.pinned ?? pinned });
+  } catch (err) {
+    logger.error("Failed to update iteration pin", err as Error, {
+      sessionId: id,
+      iterationNumber,
+    });
+    res.status(500).json({ error: "Failed to update pin." });
   }
 });
 

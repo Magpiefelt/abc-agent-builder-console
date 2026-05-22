@@ -1,0 +1,160 @@
+name: Security (DAST)
+
+# Backlog S3 — OWASP ZAP baseline scan against a live backend. Runs nightly
+# on a cron + on demand via workflow_dispatch + on pushes that touch
+# backend/middleware or routes (the surface ZAP actually exercises). PRs do
+# NOT run by default because a baseline scan takes ~5 minutes and we want
+# the regular CI loop fast.
+
+on:
+  schedule:
+    # 04:30 UTC nightly — well after deploy.yml's 03:00-ish window and an
+    # hour after the evidence collector (Bot 22) so the security scan sees
+    # the freshest backend state.
+    - cron: "30 4 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch / tag / commit SHA to scan"
+        required: false
+        default: ""
+  push:
+    branches: [main]
+    paths:
+      - "backend/src/middleware/**"
+      - "backend/src/routes/**"
+      - "backend/src/index.ts"
+      - ".github/workflows/security.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-dast-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  zap-baseline:
+    name: ZAP baseline (passive scan)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: abc_dast
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/abc_dast
+      DB_SCHEMA: cohen_mcleod
+      NODE_ENV: development
+      # MOCK_LLM keeps the scan free + deterministic — ZAP doesn't need a
+      # real provider to exercise auth, routing, and error pages.
+      MOCK_LLM: "1"
+      ANTHROPIC_API_KEY: dast-mock-key
+      SECRETS_VAULT_KEY: ${{ secrets.SECRETS_VAULT_KEY || 'zaptest-padding-padding-padding-padding' }}
+      PORT: 3000
+      LOG_FORMAT: json
+      LOG_LEVEL: warn
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref || github.ref }}
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Apply database migrations
+        run: |
+          export PGPASSWORD=postgres
+          psql -h localhost -U postgres -d abc_dast -f docs/02_database_migrations.sql
+
+      - name: Build backend
+        run: pnpm --filter backend run build
+
+      - name: Start backend in the background
+        run: |
+          nohup pnpm --filter backend run start > backend.log 2>&1 &
+          echo "BACKEND_PID=$!" >> $GITHUB_ENV
+
+      - name: Wait for backend to be ready
+        run: |
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000/api/health/live > /dev/null; then
+              echo "Backend ready after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Backend did not come up within 60s"
+          tail -200 backend.log
+          exit 1
+
+      - name: Run ZAP baseline scan
+        # Pinned ZAP version. The baseline action runs PASSIVE checks only —
+        # no active exploitation — so it's safe against a real backend and
+        # completes in ~3-5 minutes.
+        uses: zaproxy/action-baseline@v0.12.0
+        with:
+          target: http://localhost:3000
+          # rules_file_name is the standard knob for tuning per-rule risk
+          # thresholds; the file is checked in alongside this workflow.
+          rules_file_name: ".zap/rules.tsv"
+          # Don't auto-create a GitHub Issue per finding — the existing
+          # docs/security/dast_findings.md is the canonical write-up.
+          allow_issue_writing: false
+          # Fail the job on HIGH risk findings. WARN/INFO/MEDIUM passes
+          # accumulate in the report but don't block CI; we tune up over
+          # time via the rules file.
+          fail_action: true
+          # `cmd_options` is the escape hatch for advanced ZAP CLI options.
+          # `-d` disables the in-memory DB (faster); we don't need persistence.
+          cmd_options: "-d -m 5"
+
+      - name: Stop backend
+        if: always()
+        run: |
+          if [ -n "${BACKEND_PID:-}" ]; then
+            kill ${BACKEND_PID} 2>/dev/null || true
+          fi
+
+      - name: Upload backend log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-backend-log
+          path: backend.log
+          retention-days: 14
+
+      - name: Upload ZAP report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-zap-report
+          path: |
+            report_html.html
+            report_md.md
+            report_json.json
+          retention-days: 30

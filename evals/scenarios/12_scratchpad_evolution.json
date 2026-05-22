@@ -1,0 +1,51 @@
+{
+  "name": "12 — Scratchpad accumulates across iterations",
+  "description": "The scratchpad is the agent's free-form working memory. Each iteration replaces the scratchpad with whatever the LLM returns in the `scratchpad` field (it's overwrite-by-iteration, not append). This scenario walks the agent through three iterations where the LLM emits a progressively longer scratchpad that *contains* the prior contents — pinning the contract that the orchestrator persists the LLM's full scratchpad string verbatim and that the SSE stream emits a scratchpad_update event for every non-null write. The final persisted scratchpad must contain all three checkpoints, demonstrating end-to-end scratchpad fidelity.",
+  "prompt": "Plan a short briefing note in three steps; keep your working notes in the scratchpad.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 5,
+  "llmResponses": [
+    {
+      "thinking": "Step 1 — outline the structure.",
+      "scratchpad": "Step 1: Outline established. Sections planned: Issue, Background, Recommendation.",
+      "status": "running",
+      "userMessage": "Outline ready."
+    },
+    {
+      "thinking": "Step 2 — add details to each section.",
+      "scratchpad": "Step 1: Outline established. Sections planned: Issue, Background, Recommendation.\nStep 2: Details drafted for each section — three bullets per section, sources cited where applicable.",
+      "status": "running",
+      "userMessage": "Details drafted."
+    },
+    {
+      "thinking": "Step 3 — final review.",
+      "scratchpad": "Step 1: Outline established. Sections planned: Issue, Background, Recommendation.\nStep 2: Details drafted for each section — three bullets per section, sources cited where applicable.\nStep 3: Final review complete. Ready for senior review.",
+      "blackboardUpdates": [
+        { "category": "deliverable", "title": "briefing_note_v1", "content": "First-draft briefing note ready for senior review." }
+      ],
+      "status": "completed",
+      "userMessage": "Briefing note draft ready."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "scratchpad_update",
+      "iteration_complete",
+      "iteration_start",
+      "scratchpad_update",
+      "iteration_complete",
+      "iteration_start",
+      "scratchpad_update",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "finalStatus": "completed",
+    "blackboardCategories": ["deliverable"],
+    "scratchpadMatches": "Step 1: Outline established[\\s\\S]*Step 2: Details drafted[\\s\\S]*Step 3: Final review complete"
+  }
+}

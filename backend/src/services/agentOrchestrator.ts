@@ -40,6 +40,9 @@ import type { ToolCall, ToolResult } from "./toolDispatcher.js";
 import { scanForPII, redactPII } from "./piiDetector.js";
 import { logAudit, auditAgentEvent, AuditAction } from "./auditLogger.js";
 import { logger } from "./logger.js";
+import { M } from "./metrics.js";
+import { checkBudget } from "./budgetGuard.js";
+import { dispatchWebhookEvent } from "./webhookDispatcher.js";
 
 // ============================================================================
 // TYPES
@@ -293,6 +296,7 @@ export async function runOrchestrator(
     modelId: session.modelId,
     maxIterations: session.maxIterations,
   });
+  M.agentSessions.inc({ status: "started" });
 
   // Start heartbeat to keep SSE connection alive
   heartbeatInterval = setInterval(() => sendHeartbeat(res), 15000);
@@ -388,6 +392,26 @@ export async function runOrchestrator(
       finalReport: session.finalReport,
       error: session.error,
     });
+    M.agentSessions.inc({ status: session.status });
+
+    // Bot 21 (Backlog B3) — notify any admin-registered webhook subscribers
+    // that the session has reached a terminal state. Fire-and-forget; never
+    // blocks res.end() below. The dispatcher itself bails when no
+    // subscriptions match.
+    dispatchWebhookEvent("session.completed", {
+      resourceId: session.id,
+      ministryCode: session.ministryCode,
+      body: {
+        sessionId: session.id,
+        status: session.status,
+        classification: session.classification,
+        ministryCode: session.ministryCode,
+        iterations: session.currentIteration,
+        blackboardCount: session.blackboard.length,
+        modelId: session.modelId,
+        error: session.error,
+      },
+    });
 
     activeSessions.delete(session.id);
 
@@ -414,6 +438,7 @@ async function executeIteration(
   session.currentIteration++;
 
   sendSSE(res, { type: "iteration_start", iteration: session.currentIteration, maxIterations: session.maxIterations });
+  M.agentIterations.inc({ status: "started" });
 
   // 1. Loop detection
   const loopResult = loopDetector.detect();
@@ -425,6 +450,7 @@ async function executeIteration(
     if (loopResult.shouldForceStop) {
       session.status = "needs_assistance";
       sendSSE(res, { type: "loop_intervention", message: "Agent stuck in a confirmed loop. Requesting human assistance." });
+      M.agentIterations.inc({ status: "loop_intervention" });
       return { success: true, toolSummaries: [] };
     }
   }
@@ -457,6 +483,50 @@ async function executeIteration(
     sendSSE(res, { type: "pii_warning", message: `PII detected (${piiScan.blockedCount} blocked). Content redacted.` });
   }
 
+  // 3.5. Token-budget pre-flight. A monthly cap (user > ministry > global)
+  // protects against runaway iteration loops. If the cap is exhausted we
+  // stream a `budget_exceeded` event, audit, and fail the session cleanly.
+  // Skipped in mock mode (LLM_MOCK=1) — there are no real tokens to count.
+  if (!isMockMode()) {
+    const budget = await checkBudget(session.userId, session.ministryCode);
+    if (budget.enforced && budget.exceeded) {
+      const errorMsg =
+        `Monthly token budget exceeded for ${budget.effective.resolvedScope}. ` +
+        `Used ${budget.used.toLocaleString()} of ${(budget.effective.monthlyTokenLimit ?? 0).toLocaleString()} tokens this period.`;
+      sendSSE(res, {
+        type: "budget_exceeded",
+        iteration: session.currentIteration,
+        scope: budget.effective.resolvedScope,
+        limit: budget.effective.monthlyTokenLimit,
+        used: budget.used,
+        remaining: budget.remaining,
+        periodStart: budget.period.start,
+        periodEnd: budget.period.end,
+      });
+      logAudit({
+        userId: session.userId,
+        action: AuditAction.BUDGET_EXCEEDED,
+        resourceType: "agent_session",
+        resourceId: session.id,
+        details: {
+          iteration: session.currentIteration,
+          scope: budget.effective.resolvedScope,
+          limit: budget.effective.monthlyTokenLimit,
+          used: budget.used,
+        },
+      });
+      session.status = "error";
+      session.error = errorMsg;
+      await recordIteration(session.id, session.currentIteration, {
+        status: "error",
+        error: errorMsg,
+        durationMs: Date.now() - iterationStart,
+      });
+      M.agentIterations.inc({ status: "budget_exceeded" });
+      return { success: false, toolSummaries: [] };
+    }
+  }
+
   // 4. Call LLM
   const tools = getToolDefinitions(options.enabledTools);
   let llmResponse;
@@ -474,6 +544,7 @@ async function executeIteration(
     logger.error("LLM call failed in iteration", err as Error, { sessionId: session.id, iteration: session.currentIteration });
     sendSSE(res, { type: "llm_error", error: errorMsg, iteration: session.currentIteration });
     await recordIteration(session.id, session.currentIteration, { status: "error", error: errorMsg, durationMs: Date.now() - iterationStart });
+    M.agentIterations.inc({ status: "error" });
     return { success: false, toolSummaries: [] };
   }
 
@@ -641,6 +712,7 @@ async function executeIteration(
     tokensUsed: llmResponse.usage.totalTokens,
     userMessage: parsed.user_message,
   });
+  M.agentIterations.inc({ status: "completed" });
 
   // Build tool summaries for next iteration's context
   const toolSummaries = toolResults.map((r) => ({

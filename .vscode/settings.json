@@ -1,0 +1,130 @@
+{
+  // Editor defaults aligned with the existing source. Indent / formatter
+  // settings match what `eslint --fix` would write, so saving a file never
+  // produces an unexpected diff.
+
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.detectIndentation": false,
+  "editor.formatOnSave": false,
+  "editor.codeActionsOnSave": {
+    // Auto-fix ESLint errors on save, but don't auto-organize imports —
+    // that change reorders lines and produces noisy diffs in PRs that
+    // already touch the file. Run "Organize Imports" manually when needed.
+    "source.fixAll.eslint": "explicit"
+  },
+  "editor.rulers": [100],
+
+  // TypeScript: use the workspace-pinned version so contributors don't get
+  // surprise upgrades from their globally-installed tsc.
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.preferences.importModuleSpecifier": "non-relative",
+  "typescript.preferences.importModuleSpecifierEnding": "js",
+  "typescript.updateImportsOnFileMove.enabled": "always",
+
+  // Vue (Volar): TypeScript-mode is now the default; enable take-over to
+  // avoid the legacy "Vue: TypeScript+Volar (TS Plugin)" warning.
+  "vue.server.hybridMode": true,
+
+  // ESLint: run against both packages.
+  "eslint.workingDirectories": [
+    { "directory": "backend", "changeProcessCWD": true },
+    { "directory": "frontend", "changeProcessCWD": true }
+  ],
+  "eslint.validate": ["javascript", "typescript", "vue"],
+
+  // Vitest: point at the per-package configs so the test gutter knows where
+  // to run from.
+  "vitest.workspaceConfig": null,
+  "vitest.commandLine": "pnpm vitest",
+  "vitest.rootConfig": "",
+
+  // File handling.
+  "files.eol": "\n",
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "files.trimFinalNewlines": true,
+  "files.associations": {
+    "*.vue": "vue",
+    ".env.example": "dotenv"
+  },
+
+  // Hide common artifacts from the file tree so it's easier to scan.
+  "files.exclude": {
+    "**/.git": true,
+    "**/.DS_Store": true,
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/coverage": true,
+    "**/.vite": true
+  },
+
+  // Search ignores generated and vendored content.
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/coverage": true,
+    "**/pnpm-lock.yaml": true
+  },
+
+  // Spell checker: project-specific vocabulary so common acronyms and proper
+  // nouns don't flood the Problems pane.
+  "cSpell.words": [
+    "abgov",
+    "AGENT",
+    "AHCN",
+    "ATO",
+    "audited",
+    "axe-core",
+    "blackboard",
+    "callout",
+    "claude-haiku",
+    "claude-opus",
+    "claude-sonnet",
+    "DOMPurify",
+    "ECONNREFUSED",
+    "elevenlabs",
+    "Entra",
+    "FOIP",
+    "GoA",
+    "Goa",
+    "goa-badge",
+    "goa-button",
+    "goa-dropdown",
+    "goa-form-item",
+    "goa-input",
+    "goa-modal",
+    "goa-table",
+    "Helmet",
+    "JWKS",
+    "Luhn",
+    "ndjson",
+    "Nexus",
+    "OIDC",
+    "OWASP",
+    "pgcrypto",
+    "Pinia",
+    "PKCE",
+    "Promtail",
+    "ratelimit",
+    "redacted",
+    "STRIDE",
+    "supertest",
+    "Tesseract",
+    "tsconfig",
+    "unredacted",
+    "vitest",
+    "vueflow",
+    "Zod"
+  ],
+
+  // Tailwind: only activate for *.vue and CSS-in-template strings to avoid
+  // misleading hints inside Markdown.
+  "tailwindCSS.includeLanguages": {
+    "vue": "html",
+    "typescript": "javascript"
+  },
+
+  // PostgreSQL: register the schema so completions know about cohen_mcleod.
+  "pgsql.connections": []
+}

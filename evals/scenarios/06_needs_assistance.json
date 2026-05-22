@@ -1,0 +1,41 @@
+{
+  "name": "06 — Agent escalates with needs_assistance terminal status",
+  "description": "Agent decides on iteration 2 that it cannot proceed without human guidance and emits status='needs_assistance' with a user_message asking for clarification. The orchestrator must stop the loop after that iteration (the while-condition only continues while status==='running'), emit a session_complete with the needs_assistance status, and persist the session with that terminal status. No iteration_limit event is expected because the cap was not reached.",
+  "prompt": "Pick the best option from the policy options I've already shared.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 5,
+  "llmResponses": [
+    {
+      "thinking": "I'll start by surveying the candidate options.",
+      "blackboardUpdates": [
+        { "category": "context", "title": "scope", "content": "Caller did not actually attach the policy options." }
+      ],
+      "status": "running",
+      "userMessage": "Looking for the options you mentioned."
+    },
+    {
+      "thinking": "I don't have the policy options in context and cannot make this call unilaterally. Escalate.",
+      "blackboardUpdates": [
+        { "category": "gap", "title": "missing_input", "content": "No policy options were provided alongside the prompt." }
+      ],
+      "status": "needs_assistance",
+      "userMessage": "Please paste the policy options you'd like me to choose between, then continue the session."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "iteration_complete",
+      "iteration_start",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "sseAbsent": ["iteration_limit"],
+    "finalStatus": "needs_assistance",
+    "blackboardCategories": ["context", "gap"]
+  }
+}

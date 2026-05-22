@@ -69,6 +69,7 @@ export interface IterationRecord {
   durationMs?: number
   parsedStatus?: string
   error?: string
+  pinned?: boolean
 }
 
 export interface CreateSessionPayload {
@@ -543,6 +544,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     error: string | null
     tokensUsed: number | null
     durationMs: number | null
+    pinned?: boolean
   }
 
   /**
@@ -613,6 +615,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
         rec.durationMs = it.durationMs ?? undefined
         rec.tokensUsed = it.tokensUsed ?? undefined
         rec.error = it.error ?? undefined
+        rec.pinned = it.pinned ?? false
         // Mirror tool results into the global tool-call log so the existing
         // viewers (which render from toolCallLog) populate for replays too.
         for (const tr of rec.toolResults) {
@@ -665,6 +668,104 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     }
   }
 
+  /**
+   * Toggle the "pinned" bookmark on a single iteration (Bot 19, F8).
+   *
+   * Optimistic: flips local state immediately so the UI feels responsive,
+   * then sends the PATCH and reconciles. Rolls back + toasts on failure so
+   * the visible state always matches the backend.
+   */
+  async function toggleIterationPin(
+    targetSessionId: string,
+    iterationNumber: number,
+    nextPinned: boolean,
+  ): Promise<void> {
+    const rec = iterations.value.find((i) => i.iteration === iterationNumber)
+    const previous = rec?.pinned ?? false
+    if (rec) {
+      rec.pinned = nextPinned
+      iterations.value = [...iterations.value]
+    }
+    try {
+      const result = await apiFetch<{ sessionId: string; iterationNumber: number; pinned: boolean }>(
+        `/api/agent/sessions/${encodeURIComponent(targetSessionId)}/iterations/${iterationNumber}/pin`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pinned: nextPinned }),
+        },
+      )
+      if (rec) {
+        rec.pinned = result.pinned
+        iterations.value = [...iterations.value]
+      }
+    } catch (err) {
+      // Roll back so the UI stays consistent.
+      if (rec) {
+        rec.pinned = previous
+        iterations.value = [...iterations.value]
+      }
+      toast.push({
+        kind: 'error',
+        message: (err as Error).message || 'Failed to update pin.',
+      })
+    }
+  }
+
+  /**
+   * Download a full Markdown transcript of the given session.
+   *
+   * Calls `GET /api/agent/sessions/:id/export`, which returns
+   * `text/markdown; charset=utf-8` with a `Content-Disposition` filename. We
+   * stream the bytes into a Blob and trigger a browser-side download via an
+   * invisible anchor — the same shape FinalReportPanel uses for the
+   * final-report-only export, just driven from the store so callers can
+   * download any session (e.g. from the session history view) without
+   * loading it into the store first.
+   *
+   * Falls back to a toast on failure rather than throwing — exporting is a
+   * convenience action, not a control-flow event.
+   */
+  async function exportTranscript(id?: string): Promise<void> {
+    const targetId = id ?? sessionId.value
+    if (!targetId) {
+      toast.push({ kind: 'error', message: 'No session to export.' })
+      return
+    }
+    try {
+      const response = await fetch(
+        `/api/agent/sessions/${encodeURIComponent(targetId)}/export`,
+        { credentials: 'include', headers: { Accept: 'text/markdown' } },
+      )
+      if (response.status === 401) {
+        toast.push({ kind: 'error', message: 'Session expired. Please sign in again.' })
+        return
+      }
+      if (!response.ok) {
+        const detail = await response.text().catch(() => '')
+        throw new Error(detail || `${response.status} ${response.statusText}`)
+      }
+      const blob = await response.blob()
+      // Pull the filename out of Content-Disposition, falling back to a sane
+      // default if the server didn't send one (older browsers, proxies).
+      const disposition = response.headers.get('Content-Disposition') ?? ''
+      const match = /filename="?([^";]+)"?/i.exec(disposition)
+      const filename = match?.[1] ?? `abc-session-${targetId.slice(0, 8)}.md`
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      anchor.click()
+      URL.revokeObjectURL(url)
+      toast.push({ kind: 'info', message: 'Transcript downloaded.' })
+    } catch (err) {
+      toast.push({
+        kind: 'error',
+        message: (err as Error).message || 'Failed to export transcript.',
+      })
+    }
+  }
+
   return {
     status,
     sessionId,
@@ -694,5 +795,7 @@ export const useAgentSessionStore = defineStore('agentSession', () => {
     interject,
     refreshSessionMemory,
     loadReplay,
+    exportTranscript,
+    toggleIterationPin,
   }
 })

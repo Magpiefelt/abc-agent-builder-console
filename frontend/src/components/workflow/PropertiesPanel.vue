@@ -55,7 +55,7 @@ function updateParam(name: string, value: unknown): void {
 <template>
   <aside class="w-80 bg-[var(--goa-color-surface)] border-l border-[var(--goa-color-border)] flex flex-col overflow-hidden">
     <div class="px-4 py-3 border-b border-[var(--goa-color-border)] flex items-center justify-between">
-      <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Properties</h3>
+      <h3 class="text-sm font-semibold text-[var(--goa-color-text-default)]">Properties</h3>
       <goa-button
         v-if="node"
         type="tertiary"
