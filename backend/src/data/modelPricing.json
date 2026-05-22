@@ -1,0 +1,24 @@
+{
+  "schemaVersion": 1,
+  "currency": "USD",
+  "lastReviewed": "2026-05-22",
+  "notes": "Per-million-token prices used by workflowCostEstimator. Mirrors the four rows seeded into model_registry in docs/02_database_migrations.sql. Update when GoA renegotiates Vertex AI or Gemini rates. Unknown model_ids are reported separately as `unknownModels` in the estimate response — they are not assumed free.",
+  "models": {
+    "claude-opus-4-7": {
+      "inputPerMillion": 15.0,
+      "outputPerMillion": 75.0
+    },
+    "claude-sonnet-4-6": {
+      "inputPerMillion": 3.0,
+      "outputPerMillion": 15.0
+    },
+    "claude-haiku-4-5": {
+      "inputPerMillion": 1.0,
+      "outputPerMillion": 5.0
+    },
+    "gemini-2.5-flash": {
+      "inputPerMillion": 0.15,
+      "outputPerMillion": 0.6
+    }
+  }
+}

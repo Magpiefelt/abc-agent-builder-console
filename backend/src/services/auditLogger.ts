@@ -40,7 +40,10 @@ export enum AuditAction {
   AGENT_SESSION_INTERJECTED = "agent.session.interjected",
   AGENT_SESSION_COMPLETED = "agent.session.completed",
   AGENT_SESSION_ERROR = "agent.session.error",
+  AGENT_SESSION_EXPORTED = "agent.session.exported",
+  AGENT_SESSION_STARRED = "agent.session.starred",
   AGENT_ITERATION_COMPLETE = "agent.iteration.complete",
+  AGENT_ITERATION_PINNED = "agent.iteration.pinned",
 
   // Tool Execution
   TOOL_EXECUTED = "tool.executed",
@@ -56,7 +59,10 @@ export enum AuditAction {
   WORKFLOW_CREATED = "workflow.created",
   WORKFLOW_UPDATED = "workflow.updated",
   WORKFLOW_DELETED = "workflow.deleted",
+  WORKFLOW_RESTORED = "workflow.restored",
+  WORKFLOW_PURGED = "workflow.purged",
   WORKFLOW_EXECUTED = "workflow.executed",
+  WORKFLOW_DRY_RUN = "workflow.dry_run",
 
   // Admin
   ADMIN_ACCESS = "admin.access",
@@ -67,6 +73,14 @@ export enum AuditAction {
   ADMIN_SESSION_VIEWED = "admin.session.viewed",
   ADMIN_WORKFLOW_EXECUTION_VIEWED = "admin.workflow_execution.viewed",
   ADMIN_AUDIT_EXPORTED = "admin.audit.exported",
+  USER_DATA_EXPORTED = "user.data.exported",
+  BUDGET_SET = "budget.set",
+  BUDGET_DELETED = "budget.deleted",
+  WEBHOOK_SUBSCRIPTION_CREATED = "webhook.subscription.created",
+  WEBHOOK_SUBSCRIPTION_UPDATED = "webhook.subscription.updated",
+  WEBHOOK_SUBSCRIPTION_DELETED = "webhook.subscription.deleted",
+  WEBHOOK_DELIVERED = "webhook.delivered",
+  EVIDENCE_COLLECTED = "compliance.evidence.collected",
 
   // Secrets Vault
   SECRET_CREATED = "secret.created",
@@ -79,6 +93,7 @@ export enum AuditAction {
   SECURITY_RATE_LIMITED = "security.rate_limited",
   SECURITY_INVALID_REQUEST = "security.invalid_request",
   SECURITY_PRIVATE_IP_BLOCKED = "security.private_ip_blocked",
+  BUDGET_EXCEEDED = "security.budget_exceeded",
 }
 
 // ============================================================================

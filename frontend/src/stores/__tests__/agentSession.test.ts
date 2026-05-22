@@ -728,3 +728,233 @@ describe("useAgentSessionStore — loadReplay", () => {
     expect(store.status).toBe("error");
   });
 });
+
+// ---------------------------------------------------------------------------
+// exportTranscript — Markdown download via /api/agent/sessions/:id/export
+// ---------------------------------------------------------------------------
+
+describe("useAgentSessionStore — exportTranscript", () => {
+  function installFakeUrlAndAnchor(): {
+    createdAnchors: HTMLAnchorElement[];
+    createObjectURL: ReturnType<typeof vi.fn>;
+    revokeObjectURL: ReturnType<typeof vi.fn>;
+  } {
+    const createObjectURL = vi.fn(() => "blob:fake");
+    const revokeObjectURL = vi.fn();
+    (URL as unknown as { createObjectURL: typeof createObjectURL }).createObjectURL =
+      createObjectURL;
+    (URL as unknown as { revokeObjectURL: typeof revokeObjectURL }).revokeObjectURL =
+      revokeObjectURL;
+    const createElement = document.createElement.bind(document);
+    const createdAnchors: HTMLAnchorElement[] = [];
+    vi.spyOn(document, "createElement").mockImplementation((tag) => {
+      const el = createElement(tag);
+      if (tag === "a") {
+        (el as HTMLAnchorElement).click = vi.fn();
+        createdAnchors.push(el as HTMLAnchorElement);
+      }
+      return el;
+    });
+    return { createdAnchors, createObjectURL, revokeObjectURL };
+  }
+
+  function makeMarkdownResponse(filename: string, body = "# transcript"): Response {
+    return new Response(body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/markdown; charset=utf-8",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+      },
+    });
+  }
+
+  it("downloads the transcript and uses the server-supplied filename", async () => {
+    const { createdAnchors, createObjectURL, revokeObjectURL } = installFakeUrlAndAnchor();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeMarkdownResponse("abc-session-aabbccdd.md"));
+
+    const store = useAgentSessionStore();
+    await store.exportTranscript("aabbccdd-eeff-1111-2222-333344445555");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/agent/sessions/aabbccdd-eeff-1111-2222-333344445555/export",
+      expect.objectContaining({ credentials: "include" }),
+    );
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(revokeObjectURL).toHaveBeenCalledTimes(1);
+    expect(createdAnchors).toHaveLength(1);
+    expect(createdAnchors[0].download).toBe("abc-session-aabbccdd.md");
+    // Toast confirms download to the user.
+    expect(toastPushMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "info", message: expect.stringMatching(/download/i) }),
+    );
+  });
+
+  it("falls back to the store's active sessionId when no id is supplied", async () => {
+    installFakeUrlAndAnchor();
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(makeMarkdownResponse("abc-session-store-id.md"));
+    const store = makeStartedStore();
+    await store.exportTranscript();
+    expect(fetchMock).toHaveBeenCalledWith(
+      `/api/agent/sessions/${encodeURIComponent(SESSION_ID)}/export`,
+      expect.any(Object),
+    );
+  });
+
+  it("emits an error toast when no sessionId is known", async () => {
+    const store = useAgentSessionStore();
+    await store.exportTranscript();
+    expect(toastPushMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "error", message: expect.stringMatching(/no session/i) }),
+    );
+  });
+
+  it("synthesises a default filename when the server omits Content-Disposition", async () => {
+    const { createdAnchors } = installFakeUrlAndAnchor();
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("# transcript", {
+        status: 200,
+        headers: { "Content-Type": "text/markdown" },
+      }),
+    );
+    const store = useAgentSessionStore();
+    await store.exportTranscript("abcdef1234567890");
+    expect(createdAnchors[0].download).toMatch(/^abc-session-abcdef12\.md$/);
+  });
+
+  it("emits an error toast on a non-2xx response", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response('{"error":"nope"}', { status: 404 }),
+    );
+    const store = useAgentSessionStore();
+    await store.exportTranscript("missing");
+    expect(toastPushMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "error" }),
+    );
+  });
+
+  it("emits a friendly toast on a 401 instead of throwing", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response("", { status: 401 }),
+    );
+    const store = useAgentSessionStore();
+    await store.exportTranscript("any-id");
+    expect(toastPushMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "error",
+        message: expect.stringMatching(/session expired/i),
+      }),
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Bot 19, F8: toggleIterationPin
+// ---------------------------------------------------------------------------
+
+describe("useAgentSessionStore — toggleIterationPin", () => {
+  it("PATCHes the pin endpoint with the new pinned value", async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      sessionId: "sess-1",
+      iterationNumber: 3,
+      pinned: true,
+    });
+    const store = useAgentSessionStore();
+    store.iterations = [
+      {
+        iteration: 3,
+        status: "completed",
+        toolCalls: [],
+        toolResults: [],
+        pinned: false,
+      },
+    ];
+
+    await store.toggleIterationPin("sess-1", 3, true);
+
+    expect(apiFetchMock).toHaveBeenCalledWith(
+      "/api/agent/sessions/sess-1/iterations/3/pin",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ pinned: true }),
+      }),
+    );
+    expect(store.iterations[0].pinned).toBe(true);
+  });
+
+  it("flips state optimistically before the server responds", async () => {
+    let resolveFetch: ((value: unknown) => void) | null = null;
+    apiFetchMock.mockReturnValueOnce(
+      new Promise((resolve) => {
+        resolveFetch = resolve;
+      }),
+    );
+    const store = useAgentSessionStore();
+    store.iterations = [
+      {
+        iteration: 1,
+        status: "completed",
+        toolCalls: [],
+        toolResults: [],
+        pinned: false,
+      },
+    ];
+
+    const pendingToggle = store.toggleIterationPin("sess-1", 1, true);
+    // Optimistic flip happened synchronously before the promise resolves.
+    expect(store.iterations[0].pinned).toBe(true);
+
+    resolveFetch?.({ sessionId: "sess-1", iterationNumber: 1, pinned: true });
+    await pendingToggle;
+    expect(store.iterations[0].pinned).toBe(true);
+  });
+
+  it("rolls back the optimistic flip on PATCH failure", async () => {
+    apiFetchMock.mockRejectedValueOnce(new Error("boom"));
+    const store = useAgentSessionStore();
+    store.iterations = [
+      {
+        iteration: 1,
+        status: "completed",
+        toolCalls: [],
+        toolResults: [],
+        pinned: false,
+      },
+    ];
+
+    await store.toggleIterationPin("sess-1", 1, true);
+
+    // Rolled back to original false.
+    expect(store.iterations[0].pinned).toBe(false);
+    expect(toastPushMock).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: "error", message: expect.stringMatching(/boom/i) }),
+    );
+  });
+
+  it("no-ops gracefully when the iteration is not in the local list", async () => {
+    apiFetchMock.mockResolvedValueOnce({
+      sessionId: "sess-1",
+      iterationNumber: 99,
+      pinned: true,
+    });
+    const store = useAgentSessionStore();
+    store.iterations = [
+      {
+        iteration: 1,
+        status: "completed",
+        toolCalls: [],
+        toolResults: [],
+        pinned: false,
+      },
+    ];
+
+    // Should not throw despite the iteration missing locally.
+    await expect(
+      store.toggleIterationPin("sess-1", 99, true),
+    ).resolves.toBeUndefined();
+    expect(apiFetchMock).toHaveBeenCalled();
+  });
+});

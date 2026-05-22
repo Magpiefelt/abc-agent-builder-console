@@ -27,8 +27,13 @@ import adminRoutes from "./routes/admin.js";
 import workflowRoutes from "./routes/workflow.js";
 import authRoutes from "./routes/auth.js";
 import userRoutes from "./routes/users.js";
+import metricsRoutes from "./routes/metrics.js";
+import openapiRoutes from "./routes/openapi.js";
+import webhookRoutes from "./routes/webhooks.js";
+import complianceRoutes from "./routes/compliance.js";
 import { logVaultFingerprint } from "./services/secretsVault.js";
 import { startRetentionScheduler, stopRetentionScheduler } from "./services/retentionJob.js";
+import { startEvidenceScheduler, stopEvidenceScheduler } from "./services/evidenceCollector.js";
 
 // ============================================================================
 // PROCESS MONITOR (must be first — catches unhandled errors)
@@ -43,6 +48,7 @@ installProcessMonitor(async () => {
   //   3. Close the host pool LAST so audit/logger writes from step 2 still
   //      have a working backend.
   stopRetentionScheduler();
+  stopEvidenceScheduler();
   await closeDatabaseToolPools();
   await closePool();
 });
@@ -61,6 +67,7 @@ registerAllTools();
 
 logVaultFingerprint();
 startRetentionScheduler();
+startEvidenceScheduler();
 
 // ============================================================================
 // EXPRESS APP
@@ -118,7 +125,14 @@ app.use(cookieParser(env.SESSION_SECRET));
 // ROUTES
 // ============================================================================
 
+// OpenAPI spec + Swagger UI (both un-authenticated — the spec only describes
+// the public shape of the API; never contains secrets or user data).
+app.use("/api", openapiRoutes);
+
 app.use("/api/health", healthRoutes);
+
+// Prometheus metrics endpoint (admin-gated; scrape target for Nexus monitoring)
+app.use("/api/metrics", metricsRoutes);
 
 // Authentication routes (login/callback are public; logout and /me have their own auth middleware)
 app.use("/api/auth", authRoutes);
@@ -141,6 +155,15 @@ if (process.env.MOCK_LLM === "1") {
 
 // Admin routes (authenticate + requireRole('admin') + auditAdminAccess applied inside the router)
 app.use("/api/admin", adminRoutes);
+
+// Webhook admin routes (Bot 21 — Backlog B3). Mounted on its own path so the
+// in-progress edits to routes/admin.ts (Bot 15) and this router never collide.
+app.use("/api/admin/webhooks", webhookRoutes);
+
+// Compliance evidence routes (Bot 22 — Backlog S2). Admin-only daily SOC2/ATO
+// posture snapshot. Same coordination strategy as the webhook router — its own
+// mount path so it does not need to touch routes/admin.ts.
+app.use("/api/compliance", complianceRoutes);
 
 // ============================================================================
 // ERROR HANDLING

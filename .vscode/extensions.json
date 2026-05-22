@@ -1,0 +1,36 @@
+{
+  // Recommended extensions for ABC contributors. VS Code prompts new
+  // contributors to install these on first open. Nothing here is
+  // mandatory — each is a quality-of-life win for the stack we're on.
+  "recommendations": [
+    // TypeScript + Vue 3 SFC: required for proper IntelliSense in .vue files.
+    "vue.volar",
+
+    // ESLint integration: surfaces lint errors in the editor instead of CI.
+    "dbaeumer.vscode-eslint",
+
+    // EditorConfig: if/when we add a .editorconfig, this honours it.
+    "editorconfig.editorconfig",
+
+    // Tailwind CSS IntelliSense: class-name autocomplete + `clsx` peek.
+    "bradlc.vscode-tailwindcss",
+
+    // Vitest: run + debug individual tests from the gutter.
+    "vitest.explorer",
+
+    // Spell checker (English + Canadian): catches typos in user-facing copy
+    // and audit-trail strings before they ship.
+    "streetsidesoftware.code-spell-checker",
+
+    // PostgreSQL syntax highlighting for docs/02_database_migrations.sql.
+    "ms-ossdata.vscode-postgresql",
+
+    // GitLens: blame + commit details inline. Useful for the coordination
+    // doc workflow where multiple bots touch the same files.
+    "eamodio.gitlens"
+  ],
+
+  // Extensions we don't want VS Code recommending for this workspace.
+  // (Empty for now; populate if a misleading recommendation surfaces.)
+  "unwantedRecommendations": []
+}

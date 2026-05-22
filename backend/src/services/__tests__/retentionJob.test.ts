@@ -37,6 +37,7 @@ vi.mock("../../services/logger.js", () => ({
 const envMock = vi.hoisted(() => ({
   RETENTION_JOB_ENABLED: false,
   RETENTION_JOB_HOUR: 2,
+  WORKFLOW_TRASH_RETENTION_DAYS: 30,
 }));
 vi.mock("../../config/env.js", () => ({ env: envMock }));
 
@@ -60,6 +61,7 @@ beforeEach(() => {
   auditActionMock.mockReset();
   envMock.RETENTION_JOB_ENABLED = false;
   envMock.RETENTION_JOB_HOUR = 2;
+  envMock.WORKFLOW_TRASH_RETENTION_DAYS = 30;
   stopRetentionScheduler(); // ensure no leftover timers from previous tests
 });
 
@@ -122,6 +124,8 @@ describe("runRetentionPass — successful pass with one policy", () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 8 });
     // 5) anonymize pii_detections UPDATE
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 2 });
+    // 6) workflow trash purge DELETE (Bot 10 — Backlog B4 soft-delete cleanup)
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
   }
 
   it("returns byTable entries for sessions, iterations, artifacts, audit_log, pii_detections", async () => {
@@ -207,14 +211,15 @@ describe("runRetentionPass — zero audit_log_days skips anonymization", () => {
     queryMock.mockResolvedValueOnce({ rows: [{ iterations: "0", artifacts: "0" }], rowCount: 1 });
     // DELETE agent_sessions
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-    // No further DB calls should happen
+    // Workflow trash purge — runs regardless of audit_log_days (Bot 10).
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const report = await runRetentionPass("test");
     const tables = report.byTable.map((r) => r.table);
     expect(tables).not.toContain("audit_log");
     expect(tables).not.toContain("pii_detections");
-    // Only 3 DB calls: policy + count + delete
-    expect(queryMock).toHaveBeenCalledTimes(3);
+    // 4 DB calls: policy + cascade-count + session-delete + workflow-trash-purge.
+    expect(queryMock).toHaveBeenCalledTimes(4);
   });
 });
 
@@ -223,12 +228,15 @@ describe("runRetentionPass — zero audit_log_days skips anonymization", () => {
 // ---------------------------------------------------------------------------
 
 describe("runRetentionPass — empty policy table", () => {
-  it("returns an empty byTable and no errors when no policies are configured", async () => {
+  it("returns no errors and only the workflow trash entry when no classification policies exist", async () => {
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // policy query
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 }); // workflow trash purge
 
     const report = await runRetentionPass("test");
     expect(report.errors).toHaveLength(0);
-    expect(report.byTable).toHaveLength(0);
+    // Workflow trash purge always runs (independent of classification policies).
+    expect(report.byTable).toHaveLength(1);
+    expect(report.byTable[0]?.table).toBe("workflows");
     expect(report.totalRowsAffected).toBe(0);
   });
 });
@@ -256,6 +264,8 @@ describe("runRetentionPass — partial failure in session delete", () => {
     // Anonymize audit_log
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
     // Anonymize pii_detections
+    queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    // Workflow trash purge (Bot 10) — also runs despite the session-delete failure.
     queryMock.mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const report = await runRetentionPass("test");

@@ -62,6 +62,16 @@ const expectationSchema = z.object({
   errorMatches: z.string().optional(),
   /** When set, the scenario expects creation to fail and not even reach start. */
   expectCreateRejection: z.boolean().optional(),
+  /** Regex string that must match the persisted scratchpad after the run. */
+  scratchpadMatches: z.string().optional(),
+  /** Subset of attributes that must be present (key/value equality) in the persisted attributes. */
+  attributesContain: z.record(z.unknown()).optional(),
+  /**
+   * Substring (case-insensitive) that must appear in the iteration_limit SSE
+   * event's `message` field, when present. Useful for pinning iteration-cap
+   * scenarios without requiring an exact message match.
+   */
+  iterationLimitMessageContains: z.string().optional(),
 });
 
 const scenarioSchema = z.object({
@@ -70,6 +80,12 @@ const scenarioSchema = z.object({
   prompt: z.string(),
   modelId: z.string().default("mock-llm"),
   classification: z.enum(["unclassified", "protected_a", "protected_b"]).default("unclassified"),
+  /**
+   * Optional cap forwarded to POST /sessions. Defaults to the backend's
+   * built-in 50 when omitted. Cap-tests should set this low so the loop
+   * terminates within the harness's wall-clock budget.
+   */
+  maxIterations: z.number().int().positive().max(100).optional(),
   llmResponses: z.array(llmResponseSchema).default([]),
   expectations: expectationSchema,
 });
@@ -249,7 +265,12 @@ function assertExpectations(
     createBody: unknown;
     startStatus?: number;
     events?: SSEEvent[];
-    finalSession?: { status: string; blackboard: Array<{ category: string }> };
+    finalSession?: {
+      status: string;
+      blackboard: Array<{ category: string }>;
+      scratchpad?: string;
+      attributes?: Record<string, unknown>;
+    };
   }
 ): { passed: boolean; failures: string[] } {
   const failures: string[] = [];
@@ -322,6 +343,43 @@ function assertExpectations(
     }
   }
 
+  if (exp.scratchpadMatches && results.finalSession) {
+    const scratchpad = results.finalSession.scratchpad ?? "";
+    if (!new RegExp(exp.scratchpadMatches, "i").test(scratchpad)) {
+      const preview = scratchpad.length > 200 ? `${scratchpad.slice(0, 200)}…` : scratchpad;
+      failures.push(`expected scratchpad to match /${exp.scratchpadMatches}/i, got "${preview}"`);
+    }
+  }
+
+  if (exp.attributesContain && results.finalSession) {
+    const attrs = results.finalSession.attributes ?? {};
+    for (const [key, expected] of Object.entries(exp.attributesContain)) {
+      if (!(key in attrs)) {
+        failures.push(`expected attribute "${key}" to be present`);
+        continue;
+      }
+      if (JSON.stringify(attrs[key]) !== JSON.stringify(expected)) {
+        failures.push(
+          `expected attribute "${key}" to equal ${JSON.stringify(expected)}, got ${JSON.stringify(attrs[key])}`,
+        );
+      }
+    }
+  }
+
+  if (exp.iterationLimitMessageContains && results.events) {
+    const limit = results.events.find((e) => e.type === "iteration_limit");
+    if (!limit) {
+      failures.push(`expected an iteration_limit SSE event but none was emitted`);
+    } else {
+      const message = typeof limit.message === "string" ? limit.message : "";
+      if (!message.toLowerCase().includes(exp.iterationLimitMessageContains.toLowerCase())) {
+        failures.push(
+          `expected iteration_limit message to contain "${exp.iterationLimitMessageContains}", got "${message}"`,
+        );
+      }
+    }
+  }
+
   return { passed: failures.length === 0, failures };
 }
 
@@ -354,11 +412,15 @@ export async function runScenario(scenario: Scenario, backend: BackendHandle): P
   const base = `http://127.0.0.1:${backend.port}`;
 
   // Step 1: create session
-  const create = await postJson(base, "/api/agent/sessions", {
+  const createBody: Record<string, unknown> = {
     prompt: scenario.prompt,
     modelId: scenario.modelId,
     classification: scenario.classification,
-  });
+  };
+  if (scenario.maxIterations !== undefined) {
+    createBody.maxIterations = scenario.maxIterations;
+  }
+  const create = await postJson(base, "/api/agent/sessions", createBody);
 
   if (scenario.expectations.expectCreateRejection) {
     const result = assertExpectations(scenario, {
@@ -402,6 +464,8 @@ export async function runScenario(scenario: Scenario, backend: BackendHandle): P
   const finalSession = final.body as {
     status: string;
     blackboard: Array<{ category: string }>;
+    scratchpad?: string;
+    attributes?: Record<string, unknown>;
   };
 
   // Step 5: assertions

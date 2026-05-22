@@ -22,6 +22,7 @@
 import express, { Router, Request, Response, NextFunction } from "express";
 import { z } from "zod";
 import { authenticate, requireRole } from "../middleware/auth.js";
+import { env } from "../config/env.js";
 import { query } from "../config/database.js";
 import {
   auditAction,
@@ -30,6 +31,15 @@ import {
 import { logger } from "../services/logger.js";
 import { clearModelCache } from "../services/llmProvider.js";
 import { runRetentionPass } from "../services/retentionJob.js";
+import { exportUserData } from "../services/userDataExporter.js";
+import {
+  BudgetValidationError,
+  deleteBudget,
+  listBudgets,
+  listMonthlyUsage,
+  setBudget,
+  type BudgetScopeType,
+} from "../services/budgetGuard.js";
 
 const router: express.Router = Router();
 
@@ -457,6 +467,141 @@ router.post("/retention/run", async (req: Request, res: Response) => {
 });
 
 // ============================================================================
+// WORKFLOW TRASH (soft-deleted workflows — restore / purge)
+// ============================================================================
+//
+// `DELETE /api/workflows/:id` flips `deleted_at` to NOW(). Rows linger until
+// the retention pass purges them after `WORKFLOW_TRASH_RETENTION_DAYS`. These
+// endpoints let an admin (a) see what's in the Trash, (b) restore an item
+// before it ages out, or (c) purge it immediately. Each action is audit-logged.
+
+const WORKFLOW_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.get("/workflows/trash", async (_req: Request, res: Response) => {
+  try {
+    const result = await query<{
+      id: string;
+      user_id: string;
+      ministry_code: string | null;
+      name: string;
+      description: string | null;
+      classification: string;
+      is_template: boolean;
+      version: number;
+      created_at: Date;
+      updated_at: Date;
+      deleted_at: Date;
+      user_email: string | null;
+      user_display_name: string | null;
+    }>(
+      `SELECT w.id, w.user_id, w.ministry_code, w.name, w.description,
+              w.classification, w.is_template, w.version,
+              w.created_at, w.updated_at, w.deleted_at,
+              u.email AS user_email, u.display_name AS user_display_name
+         FROM workflows w
+         LEFT JOIN users u ON u.id = w.user_id
+        WHERE w.deleted_at IS NOT NULL
+        ORDER BY w.deleted_at DESC
+        LIMIT 500`,
+    );
+    const retentionMs = env.WORKFLOW_TRASH_RETENTION_DAYS * 24 * 60 * 60 * 1000;
+    const trash = result.rows.map((r) => {
+      const deletedAt = r.deleted_at instanceof Date ? r.deleted_at : new Date(r.deleted_at);
+      const expiresAt = new Date(deletedAt.getTime() + retentionMs);
+      return {
+        id: r.id,
+        userId: r.user_id,
+        userEmail: r.user_email,
+        userDisplayName: r.user_display_name,
+        ministryCode: r.ministry_code,
+        name: r.name,
+        description: r.description,
+        classification: r.classification,
+        isTemplate: r.is_template,
+        version: r.version,
+        createdAt: r.created_at,
+        updatedAt: r.updated_at,
+        deletedAt: deletedAt.toISOString(),
+        expiresAt: expiresAt.toISOString(),
+      };
+    });
+    res.json({
+      workflows: trash,
+      count: result.rowCount,
+      retentionDays: env.WORKFLOW_TRASH_RETENTION_DAYS,
+    });
+  } catch (err) {
+    logger.error("Failed to list workflow trash", err as Error);
+    res.status(500).json({ error: "Failed to list workflow trash." });
+  }
+});
+
+router.post("/workflows/:id/restore", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!WORKFLOW_UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+  try {
+    const result = await query<{ id: string; name: string; user_id: string; ministry_code: string | null }>(
+      `UPDATE workflows
+          SET deleted_at = NULL
+        WHERE id = $1 AND deleted_at IS NOT NULL
+       RETURNING id, name, user_id, ministry_code`,
+      [workflowId],
+    );
+    if (result.rowCount === 0) {
+      res.status(404).json({ error: "Workflow not found in trash." });
+      return;
+    }
+    const restored = result.rows[0];
+    auditAction(req.user!.id, AuditAction.WORKFLOW_RESTORED, "workflow", workflowId, {
+      ownerUserId: restored.user_id,
+      name: restored.name,
+      ministryCode: restored.ministry_code,
+    });
+    res.json({ id: workflowId, restored: true, name: restored.name });
+  } catch (err) {
+    logger.error("Failed to restore workflow", err as Error, { id: workflowId });
+    res.status(500).json({ error: "Failed to restore workflow." });
+  }
+});
+
+router.post("/workflows/:id/purge", async (req: Request, res: Response) => {
+  const workflowId = req.params.id as string;
+  if (!WORKFLOW_UUID_RE.test(workflowId)) {
+    res.status(400).json({ error: "Invalid workflow id." });
+    return;
+  }
+  try {
+    // Only purge rows already in the trash. Live workflows must go through
+    // the normal user delete flow first; this guards against an admin
+    // accidentally hard-deleting a workflow that someone is actively using.
+    const existing = await query<{ id: string; name: string; user_id: string; ministry_code: string | null }>(
+      `SELECT id, name, user_id, ministry_code
+         FROM workflows WHERE id = $1 AND deleted_at IS NOT NULL`,
+      [workflowId],
+    );
+    if (existing.rowCount === 0) {
+      res.status(404).json({ error: "Workflow not found in trash." });
+      return;
+    }
+    const wf = existing.rows[0];
+    await query(`DELETE FROM workflows WHERE id = $1`, [workflowId]);
+    auditAction(req.user!.id, AuditAction.WORKFLOW_PURGED, "workflow", workflowId, {
+      ownerUserId: wf.user_id,
+      name: wf.name,
+      ministryCode: wf.ministry_code,
+    });
+    res.json({ id: workflowId, purged: true, name: wf.name });
+  } catch (err) {
+    logger.error("Failed to purge workflow", err as Error, { id: workflowId });
+    res.status(500).json({ error: "Failed to purge workflow." });
+  }
+});
+
+// ============================================================================
 // DASHBOARD — pre-aggregated operational stats
 // ============================================================================
 //
@@ -662,6 +807,176 @@ router.get("/dashboard", async (_req: Request, res: Response) => {
   } catch (err) {
     logger.error("Failed to build dashboard payload", err as Error);
     res.status(500).json({ error: "Failed to load dashboard." });
+  }
+});
+
+// ============================================================================
+// FOIP S.7 RIGHT-OF-ACCESS USER DATA EXPORT (Backlog B6)
+// ============================================================================
+//
+// Bundles every row in every table that references the target user into a
+// single ZIP. The heavy lifting lives in `services/userDataExporter.ts`; this
+// route only validates the target user id, audits the action, and streams the
+// archive.
+//
+// Why POST instead of GET? Right-of-access requests are operator actions, not
+// idempotent queries — every export is a discrete event we want audit-logged
+// with the requesting admin attribution. A GET would also bypass CSRF
+// protection on browsers that prefetch admin URLs.
+
+const USER_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.post("/users/:id/export", async (req: Request, res: Response) => {
+  const targetUserId = req.params.id as string;
+  if (!USER_UUID_RE.test(targetUserId)) {
+    res.status(400).json({ error: "Invalid user id." });
+    return;
+  }
+
+  try {
+    const result = await exportUserData({
+      userId: targetUserId,
+      exportedBy: { userId: req.user!.id, role: req.user!.role },
+      query,
+    });
+
+    if (!result) {
+      res.status(404).json({ error: "User not found." });
+      return;
+    }
+
+    auditAction(
+      req.user!.id,
+      AuditAction.USER_DATA_EXPORTED,
+      "user",
+      targetUserId,
+      { rowCounts: result.manifest.rowCounts, archiveBytes: result.zip.length },
+    );
+
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${result.filename}"`,
+    );
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("Cache-Control", "no-store");
+    res.send(result.zip);
+  } catch (err) {
+    logger.error("Failed to export user data", err as Error, { targetUserId });
+    res.status(500).json({ error: "Failed to export user data." });
+  }
+});
+
+// ============================================================================
+// TOKEN BUDGETS (Bot 15, Backlog B1)
+// ============================================================================
+//
+// Per-user, per-ministry, and global monthly token caps. The budget guard
+// reads these rows before every LLM call and blocks runaway loops. Admins
+// CRUD them here; the global default row can be tightened but never deleted.
+
+const budgetScopeSchema = z.enum(["user", "ministry", "global"]);
+
+const budgetUpsertSchema = z.object({
+  scope_type: budgetScopeSchema,
+  scope_id: z.string().min(1).max(200),
+  monthly_token_limit: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER),
+  notes: z.string().max(500).optional().nullable(),
+});
+
+router.get("/budgets", async (_req: Request, res: Response) => {
+  try {
+    const budgets = await listBudgets();
+    res.json({ budgets, count: budgets.length });
+  } catch (err) {
+    logger.error("Failed to list token budgets", err as Error);
+    res.status(500).json({ error: "Failed to list budgets." });
+  }
+});
+
+router.put("/budgets", async (req: Request, res: Response) => {
+  const parsed = budgetUpsertSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: "Invalid body", details: parsed.error.flatten().fieldErrors });
+    return;
+  }
+  try {
+    const record = await setBudget({
+      scopeType: parsed.data.scope_type,
+      scopeId: parsed.data.scope_id,
+      monthlyTokenLimit: parsed.data.monthly_token_limit,
+      notes: parsed.data.notes ?? null,
+      createdBy: req.user!.id,
+    });
+    auditAction(
+      req.user!.id,
+      AuditAction.BUDGET_SET,
+      "token_budget",
+      record.id,
+      {
+        scopeType: record.scopeType,
+        scopeId: record.scopeId,
+        monthlyTokenLimit: record.monthlyTokenLimit,
+      },
+    );
+    res.json({ budget: record });
+  } catch (err) {
+    if (err instanceof BudgetValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    logger.error("Failed to upsert token budget", err as Error);
+    res.status(500).json({ error: "Failed to set budget." });
+  }
+});
+
+router.delete("/budgets/:scopeType/:scopeId", async (req: Request, res: Response) => {
+  const scopeType = req.params.scopeType as BudgetScopeType;
+  const scopeId = req.params.scopeId as string;
+
+  const scopeParse = budgetScopeSchema.safeParse(scopeType);
+  if (!scopeParse.success) {
+    res.status(400).json({ error: "scopeType must be 'user', 'ministry', or 'global'." });
+    return;
+  }
+  if (!scopeId || scopeId.length > 200) {
+    res.status(400).json({ error: "Invalid scopeId." });
+    return;
+  }
+
+  try {
+    const deleted = await deleteBudget(scopeType, scopeId);
+    if (!deleted) {
+      res.status(404).json({ error: "Budget not found." });
+      return;
+    }
+    auditAction(
+      req.user!.id,
+      AuditAction.BUDGET_DELETED,
+      "token_budget",
+      `${scopeType}:${scopeId}`,
+      { scopeType, scopeId },
+    );
+    res.json({ scopeType, scopeId, deleted: true });
+  } catch (err) {
+    if (err instanceof BudgetValidationError) {
+      res.status(400).json({ error: err.message });
+      return;
+    }
+    logger.error("Failed to delete token budget", err as Error);
+    res.status(500).json({ error: "Failed to delete budget." });
+  }
+});
+
+router.get("/budgets/usage", async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt((req.query.limit as string) || "200", 10) || 200, 500);
+  try {
+    const usage = await listMonthlyUsage(limit);
+    res.json({ usage, count: usage.length });
+  } catch (err) {
+    logger.error("Failed to compute monthly usage", err as Error);
+    res.status(500).json({ error: "Failed to compute usage." });
   }
 });
 

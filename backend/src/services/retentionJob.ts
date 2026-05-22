@@ -29,6 +29,7 @@ import { query } from "../config/database.js";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
 import { logAudit, AuditAction } from "./auditLogger.js";
+import { M } from "./metrics.js";
 
 export interface RetentionTableReport {
   table: string;
@@ -101,6 +102,11 @@ export async function runRetentionPass(triggeredBy: string = "scheduler"): Promi
     await anonymizePIIDetections(report, maxAuditDays);
   }
 
+  // Hard-delete workflows that have been in the Trash longer than the
+  // configured grace period. This is independent of classification —
+  // soft-deletes are user-driven, not data-class-driven.
+  await purgeSoftDeletedWorkflows(report, env.WORKFLOW_TRASH_RETENTION_DAYS);
+
   finalize(report, startedAt);
 
   logAudit({
@@ -123,6 +129,14 @@ function finalize(report: RetentionReport, startedAt: Date): void {
   report.finishedAt = finishedAt.toISOString();
   report.durationMs = finishedAt.getTime() - startedAt.getTime();
   report.totalRowsAffected = report.byTable.reduce((sum, r) => sum + r.rowsAffected, 0);
+  // Per-table delete counters are increased here, once per pass, so a flaky
+  // pass with errors doesn't double-count. Each row contributes the count it
+  // recorded under the table label.
+  for (const row of report.byTable) {
+    if (row.rowsAffected > 0) {
+      M.retentionDeletes.inc({ table: row.table }, row.rowsAffected);
+    }
+  }
   logger.info("Retention pass complete", {
     durationMs: report.durationMs,
     totalRowsAffected: report.totalRowsAffected,
@@ -256,6 +270,42 @@ async function anonymizePIIDetections(report: RetentionReport, days: number): Pr
     const msg = (err as Error).message;
     logger.error("Retention anonymize failed for pii_detections", err as Error);
     report.errors.push(`pii_detections: ${msg}`);
+  }
+}
+
+/**
+ * Hard-delete workflows whose Trash grace period has elapsed. The DELETE
+ * cascades through `workflow_versions`, `workflow_executions`, and any
+ * `artifacts` tied to those executions, so callers don't need to chase
+ * children themselves.
+ *
+ * Classification dimension is intentionally elided — soft-delete is a user
+ * action, not a data-class concern. The classification *of* a purged
+ * workflow is logged at delete time via `WORKFLOW_DELETED`; this pass is
+ * just the eventual cleanup of orphaned trash.
+ */
+export async function purgeSoftDeletedWorkflows(
+  report: RetentionReport,
+  days: number
+): Promise<void> {
+  try {
+    const result = await query(
+      `DELETE FROM workflows
+        WHERE deleted_at IS NOT NULL
+          AND deleted_at < NOW() - ($1::INTEGER * INTERVAL '1 day')`,
+      [days]
+    );
+    report.byTable.push({
+      table: "workflows",
+      strategy: "hard_delete",
+      classification: "trash",
+      cutoffDays: days,
+      rowsAffected: result.rowCount ?? 0,
+    });
+  } catch (err) {
+    const msg = (err as Error).message;
+    logger.error("Retention workflow trash purge failed", err as Error);
+    report.errors.push(`workflows/trash: ${msg}`);
   }
 }
 

@@ -1,7 +1,11 @@
 packages:
   - "backend"
   - "frontend"
-  - "shared"
   - "evals"
-allowBuilds:
-  esbuild: set this to true or false
+onlyBuiltDependencies:
+  - cpu-features
+  - esbuild
+  - protobufjs
+  - ssh2
+  - tesseract.js
+  - vue-demi

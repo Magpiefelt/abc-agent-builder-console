@@ -14,6 +14,7 @@ import type {
   SSEEvent,
   StageState,
   Workflow,
+  WorkflowCostEstimate,
   WorkflowLibrary,
   WorkflowSummary,
   WorkflowVersionDetail,
@@ -66,6 +67,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
   const versionPreview = ref<VersionPreview | null>(null)
   const previewLoading = ref(false)
   const previewError = ref<string | null>(null)
+
+  // Cost-estimation state (recommendations §4.3). Populated by `estimate()`
+  // before a run so the WorkflowCostDialog can render token + dollar figures
+  // without re-fetching.
+  const costEstimate = ref<WorkflowCostEstimate | null>(null)
+  const estimateLoading = ref(false)
+  const estimateError = ref<string | null>(null)
 
   // Stream B's reusable SSE consumer. We instantiate once per store; the
   // composable handles abort + reconnect + line-buffer parsing.
@@ -144,6 +152,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       classification: wf.classification,
       version: wf.version,
       is_template: wf.is_template,
+      tags: Array.isArray(wf.tags) ? wf.tags : [],
       ministry_code: wf.ministry_code,
       user_id: wf.user_id,
       updated_at: wf.updated_at,
@@ -154,13 +163,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
   async function create(
     name: string,
     classification: Classification = 'unclassified',
-    canvasData?: CanvasData
+    canvasData?: CanvasData,
+    tags?: string[],
   ): Promise<Workflow> {
     const canvas: CanvasData = canvasData ?? { nodes: [], edges: [], version: 1 }
+    const body: Record<string, unknown> = { name, classification, canvasData: canvas }
+    if (tags !== undefined) body.tags = tags
     const wf = await apiFetch<Workflow>('/api/workflows', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, classification, canvasData: canvas }),
+      body: JSON.stringify(body),
     })
     list.value = [summarize(wf), ...list.value]
     return wf
@@ -173,6 +185,7 @@ export const useWorkflowStore = defineStore('workflow', () => {
       description: current.value.description,
       classification: current.value.classification,
       canvasData: current.value.canvas_data,
+      tags: current.value.tags ?? [],
     }
     current.value = await apiFetch<Workflow>(`/api/workflows/${current.value.id}`, {
       method: 'PUT',
@@ -190,7 +203,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
 
   async function duplicate(id: string, newName?: string): Promise<Workflow> {
     const src = await apiFetch<Workflow>(`/api/workflows/${id}`)
-    return create(newName ?? `${src.name} (copy)`, src.classification, src.canvas_data)
+    return create(
+      newName ?? `${src.name} (copy)`,
+      src.classification,
+      src.canvas_data,
+      Array.isArray(src.tags) ? src.tags : [],
+    )
   }
 
   async function remove(id: string): Promise<void> {
@@ -349,6 +367,26 @@ export const useWorkflowStore = defineStore('workflow', () => {
     dirty.value = true
   }
 
+  /**
+   * Replace the workflow's tag list. Bot 17 (F5). The store accepts the
+   * already-normalised list (lowercased, deduped, trimmed) from the
+   * WorkflowTagsEditor; the route normalises again on save so a hand-crafted
+   * PUT can't bypass the rules. Skips the dirty flip when the new list is
+   * identical to the existing one — avoids spurious "unsaved changes" prompts
+   * when the editor commits without an actual change.
+   */
+  function setTags(tags: string[]): void {
+    if (!current.value) return
+    const prev = current.value.tags ?? []
+    if (prev.length === tags.length && prev.every((t, i) => t === tags[i])) {
+      // No-op; preserve dirty state.
+      current.value.tags = tags
+      return
+    }
+    current.value.tags = tags
+    dirty.value = true
+  }
+
   function select(id: string | null): void {
     selectedNodeId.value = id
   }
@@ -361,9 +399,19 @@ export const useWorkflowStore = defineStore('workflow', () => {
     return { nodeId, kind, status: 'pending' }
   }
 
-  async function execute(continueOnError = false): Promise<void> {
+  async function execute(
+    optionsOrLegacy: { continueOnError?: boolean; dryRun?: boolean } | boolean = {},
+  ): Promise<void> {
     if (!current.value) return
     if (execution.value?.status === 'running') return
+
+    // Backwards-compatible signature: original callers passed a single boolean.
+    const opts =
+      typeof optionsOrLegacy === 'boolean'
+        ? { continueOnError: optionsOrLegacy }
+        : optionsOrLegacy
+    const continueOnError = !!opts.continueOnError
+    const dryRun = !!opts.dryRun
 
     const stages = new Map<string, StageState>()
     for (const node of current.value.canvas_data.nodes) {
@@ -376,11 +424,12 @@ export const useWorkflowStore = defineStore('workflow', () => {
       stages,
       startedAt: Date.now(),
       piiBlockedTotal: 0,
+      dryRun,
     }
     events.value = []
 
     await sseStream.start(`/api/workflows/${current.value.id}/execute`, {
-      body: { continueOnError },
+      body: { continueOnError, dryRun },
     })
   }
 
@@ -397,6 +446,13 @@ export const useWorkflowStore = defineStore('workflow', () => {
     switch (event.type) {
       case 'workflow_start':
         execution.value.id = event.executionId
+        // Honor the server's authoritative dryRun flag. The store already
+        // set this from the request options, but mirroring the server value
+        // means a future replay or out-of-band event source still produces
+        // the right UI banner.
+        if (typeof event.dryRun === 'boolean') {
+          execution.value.dryRun = event.dryRun
+        }
         break
       case 'stage_start': {
         const s = execution.value.stages.get(event.nodeId)
@@ -457,6 +513,41 @@ export const useWorkflowStore = defineStore('workflow', () => {
   function clearExecution(): void {
     execution.value = null
     events.value = []
+  }
+
+  // ============================================================================
+  // COST ESTIMATION (recommendations §4.3)
+  // ============================================================================
+  //
+  // Sends the current in-memory canvas (including unsaved edits) to the backend
+  // estimator and stashes the result for the pre-run confirmation dialog.
+
+  async function estimate(): Promise<WorkflowCostEstimate | null> {
+    if (!current.value) return null
+    estimateLoading.value = true
+    estimateError.value = null
+    try {
+      const result = await apiFetch<WorkflowCostEstimate>(
+        `/api/workflows/${encodeURIComponent(current.value.id)}/estimate`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ canvasData: current.value.canvas_data }),
+        },
+      )
+      costEstimate.value = result
+      return result
+    } catch (e) {
+      estimateError.value = (e as Error).message
+      throw e
+    } finally {
+      estimateLoading.value = false
+    }
+  }
+
+  function clearEstimate(): void {
+    costEstimate.value = null
+    estimateError.value = null
   }
 
   // ============================================================================
@@ -584,10 +675,16 @@ export const useWorkflowStore = defineStore('workflow', () => {
     removeNode,
     setClassification,
     setName,
+    setTags,
     select,
     execute,
     cancelExecution,
     clearExecution,
+    costEstimate,
+    estimateLoading,
+    estimateError,
+    estimate,
+    clearEstimate,
     versions,
     currentVersion,
     executions,

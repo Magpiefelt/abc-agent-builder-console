@@ -68,6 +68,7 @@ describe("ExecutionPanel", () => {
       classification: "unclassified",
       version: 1,
       is_template: false,
+      tags: [],
       ministry_code: null,
       user_id: "u-1",
       updated_at: "",
@@ -172,6 +173,29 @@ describe("ExecutionPanel", () => {
     const clear = wrapper.findAll("goa-button").find((b) => b.text().trim() === "Clear");
     expect(clear).toBeDefined();
     expect(clear!.attributes("disabled")).toBeDefined();
+  });
+
+  it("renders a 'Dry run' badge while execution.dryRun is true", () => {
+    const store = useWorkflowStore();
+    store.execution = seedExecution(
+      [seedStage({ nodeId: "n1", kind: "agent", status: "running", stageIndex: 0 })],
+      { dryRun: true },
+    );
+
+    const wrapper = mount(ExecutionPanel);
+    const badge = wrapper.find('[data-testid="dry-run-badge"]');
+    expect(badge.exists()).toBe(true);
+    expect(badge.attributes("content")).toBe("Dry run");
+  });
+
+  it("omits the 'Dry run' badge for a real run (execution.dryRun is falsy)", () => {
+    const store = useWorkflowStore();
+    store.execution = seedExecution([
+      seedStage({ nodeId: "n1", kind: "agent", status: "running", stageIndex: 0 }),
+    ]);
+
+    const wrapper = mount(ExecutionPanel);
+    expect(wrapper.find('[data-testid="dry-run-badge"]').exists()).toBe(false);
   });
 
   it("clears execution state when the Clear button is clicked after completion", async () => {

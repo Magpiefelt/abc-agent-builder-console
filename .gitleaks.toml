@@ -1,0 +1,62 @@
+# gitleaks configuration for ABC Agent Builder Console.
+#
+# Starts from the upstream default rule set (so every shipped detector — AWS,
+# Anthropic, Stripe, JWT, generic API keys, etc. — keeps working) and layers
+# project-specific allowlist rules on top.
+#
+# Refresh against newer gitleaks releases by checking that `useDefault = true`
+# is still honoured and that `defaults` rule IDs haven't drifted.
+
+title = "ABC Agent Builder Console — gitleaks"
+
+[extend]
+useDefault = true
+
+# ----------------------------------------------------------------------------
+# Allowlist — paths and patterns that are safe by construction.
+#
+# Important: nothing in this allowlist suppresses real provider secrets. We
+# allow only:
+#   - placeholder strings used in tests / fixtures / .env.example
+#   - JSON identifiers that look like secrets but are pinned package versions
+#     / lockfile content / Postgres connection strings already redacted with
+#     env-var placeholders (e.g. `$DATABASE_URL`).
+# ----------------------------------------------------------------------------
+[allowlist]
+description = "Paths and patterns explicitly known to be safe."
+
+paths = [
+  '''^pnpm-lock\.yaml$''',
+  '''^backend/\.env\.example$''',
+  '''(^|/)__tests__/''',
+  '''(^|/)__fixtures__/''',
+  '''^docs/02_database_migrations\.sql$''',
+  '''^docs/.*\.md$''',
+  '''^evals/scenarios/.*\.json$''',
+  '''^nexus/manifest\.yaml$''',
+  '''^\.gitleaks\.toml$''',
+  '''^\.pre-commit-config\.yaml$''',
+  '''^node_modules/''',
+]
+
+# Common placeholder values used in env templates, tests, and fixture data.
+# Real credentials never look like these.
+regexes = [
+  '''mock-key''',
+  '''placeholder''',
+  '''(?i)example[_-]?token''',
+  '''(?i)dummy[_-]?(secret|key|token)''',
+  '''(?i)changeme''',
+  '''(?i)REPLACE_ME''',
+  '''sk-ant-test-''',
+  '''AKIAIOSFODNN7EXAMPLE''',         # AWS canonical example access key
+  '''wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY''', # AWS canonical example secret
+  '''(?i)(api[_-]?key|token|secret)\s*[:=]\s*(your[_-]?|<|placeholder|REPLACE_ME)''',
+]
+
+# Custom rule — upstream default ruleset has no Anthropic API key detector.
+[[rules]]
+id = "anthropic-api-key"
+description = "Anthropic API key (sk-ant-api03-... or sk-ant-sid01-...)"
+regex = '''sk-ant-(?:api03|sid01)-[A-Za-z0-9_-]{90,}'''
+keywords = ["sk-ant-"]

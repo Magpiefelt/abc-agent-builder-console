@@ -1,0 +1,88 @@
+{
+  // Debug profiles. Attach to a running dev server, or boot the backend with
+  // breakpoints, or run a single Vitest spec with the debugger attached.
+
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Boot the backend under the debugger. Stops at any breakpoint set in
+      // .ts files. Uses `tsx` so source maps work without a separate build.
+      "name": "Debug: backend (tsx)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/backend/node_modules/.bin/tsx",
+      "runtimeArgs": ["watch"],
+      "args": ["src/index.ts"],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "env": {
+        // Default to dev-friendly settings; override via .env at the
+        // backend/.env location if needed.
+        "NODE_ENV": "development",
+        "LOG_FORMAT": "pretty",
+        "LOG_LEVEL": "debug"
+      },
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Attach the debugger to a running backend that was started with
+      // `node --inspect` (or `tsx watch` — tsx forwards `--inspect`).
+      "name": "Attach: backend (inspector)",
+      "type": "node",
+      "request": "attach",
+      "port": 9229,
+      "restart": true,
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Run the backend Vitest suite under the debugger so breakpoints fire
+      // inside service code. Set `${file}` instead of an absolute path to
+      // run only the currently-open spec.
+      "name": "Debug: backend vitest (current file)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/backend/node_modules/.bin/vitest",
+      "runtimeArgs": ["run", "${relativeFile}"],
+      "cwd": "${workspaceFolder}/backend",
+      "console": "integratedTerminal",
+      "env": {
+        "NODE_ENV": "test"
+      },
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Same but for the frontend.
+      "name": "Debug: frontend vitest (current file)",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "${workspaceFolder}/frontend/node_modules/.bin/vitest",
+      "runtimeArgs": ["run", "${relativeFile}"],
+      "cwd": "${workspaceFolder}/frontend",
+      "console": "integratedTerminal",
+      "env": {
+        "NODE_ENV": "test"
+      },
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Drive the Vite dev server in a browser tab attached to the debugger.
+      // Requires the "Edge / Chrome" debug adapter (now built-in to VS Code).
+      "name": "Debug: frontend (Chrome attach)",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://localhost:5173",
+      "webRoot": "${workspaceFolder}/frontend",
+      "preLaunchTask": "dev: frontend",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+
+  "compounds": [
+    {
+      // One-click: dev backend + frontend, both under the debugger.
+      "name": "Debug: full stack",
+      "configurations": ["Debug: backend (tsx)", "Debug: frontend (Chrome attach)"],
+      "stopAll": true
+    }
+  ]
+}

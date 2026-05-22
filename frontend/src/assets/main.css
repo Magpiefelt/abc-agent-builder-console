@@ -3,6 +3,13 @@
 @import "@vue-flow/core/dist/theme-default.css";
 
 /*
+ * Official GoA dark-theme overrides. Activated by `data-theme="dark"` on
+ * <html>; the `useTheme` composable toggles that attribute. Loaded after the
+ * base tokens so its `:root[data-theme="dark"]` selector wins on specificity.
+ */
+@import "@abgov/design-tokens/dist/dark-theme.css";
+
+/*
  * Local aliases for the canonical GoA design tokens (loaded ahead of this
  * file in src/main.ts via `@abgov/design-tokens/dist/tokens.css`).
  *
@@ -121,4 +128,56 @@ body {
 }
 .vue-flow__minimap-mask {
   fill: rgba(0, 109, 204, 0.08);
+}
+
+/* ---------------------------------------------------------------------------
+ * Dark theme — patches for utilities that don't go through the GoA palette.
+ *
+ * The bulk of the dark adaptation comes "for free" from
+ * `@abgov/design-tokens/dist/dark-theme.css`, which we import above. Every
+ * `var(--goa-color-*)` reference (including our local aliases at the top of
+ * this file) flips automatically when `data-theme="dark"` is set on <html>.
+ *
+ * What we patch below: a small number of hardcoded Tailwind colour utilities
+ * (bg-gray-50, bg-gray-100, bg-white) that pre-date the design-token wiring
+ * in a few components and would otherwise render bright-on-bright in dark
+ * mode. We use [data-theme="dark"] attribute selectors to keep light-mode
+ * appearance untouched.
+ * ------------------------------------------------------------------------- */
+
+[data-theme="dark"] .bg-white {
+  background-color: var(--goa-color-surface-100) !important;
+}
+[data-theme="dark"] .bg-gray-50 {
+  background-color: var(--goa-color-surface-50) !important;
+}
+[data-theme="dark"] .bg-gray-100 {
+  background-color: var(--goa-color-surface-200) !important;
+}
+[data-theme="dark"] .text-black {
+  color: var(--goa-color-text-default) !important;
+}
+
+/* The Vue Flow canvas paints its own background via inline SVG; in dark mode
+   we want the canvas surface darker than the chrome surrounding it. */
+[data-theme="dark"] .vue-flow {
+  background-color: var(--goa-color-surface-50);
+}
+[data-theme="dark"] .vue-flow__background {
+  background-color: var(--goa-color-surface-50);
+}
+[data-theme="dark"] .vue-flow__minimap-mask {
+  fill: rgba(133, 181, 216, 0.08);
+}
+[data-theme="dark"] .vue-flow__edge-path {
+  stroke: var(--goa-color-greyscale-500);
+}
+[data-theme="dark"] .vue-flow__handle {
+  background-color: var(--goa-color-interactive-default);
+}
+
+/* Anchor link colour in prose under dark — make sure the GoA dark interactive
+   colour wins over Tailwind's default link blue when DOMPurify drops styles. */
+[data-theme="dark"] .prose a:hover {
+  color: var(--goa-color-interactive-hover);
 }

@@ -198,6 +198,29 @@ CREATE TABLE IF NOT EXISTS cohen_mcleod.workflows (
 CREATE INDEX IF NOT EXISTS idx_workflows_user ON cohen_mcleod.workflows(user_id);
 CREATE INDEX IF NOT EXISTS idx_workflows_ministry ON cohen_mcleod.workflows(ministry_code);
 
+-- Soft-delete support (Bot 10, B4). `deleted_at` set when a user deletes a
+-- workflow; cleared by an admin restore. The partial index keeps the trash
+-- query (`WHERE deleted_at IS NOT NULL`) cheap even when the table grows,
+-- while the existing primary key + per-user index continue to serve the
+-- common `deleted_at IS NULL` path because their pages stay hot.
+ALTER TABLE cohen_mcleod.workflows
+  ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_workflows_deleted_at
+  ON cohen_mcleod.workflows(deleted_at)
+  WHERE deleted_at IS NOT NULL;
+
+-- Tags (Bot 17, F5). Free-form discovery taxonomy for workflows. NOT NULL
+-- with a `'{}'` default so callers never have to coalesce. Validation
+-- (lowercase, dedupe, max-12, max-32-char alnum + `-` + `_`) lives in the
+-- route layer — the column stays permissive so future tooling can grow the
+-- vocabulary without a schema migration. GIN index makes the
+-- `tags && ARRAY[...]` overlap predicate used by the list-filter path cheap
+-- even at thousands of workflows.
+ALTER TABLE cohen_mcleod.workflows
+  ADD COLUMN IF NOT EXISTS tags TEXT[] NOT NULL DEFAULT '{}';
+CREATE INDEX IF NOT EXISTS idx_workflows_tags
+  ON cohen_mcleod.workflows USING GIN(tags);
+
 -- Agent Sessions (Free Agent runs)
 CREATE TABLE IF NOT EXISTS cohen_mcleod.agent_sessions (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -860,3 +883,171 @@ VALUES
 ('eval_classification_routing', 'feature', 'quality', 'Classification routing scenario — Protected B task with US-residency model returns HTTP 400', 'evals/scenarios/04_classification_routing.json', 'shared', 'active', 'high', 5, NULL)
 
 ON CONFLICT (name) DO NOTHING;
+
+-- ============================================================================
+-- BOT 15: Token budgets (Backlog B1)
+-- ============================================================================
+-- Per-user, per-ministry, and global monthly token caps for LLM spend control.
+-- Resolution at check time: user override > ministry override > global default.
+-- Usage is aggregated on-demand from agent_iterations.tokens_used (already
+-- present) and workflow_executions.total_tokens (denormalized here) so the
+-- guard never gets out of sync with the source of truth.
+-- All blocks are idempotent.
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS cohen_mcleod.token_budgets (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    scope_type TEXT NOT NULL CHECK (scope_type IN ('user', 'ministry', 'global')),
+    scope_id TEXT NOT NULL,
+    monthly_token_limit BIGINT NOT NULL CHECK (monthly_token_limit >= 0),
+    notes TEXT,
+    created_by UUID REFERENCES cohen_mcleod.users(id),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    UNIQUE (scope_type, scope_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_token_budgets_scope
+    ON cohen_mcleod.token_budgets(scope_type, scope_id);
+
+DROP TRIGGER IF EXISTS trg_token_budgets_updated ON cohen_mcleod.token_budgets;
+CREATE TRIGGER trg_token_budgets_updated BEFORE UPDATE ON cohen_mcleod.token_budgets
+    FOR EACH ROW EXECUTE FUNCTION cohen_mcleod.update_timestamp();
+
+-- Seed a permissive global default. Admins tighten via the Budgets admin UI.
+-- 100 million tokens/month is large enough to never fire in dev/test but
+-- small enough that a runaway agent loop will hit it.
+INSERT INTO cohen_mcleod.token_budgets (scope_type, scope_id, monthly_token_limit, notes)
+VALUES ('global', 'global', 100000000, 'Default global ceiling. Tighten per user/ministry as needed.')
+ON CONFLICT (scope_type, scope_id) DO NOTHING;
+
+-- Denormalized total-tokens column on workflow_executions. Without this, the
+-- budget guard would have to aggregate the JSONB stage_results array on every
+-- check — fine for a single user but quadratic for the admin usage dashboard.
+ALTER TABLE cohen_mcleod.workflow_executions
+    ADD COLUMN IF NOT EXISTS total_tokens BIGINT NOT NULL DEFAULT 0;
+
+-- Index supports the "current-month usage by user" admin query.
+CREATE INDEX IF NOT EXISTS idx_wf_executions_user_started
+    ON cohen_mcleod.workflow_executions(user_id, started_at);
+
+-- ============================================================================
+-- BOT 19: Starred sessions + pinned iterations (Backlog F8)
+-- ============================================================================
+-- Lightweight bookmarking layer on top of the existing session/iteration
+-- tables. Two BOOLEAN columns + two partial indexes — the indexes only carry
+-- the (rare) starred/pinned rows so the "Starred only" filter and the
+-- "pinned iterations in this session" query are O(matches) regardless of
+-- table size.
+-- ============================================================================
+
+ALTER TABLE cohen_mcleod.agent_sessions
+    ADD COLUMN IF NOT EXISTS starred BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_sessions_starred
+    ON cohen_mcleod.agent_sessions(user_id, created_at DESC)
+    WHERE starred = true;
+
+ALTER TABLE cohen_mcleod.agent_iterations
+    ADD COLUMN IF NOT EXISTS pinned BOOLEAN NOT NULL DEFAULT false;
+
+CREATE INDEX IF NOT EXISTS idx_iterations_pinned
+    ON cohen_mcleod.agent_iterations(session_id, iteration_number)
+    WHERE pinned = true;
+
+-- ============================================================================
+-- BOT 21: Webhook delivery on session/workflow completion (Backlog B3)
+-- ============================================================================
+-- Two tables: subscriptions registered by admins, and a per-attempt audit
+-- log of every delivery attempt (success, retry, give-up). The dispatcher
+-- writes one webhook_deliveries row per attempt so an operator can replay or
+-- forensic-trace any delivery.
+--
+-- The signature scheme is HMAC-SHA256(secret, body) where secret is derived
+-- from SECRETS_VAULT_KEY + a per-subscription label. Rotation is a one-line
+-- label change (no DB write of the actual secret).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS cohen_mcleod.webhook_subscriptions (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    ministry_code TEXT,
+    event_type TEXT NOT NULL CHECK (event_type IN ('session.completed', 'workflow.completed')),
+    url TEXT NOT NULL,
+    secret_label TEXT NOT NULL,
+    enabled BOOLEAN NOT NULL DEFAULT true,
+    description TEXT,
+    created_by UUID REFERENCES cohen_mcleod.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    last_delivery_at TIMESTAMPTZ,
+    last_delivery_status TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_event_enabled
+    ON cohen_mcleod.webhook_subscriptions(event_type, enabled)
+    WHERE enabled = true;
+
+CREATE INDEX IF NOT EXISTS idx_webhook_subscriptions_ministry
+    ON cohen_mcleod.webhook_subscriptions(ministry_code);
+
+DROP TRIGGER IF EXISTS trg_webhook_subscriptions_updated ON cohen_mcleod.webhook_subscriptions;
+CREATE TRIGGER trg_webhook_subscriptions_updated BEFORE UPDATE ON cohen_mcleod.webhook_subscriptions
+    FOR EACH ROW EXECUTE FUNCTION cohen_mcleod.update_timestamp();
+
+-- Per-attempt audit of webhook deliveries. The dispatcher inserts one row per
+-- HTTP attempt; the most-recent row is the canonical delivery state.
+-- response_body_preview is capped at 4 KB (the dispatcher truncates) so a
+-- chatty server can't grow the table unbounded.
+CREATE TABLE IF NOT EXISTS cohen_mcleod.webhook_deliveries (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    subscription_id UUID NOT NULL REFERENCES cohen_mcleod.webhook_subscriptions(id) ON DELETE CASCADE,
+    event_type TEXT NOT NULL,
+    resource_id TEXT,
+    attempt SMALLINT NOT NULL,
+    request_body JSONB NOT NULL,
+    signature TEXT NOT NULL,
+    response_status INTEGER,
+    response_body_preview TEXT,
+    duration_ms INTEGER,
+    error TEXT,
+    delivered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_subscription
+    ON cohen_mcleod.webhook_deliveries(subscription_id, delivered_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_event_resource
+    ON cohen_mcleod.webhook_deliveries(event_type, resource_id);
+
+-- ============================================================================
+-- BOT 22: SOC2 / Compliance evidence collection (Backlog S2)
+-- ============================================================================
+-- One row per evidence snapshot. The scheduler runs the collector nightly
+-- (gated by COMPLIANCE_EVIDENCE_ENABLED); admins can also trigger a snapshot
+-- on demand. Each row carries:
+--   * `summary` — structured JSON (audit counts by action, PII counts by type,
+--     retention totals, controls matrix, model inventory, vault fingerprint,
+--     uptime). Queryable; cheap to render in the admin UI.
+--   * `markdown` — the rendered evidence document (the auditor-facing artifact).
+--   * `row_counts` — denormalized row counts of audit_log, pii_detections,
+--     agent_sessions, workflow_executions at snapshot time; supports trend
+--     queries without re-scanning the source tables.
+--   * `period_start`/`period_end` — the activity window the snapshot covers
+--     (typically the prior 24 h for scheduled runs; configurable on demand).
+-- ============================================================================
+
+CREATE TABLE IF NOT EXISTS cohen_mcleod.evidence_collections (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    collected_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    period_start TIMESTAMPTZ NOT NULL,
+    period_end TIMESTAMPTZ NOT NULL,
+    triggered_by TEXT NOT NULL,
+    user_id UUID REFERENCES cohen_mcleod.users(id) ON DELETE SET NULL,
+    source_version TEXT NOT NULL,
+    summary JSONB NOT NULL,
+    markdown TEXT NOT NULL,
+    row_counts JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+
+CREATE INDEX IF NOT EXISTS idx_evidence_collections_collected_at
+    ON cohen_mcleod.evidence_collections(collected_at DESC);

@@ -1,0 +1,52 @@
+# ZAP baseline rule tuning for ABC Agent Builder Console
+#
+# Format: <rule-id>\t<threshold>\t<comment>
+# Thresholds: IGNORE | WARN | FAIL
+#
+# Rule IDs are documented at https://www.zaproxy.org/docs/alerts/
+#
+# Approach: start strict. Loosen specific rules only with a comment explaining
+# why. Every rule that's set to IGNORE here should have a tracking note in
+# docs/security/dast_findings.md.
+
+# ---------------------------------------------------------------------------
+# False positives in the ZAP baseline pass against an Express app
+# ---------------------------------------------------------------------------
+
+# 10049: Non-Storable Content. ZAP flags every response that lacks an explicit
+# Cache-Control header. The Helmet middleware sets sensible defaults; we
+# explicitly override Cache-Control on the few responses that need it (e.g.
+# the FOIP export which sets `no-store`). The default flagged-as-warning here
+# is noise.
+10049	IGNORE	Helmet sets defaults; explicit no-store on sensitive responses
+
+# 10027: Information Disclosure - Suspicious Comments. Triggers on any
+# response body that contains words like "TODO" / "FIXME". Our route handlers
+# are minified in prod via tsc → js; no source comments leak. The check is
+# too noisy on the dev-mode static assets.
+10027	WARN	Triggers on dev-mode comments; tighten to FAIL after Nexus deploy hardens build
+
+# 10038: Content Security Policy (CSP) Header Not Set. Tracked as backlog S1
+# (CSP headers via Helmet). Until that lands, this is a known gap — we want
+# the report to flag it but not break the build.
+10038	WARN	Tracking via backlog S1; remove after CSP lands
+
+# ---------------------------------------------------------------------------
+# Hard fails — these should never regress
+# ---------------------------------------------------------------------------
+
+# 10202: Absence of Anti-CSRF Tokens. Cookie-session auth needs same-site
+# + secure cookies, which Helmet + the express-session config provide. Any
+# regression here is a real bug.
+10202	FAIL	Same-site cookies required
+
+# 90019: Server Side Code Injection. Critical — any positive here is a real bug.
+90019	FAIL	Server-side injection: hard block
+
+# 90020: Remote OS Command Injection.
+90020	FAIL	OS command injection: hard block
+
+# 90022: Application Error Disclosure. The global error handler in
+# backend/src/index.ts redacts stack traces in production; this rule
+# guards against regressions where a stack escapes to the wire.
+90022	FAIL	Stack traces must not leak in production

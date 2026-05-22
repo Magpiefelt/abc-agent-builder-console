@@ -32,6 +32,7 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
     classification: 'unclassified',
     version: 3,
     is_template: false,
+    tags: [],
     ministry_code: 'INFRA',
     user_id: 'u1',
     created_at: '2026-05-20T09:00:00Z',
@@ -451,3 +452,98 @@ describe('useWorkflowStore — exportToFile / importFromFile', () => {
 function fileWithText(content: string): File {
   return { text: () => Promise.resolve(content) } as unknown as File
 }
+
+// ============================================================================
+// TAGS (Bot 17, F5)
+// ============================================================================
+
+describe('useWorkflowStore — setTags', () => {
+  it('updates current.tags and flips dirty when the list changes', () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({ tags: ['education'] })
+    store.dirty = false
+
+    store.setTags(['education', 'research'])
+    expect(store.current!.tags).toEqual(['education', 'research'])
+    expect(store.dirty).toBe(true)
+  })
+
+  it('does not flip dirty when the new list is identical', () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({ tags: ['education', 'research'] })
+    store.dirty = false
+
+    store.setTags(['education', 'research'])
+    expect(store.dirty).toBe(false)
+  })
+
+  it('removes tags when the new list is shorter', () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({ tags: ['education', 'research'] })
+    store.dirty = false
+
+    store.setTags(['education'])
+    expect(store.current!.tags).toEqual(['education'])
+    expect(store.dirty).toBe(true)
+  })
+
+  it('is a no-op when no workflow is loaded', () => {
+    const store = useWorkflowStore()
+    store.current = null
+    // No throw — silent no-op.
+    store.setTags(['education'])
+    expect(store.current).toBeNull()
+  })
+})
+
+describe('useWorkflowStore — save with tags', () => {
+  it('includes the current tags in the PUT body', async () => {
+    const store = useWorkflowStore()
+    store.current = makeWorkflow({ tags: ['education', 'research'] })
+    apiFetchMock.mockResolvedValueOnce(makeWorkflow({ tags: ['education', 'research'] }))
+
+    await store.save()
+    const body = JSON.parse(apiFetchMock.mock.calls[0][1].body as string)
+    expect(body.tags).toEqual(['education', 'research'])
+  })
+
+  it('falls back to [] when current.tags is undefined', async () => {
+    const store = useWorkflowStore()
+    // Force an undefined tags value (e.g. legacy backend response).
+    store.current = { ...makeWorkflow(), tags: undefined as unknown as string[] }
+    apiFetchMock.mockResolvedValueOnce(makeWorkflow({ tags: [] }))
+
+    await store.save()
+    const body = JSON.parse(apiFetchMock.mock.calls[0][1].body as string)
+    expect(body.tags).toEqual([])
+  })
+})
+
+describe('useWorkflowStore — duplicate inherits tags', () => {
+  it('passes the source workflow tags through to create()', async () => {
+    const store = useWorkflowStore()
+
+    apiFetchMock
+      // GET source workflow
+      .mockResolvedValueOnce(
+        makeWorkflow({
+          name: 'Researcher',
+          tags: ['education', 'research'],
+        }),
+      )
+      // POST create new workflow
+      .mockResolvedValueOnce(
+        makeWorkflow({
+          id: 'new-id',
+          name: 'Researcher (copy)',
+          tags: ['education', 'research'],
+        }),
+      )
+
+    const newWf = await store.duplicate(WORKFLOW_ID)
+    expect(newWf.tags).toEqual(['education', 'research'])
+    const createBody = JSON.parse(apiFetchMock.mock.calls[1][1].body as string)
+    expect(createBody.tags).toEqual(['education', 'research'])
+  })
+})
+

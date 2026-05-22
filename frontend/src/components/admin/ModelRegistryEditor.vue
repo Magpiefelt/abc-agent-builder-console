@@ -71,7 +71,7 @@ onActivated(() => {
   <div class="flex flex-col gap-4">
     <header class="flex items-center justify-between gap-4 flex-wrap">
       <div>
-        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Model Registry</h3>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-text-default)]">Model Registry</h3>
         <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
           Toggle approved LLMs. Inactive models cannot be selected in new sessions.
         </p>

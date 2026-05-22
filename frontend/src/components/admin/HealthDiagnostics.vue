@@ -74,7 +74,7 @@ onBeforeUnmount(stopPolling)
   <div class="flex flex-col gap-4">
     <header class="flex items-center justify-between">
       <div>
-        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Health Diagnostics</h3>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-text-default)]">Health Diagnostics</h3>
         <p class="text-xs text-[var(--goa-color-text-secondary)] mt-1">
           Auto-refreshes every 30s. Last fetched: {{ lastFetched ? lastFetched.toLocaleTimeString() : 'never' }}
         </p>
@@ -91,7 +91,7 @@ onBeforeUnmount(stopPolling)
     <div v-if="data" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
       <!-- Status -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">Runtime</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">Runtime</h4>
         <dl class="text-sm space-y-1">
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Status</dt><dd class="font-medium" :class="data.status === 'healthy' ? 'text-[var(--goa-color-success)]' : 'text-[var(--goa-color-error)]'">{{ data.status }}</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Uptime</dt><dd class="font-mono text-xs">{{ formatUptime(data.uptimeSeconds) }}</dd></div>
@@ -103,7 +103,7 @@ onBeforeUnmount(stopPolling)
 
       <!-- Memory -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">Memory</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">Memory</h4>
         <dl class="text-sm space-y-1">
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">RSS</dt><dd class="font-mono text-xs">{{ data.memory.rssMb }} MB</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Heap used</dt><dd class="font-mono text-xs">{{ data.memory.heapUsedMb }} MB</dd></div>
@@ -114,7 +114,7 @@ onBeforeUnmount(stopPolling)
 
       <!-- Pool -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">Database Pool</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">Database Pool</h4>
         <dl class="text-sm space-y-1">
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Total</dt><dd class="font-mono text-xs">{{ data.pool.totalCount }}</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Idle</dt><dd class="font-mono text-xs">{{ data.pool.idleCount }}</dd></div>
@@ -127,7 +127,7 @@ onBeforeUnmount(stopPolling)
 
       <!-- Tokens -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">LLM Token Usage ({{ data.tokens.windowMinutes }} min window)</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">LLM Token Usage ({{ data.tokens.windowMinutes }} min window)</h4>
         <dl class="text-sm space-y-1">
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Calls</dt><dd class="font-mono text-xs">{{ data.tokens.callCount }}</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Prompt tokens</dt><dd class="font-mono text-xs">{{ data.tokens.totalPromptTokens.toLocaleString() }}</dd></div>
@@ -137,7 +137,7 @@ onBeforeUnmount(stopPolling)
 
       <!-- Services -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">Configured Services</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">Configured Services</h4>
         <dl class="text-sm space-y-1">
           <div v-for="(value, name) in data.services" :key="name" class="flex justify-between">
             <dt class="text-[var(--goa-color-text-secondary)]">{{ name }}</dt>
@@ -148,7 +148,7 @@ onBeforeUnmount(stopPolling)
 
       <!-- Retention -->
       <section class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded p-4">
-        <h4 class="text-sm font-semibold text-[var(--goa-color-primary-dark)] mb-3">Retention Job</h4>
+        <h4 class="text-sm font-semibold text-[var(--goa-color-text-default)] mb-3">Retention Job</h4>
         <dl class="text-sm space-y-1 mb-3">
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Scheduler</dt><dd class="font-mono text-xs">{{ data.retention.enabled ? 'enabled' : 'disabled' }}</dd></div>
           <div class="flex justify-between"><dt class="text-[var(--goa-color-text-secondary)]">Daily hour</dt><dd class="font-mono text-xs">{{ data.retention.hour }}:00</dd></div>
@@ -161,7 +161,7 @@ onBeforeUnmount(stopPolling)
         >
           {{ retentionRunning ? 'Running…' : 'Run retention pass now' }}
         </goa-button>
-        <div v-if="retentionReport" class="mt-3 text-xs bg-gray-50 rounded p-2">
+        <div v-if="retentionReport" class="mt-3 text-xs bg-[var(--goa-color-background)] rounded p-2">
           <div>Affected: <span class="font-mono">{{ retentionReport.totalRowsAffected }}</span> rows in <span class="font-mono">{{ retentionReport.durationMs }}ms</span></div>
           <ul class="mt-1 space-y-0.5">
             <li v-for="r in retentionReport.byTable" :key="`${r.table}-${r.classification}`" class="font-mono">

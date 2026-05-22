@@ -53,7 +53,7 @@ onActivated(() => {
   <div class="flex flex-col gap-4">
     <header class="flex items-center justify-between gap-4 flex-wrap">
       <div>
-        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Sessions</h3>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-text-default)]">Sessions</h3>
         <p
           v-if="!loading"
           class="text-xs text-[var(--goa-color-text-secondary)] mt-1"

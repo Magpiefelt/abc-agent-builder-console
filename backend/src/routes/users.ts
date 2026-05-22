@@ -27,6 +27,7 @@ import {
   deleteSecret,
   VaultNotConfigured,
 } from "../services/secretsVault.js";
+import { getBudgetStatus } from "../services/budgetGuard.js";
 
 const router = Router();
 
@@ -458,6 +459,11 @@ router.delete("/me/secrets/:label", async (req: Request, res: Response) => {
 
 router.get("/me/recent-sessions", async (req: Request, res: Response) => {
   if (!requireUser(req, res)) return;
+  // Bot 19 (F8): the `?starred=true` flag narrows the feed to bookmarked
+  // sessions so the SessionHistoryView "Starred only" chip is a single
+  // refetch rather than a client-side filter (which would miss starred rows
+  // beyond the existing LIMIT 20).
+  const starredOnly = req.query.starred === "true" || req.query.starred === "1";
   try {
     const result = await query<{
       id: string;
@@ -467,10 +473,13 @@ router.get("/me/recent-sessions", async (req: Request, res: Response) => {
       classification: string;
       created_at: Date;
       completed_at: Date | null;
+      starred: boolean | null;
     }>(
-      `SELECT id, prompt, model_id, status, classification, created_at, completed_at
+      `SELECT id, prompt, model_id, status, classification, created_at, completed_at, starred
        FROM agent_sessions
-       WHERE user_id = $1 AND ministry_code IS NOT DISTINCT FROM $2
+       WHERE user_id = $1
+         AND ministry_code IS NOT DISTINCT FROM $2
+         ${starredOnly ? "AND starred = true" : ""}
        ORDER BY created_at DESC
        LIMIT 20`,
       [req.user!.id, req.user!.ministryCode],
@@ -484,11 +493,53 @@ router.get("/me/recent-sessions", async (req: Request, res: Response) => {
         classification: r.classification,
         createdAt: r.created_at,
         completedAt: r.completed_at,
+        starred: r.starred ?? false,
       })),
     });
   } catch (err) {
     logger.error("Failed to load recent sessions", err as Error);
     res.json({ sessions: [] });
+  }
+});
+
+// ============================================================================
+// TOKEN BUDGET (Bot 15, Backlog B1)
+// ============================================================================
+//
+// Returns the caller's effective monthly token budget + current usage. Used
+// by the Profile "Token Usage" widget and any future "approaching cap"
+// inline warnings in the Free Agent / Workflow UIs.
+
+router.get("/me/budget", async (req: Request, res: Response) => {
+  if (!requireUser(req, res)) return;
+  try {
+    const status = await getBudgetStatus(req.user!.id, req.user!.ministryCode);
+    res.json({
+      scope: status.effective.resolvedScope,
+      limit: status.effective.monthlyTokenLimit,
+      used: status.used,
+      remaining: status.remaining,
+      exceeded: status.exceeded,
+      enforced: status.enforced,
+      periodStart: status.period.start,
+      periodEnd: status.period.end,
+    });
+  } catch (err) {
+    logger.error("Failed to load user budget status", err as Error, {
+      userId: req.user!.id,
+    });
+    // Fail open: a user widget should never block on a metrics endpoint.
+    // Return a permissive-shaped response so the UI can render "—".
+    res.json({
+      scope: "global",
+      limit: null,
+      used: 0,
+      remaining: null,
+      exceeded: false,
+      enforced: false,
+      periodStart: null,
+      periodEnd: null,
+    });
   }
 });
 

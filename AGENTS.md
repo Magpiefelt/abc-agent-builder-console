@@ -32,7 +32,7 @@ All six parallel work streams have been implemented. The application is feature-
 | **B** | Free Agent UX & Real-Time Streaming | **COMPLETE** — Pinia stores, SSE consumer, memory viewers, prompt customizer, Vue Flow agent canvas |
 | **C** | Workflow Canvas (Vue Flow + Executor) | **COMPLETE** — Visual builder, topological executor, versioning, execution history, duplicate/restore |
 | **D** | Tool Ecosystem + Ent Tools | **COMPLETE** — All 20 edge tools registered, Ent Tools client for Brave/Image, secrets vault integration |
-| **E** | Quality: Tests, Evals, Accessibility | **COMPLETE** — 392 backend tests, 43 frontend tests, 4 eval scenarios, Red/Blue report, CI workflow |
+| **E** | Quality: Tests, Evals, Accessibility | **COMPLETE** — 689 backend tests + 480 frontend tests (1,169 total, 2 todo) across 95 files, 14 eval scenarios, Red/Blue report, CI workflow. Counts grow as new slices land — run `pnpm --recursive run test` for the live figure. |
 | **F** | Compliance, Privacy & Admin | **COMPLETE** — STRIDE threat model, PIA, retention job, admin UI, Nexus manifest, deploy workflow |
 
 ### Backend Services (all built)
@@ -114,14 +114,13 @@ Migration script: `docs/02_database_migrations.sql`
 
 ## What to Build Next
 
-Read **`docs/review/ABC_Beyond_Min_Spec_Recommendations.md`** for the prioritized enhancement list. Key items:
+Most items from the original enhancement list have shipped (ExecutionPanel import, ministry filter, model-registry-driven dropdowns in WorkflowView, agentSession test conversion, session replay via `/sessions/:id`). Remaining work:
 
-1. **End-to-end verification with real LLM** — Run a complete session against Vertex AI and document results.
-2. **Fix minor bugs** — Missing ExecutionPanel import, non-functional ministry filter, hardcoded models in WorkflowView.
-3. **Convert test scaffolds** — The 13 `it.todo` stubs in `agentSession.test.ts` should become real tests.
-4. **Expand agent templates** — Add GoA-specific templates (Policy Drafter, FOIP Reviewer, Briefing Note Writer).
-5. **Session replay** — Let users revisit completed sessions from the UI.
-6. **Outbound PII scan** — Scan LLM responses before streaming to client.
+1. **End-to-end verification with real LLM** — Run a complete session against Vertex AI and document results in `docs/quality/e2e_verification_log.md`.
+2. **Expand agent templates** — Add GoA-specific templates (Policy Drafter, FOIP Reviewer, Briefing Note Writer).
+3. **Outbound PII scan** — Scan LLM responses before streaming to client.
+4. **UX polish** — Remaining P2/P3 items called out in `docs/review/ux_apply_2026-05-22.md` (container migration on PIIDetectionViewer/ModelRegistryEditor/SessionInspector/HealthDiagnostics, canvas node differentiation, `goa-pagination` for AuditLogViewer).
+5. **Footer link targets** — `goa-microsite-header` feedback URL and the broken `/privacy`/`/accessibility`/`/disclaimer` placeholders are removed; wire real destinations once the GoA pages are confirmed.
 
 ## Critical Constraints
 

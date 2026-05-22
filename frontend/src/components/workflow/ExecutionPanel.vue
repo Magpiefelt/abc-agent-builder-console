@@ -165,10 +165,17 @@ defineExpose({ rows, counts })
     ]"
     aria-label="Workflow execution results"
   >
+    <!--
+      The outer wrapper stays a plain bg/border-t pairing because this panel
+      lives inside the workflow shell as a docked bottom strip; goa-container
+      doesn't accept the "anchored to the bottom of its parent with a single
+      top border" affordance. Below this header, per-stage rows are dividers
+      inside one logical group — no per-row borders.
+    -->
     <header class="px-4 py-2 border-b border-[var(--goa-color-border)] flex items-center gap-3 flex-wrap">
       <button
         type="button"
-        class="flex items-center gap-1 text-sm font-semibold text-[var(--goa-color-primary-dark)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
+        class="flex items-center gap-1 text-sm font-semibold text-[var(--goa-color-text-default)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded px-1"
         :aria-expanded="!panelCollapsed"
         aria-controls="execution-panel-body"
         :title="panelCollapsed ? 'Expand execution panel' : 'Collapse execution panel'"
@@ -187,6 +194,13 @@ defineExpose({ rows, counts })
       <span class="text-xs text-[var(--goa-color-text-secondary)]" aria-label="Total duration">
         {{ durationLabel(totalDuration) }}
       </span>
+      <goa-badge
+        v-if="execution.dryRun"
+        type="information"
+        content="Dry run"
+        data-testid="dry-run-badge"
+        title="Dry-run mode: LLM, tool, and non-branch function calls are stubbed. Stage outputs are placeholders. Zero tokens spent."
+      ></goa-badge>
       <goa-badge
         v-if="execution.piiBlockedTotal > 0"
         type="important"
@@ -211,25 +225,25 @@ defineExpose({ rows, counts })
       </goa-button>
     </header>
 
-    <div v-if="!panelCollapsed" id="execution-panel-body" class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
+    <div v-if="!panelCollapsed" id="execution-panel-body" class="overflow-y-auto flex-1">
       <p
         v-if="rows.length === 0"
-        class="text-sm text-[var(--goa-color-text-secondary)] p-6 text-center"
+        class="text-sm text-[var(--goa-color-text-secondary)] p-6 text-center m-0"
       >
         No stages in this workflow.
       </p>
 
-      <article
+      <ul v-else class="divide-y divide-[var(--goa-color-border)] m-0 p-0 list-none">
+      <li
         v-for="row in rows"
         :key="row.nodeId"
-        class="border border-[var(--goa-color-border)] rounded-md"
       >
         <button
           type="button"
           @click="toggle(row.nodeId)"
           :aria-expanded="expanded.has(row.nodeId)"
           :aria-controls="`stage-${row.nodeId}`"
-          class="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded-md"
+          class="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)]"
         >
           <span class="text-xs font-mono w-6 text-[var(--goa-color-text-secondary)] shrink-0">
             {{ row.state.stageIndex !== undefined ? `#${row.state.stageIndex + 1}` : '–' }}
@@ -271,7 +285,7 @@ defineExpose({ rows, counts })
         <div
           v-if="expanded.has(row.nodeId)"
           :id="`stage-${row.nodeId}`"
-          class="px-3 pb-3 pt-2 border-t border-[var(--goa-color-border)] bg-[var(--goa-color-background)] flex flex-col gap-2"
+          class="px-3 pb-3 pt-2 bg-[var(--goa-color-background)] flex flex-col gap-2"
         >
           <p v-if="row.state.status === 'pending'" class="text-sm text-[var(--goa-color-text-secondary)] italic">
             Waiting to run…
@@ -293,7 +307,7 @@ defineExpose({ rows, counts })
               Error
             </h4>
             <pre
-              class="text-sm text-[var(--goa-color-error)] whitespace-pre-wrap font-mono p-2 bg-[var(--goa-color-surface)] border border-[var(--goa-color-error)]/30 rounded"
+              class="text-sm text-[var(--goa-color-error)] whitespace-pre-wrap font-mono p-2 bg-[var(--goa-color-surface)] border border-[var(--goa-color-error)] rounded"
             >{{ row.state.error || 'Unknown error' }}</pre>
           </div>
 
@@ -320,7 +334,8 @@ defineExpose({ rows, counts })
             </template>
           </template>
         </div>
-      </article>
+      </li>
+      </ul>
     </div>
   </section>
 </template>

@@ -1,0 +1,34 @@
+{
+  "name": "11 — Three consecutive LLM failures terminate the session",
+  "description": "The orchestrator caps consecutive LLM failures at MAX_CONSECUTIVE_FAILURES=3 (agentOrchestrator.ts). This scenario sends three back-to-back error responses, none of which recovers. After the third failure the orchestrator must set status='error', emit a single `error` SSE event with a message that references the failure count, and stop the loop without consuming any further mock responses. Pins the kill-threshold contract and complements scenario 09 (which proves a SINGLE failure does NOT kill the session).",
+  "prompt": "Run a small task; expect the provider to be unreachable for the test.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 10,
+  "llmResponses": [
+    { "error": "503 Service Unavailable (mock transient failure #1)" },
+    { "error": "503 Service Unavailable (mock transient failure #2)" },
+    { "error": "503 Service Unavailable (mock transient failure #3)" },
+    {
+      "thinking": "This should never run — the kill threshold should fire first.",
+      "status": "completed",
+      "userMessage": "Sentinel response — should not appear in any observed event."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "llm_error",
+      "iteration_start",
+      "llm_error",
+      "iteration_start",
+      "llm_error",
+      "error"
+    ],
+    "sseAbsent": ["session_complete", "iteration_limit"],
+    "finalStatus": "error"
+  }
+}

@@ -19,6 +19,7 @@
 import { query } from "../config/database.js";
 import { logger } from "./logger.js";
 import { auditToolExecution } from "./auditLogger.js";
+import { M } from "./metrics.js";
 import type { BlackboardEntry } from "./promptBuilder.js";
 
 // ============================================================================
@@ -512,17 +513,23 @@ export async function dispatchTool(
   context: ToolContext
 ): Promise<{ result: ToolResult; memoryUpdate?: Partial<SessionMemory> }> {
   if (!toolCall.tool || typeof toolCall.tool !== "string") {
+    M.toolCalls.inc({ tool: "unknown", outcome: "error" });
     return {
       result: { tool: toolCall.tool || "unknown", success: false, result: null, error: "Invalid tool call: missing tool name.", durationMs: 0 },
     };
   }
 
-  if (MEMORY_TOOLS.has(toolCall.tool)) {
-    return handleMemoryTool(toolCall, context);
-  }
+  const toolName = toolCall.tool;
+  const dispatchOutput = MEMORY_TOOLS.has(toolName)
+    ? await handleMemoryTool(toolCall, context)
+    : { result: await handleEdgeTool(toolCall, context) };
 
-  const result = await handleEdgeTool(toolCall, context);
-  return { result };
+  M.toolCalls.inc({
+    tool: toolName,
+    outcome: dispatchOutput.result.success ? "success" : "error",
+  });
+  M.toolDuration.observe(dispatchOutput.result.durationMs / 1000, { tool: toolName });
+  return dispatchOutput;
 }
 
 /**

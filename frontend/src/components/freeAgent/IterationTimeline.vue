@@ -4,9 +4,30 @@ import { useAgentSessionStore } from '@/stores/agentSession'
 
 const session = useAgentSessionStore()
 
+// Sort: pinned first (preserves the user's bookmarking choice across the
+// otherwise reverse-chronological feed), then by iteration descending. The
+// stable secondary sort keeps the timeline readable when there are 30+
+// iterations and only one or two pinned.
 const sortedIterations = computed(() =>
-  [...session.iterations].sort((a, b) => b.iteration - a.iteration),
+  [...session.iterations].sort((a, b) => {
+    const ap = a.pinned ? 1 : 0
+    const bp = b.pinned ? 1 : 0
+    if (ap !== bp) return bp - ap
+    return b.iteration - a.iteration
+  }),
 )
+
+const pinTogglingIteration = ref<number | null>(null)
+
+async function togglePin(iteration: number, current: boolean | undefined): Promise<void> {
+  if (!session.sessionId) return
+  pinTogglingIteration.value = iteration
+  try {
+    await session.toggleIterationPin(session.sessionId, iteration, !current)
+  } finally {
+    pinTogglingIteration.value = null
+  }
+}
 
 const manuallyExpanded = ref<Set<number>>(new Set())
 const manuallyCollapsed = ref<Set<number>>(new Set())
@@ -85,12 +106,20 @@ function durationLabel(ms: number | undefined): string {
 </script>
 
 <template>
+  <!--
+    Outer wrapper stays a styled <section> rather than goa-container because
+    this panel is height-constrained and needs a flex chain through to the
+    scrollable inner body. Forcing `display: flex` on a custom element host
+    isn't reliable across shadow-DOM implementations. Visual treatment uses
+    GoA tokens so the result still reads as a single grouped surface, with
+    per-iteration rows separated by dividers (not per-row borders).
+  -->
   <section
-    class="bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md flex flex-col min-h-0 overflow-hidden"
+    class="flex flex-col min-h-0 overflow-hidden bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded-md"
     aria-label="Iteration timeline"
   >
-    <header class="px-3 py-2 border-b border-[var(--goa-color-border)] flex items-center justify-between gap-2">
-      <h3 class="text-sm font-semibold text-[var(--goa-color-primary-dark)]">Iterations</h3>
+    <header class="flex items-center justify-between gap-2 px-3 pt-3 pb-2 shrink-0">
+      <h3 class="text-base font-semibold text-[var(--goa-color-text-default)] m-0">Iterations</h3>
       <div class="flex items-center gap-2">
         <button
           v-if="sortedIterations.length > 1"
@@ -103,43 +132,67 @@ function durationLabel(ms: number | undefined): string {
         <span class="text-xs text-[var(--goa-color-text-secondary)]">{{ session.iterations.length }} total</span>
       </div>
     </header>
-    <div class="overflow-y-auto flex-1 p-2 flex flex-col gap-2">
-      <div
-        v-if="sortedIterations.length === 0"
-        class="text-sm text-[var(--goa-color-text-secondary)] p-6 text-center"
-      >
-        No iterations yet. Start the agent to see live progress.
-      </div>
-      <article
-        v-for="iter in sortedIterations"
-        :key="iter.iteration"
-        class="border border-[var(--goa-color-border)] rounded-md"
-      >
-        <button
-          type="button"
-          @click="toggle(iter.iteration)"
-          :aria-expanded="expanded.has(iter.iteration)"
-          :aria-controls="`iter-${iter.iteration}`"
-          class="w-full px-3 py-2 flex items-center gap-3 text-left hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded-md"
+    <div class="overflow-y-auto flex-1 min-h-0 divide-y divide-[var(--goa-color-border)] px-3 pb-3">
+        <p
+          v-if="sortedIterations.length === 0"
+          class="text-sm text-[var(--goa-color-text-secondary)] py-6 text-center m-0"
         >
-          <span class="text-xs font-semibold text-[var(--goa-color-primary-dark)]">#{{ iter.iteration }}</span>
-          <goa-badge :type="statusBadgeType(iter.status)" :content="iter.status ?? 'unknown'"></goa-badge>
-          <span v-if="iter.userMessage" class="text-sm text-[var(--goa-color-text)] truncate flex-1">
-            {{ iter.userMessage }}
-          </span>
-          <span v-else class="text-sm text-[var(--goa-color-text-secondary)] flex-1">…</span>
-          <span v-if="iter.tokensUsed" class="text-xs text-[var(--goa-color-text-secondary)]">
-            {{ iter.tokensUsed }} tok
-          </span>
-          <span v-if="iter.durationMs" class="text-xs text-[var(--goa-color-text-secondary)]">
-            {{ durationLabel(iter.durationMs) }}
-          </span>
-        </button>
-        <div
-          v-if="expanded.has(iter.iteration)"
-          :id="`iter-${iter.iteration}`"
-          class="px-3 pb-3 pt-1 border-t border-[var(--goa-color-border)] bg-[var(--goa-color-background)] flex flex-col gap-2"
+          No iterations yet. Start the agent to see live progress.
+        </p>
+        <article
+          v-for="iter in sortedIterations"
+          :key="iter.iteration"
         >
+          <div class="flex items-stretch gap-1">
+            <button
+              type="button"
+              @click="toggle(iter.iteration)"
+              :aria-expanded="expanded.has(iter.iteration)"
+              :aria-controls="`iter-${iter.iteration}`"
+              class="flex-1 px-2 py-2 flex items-center gap-3 text-left hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] rounded"
+            >
+              <span class="text-xs font-semibold text-[var(--goa-color-primary-dark)] w-8 shrink-0">#{{ iter.iteration }}</span>
+              <goa-badge :type="statusBadgeType(iter.status)" :content="iter.status ?? 'unknown'"></goa-badge>
+              <span v-if="iter.pinned" class="text-xs uppercase tracking-wide text-[var(--goa-color-primary)] shrink-0">Pinned</span>
+              <span v-if="iter.userMessage" class="text-sm text-[var(--goa-color-text)] truncate flex-1">
+                {{ iter.userMessage }}
+              </span>
+              <span v-else class="text-sm text-[var(--goa-color-text-secondary)] flex-1">…</span>
+              <span v-if="iter.tokensUsed" class="text-xs text-[var(--goa-color-text-secondary)] shrink-0">
+                {{ iter.tokensUsed }} tok
+              </span>
+              <span v-if="iter.durationMs" class="text-xs text-[var(--goa-color-text-secondary)] shrink-0">
+                {{ durationLabel(iter.durationMs) }}
+              </span>
+            </button>
+            <!--
+              Pin toggle is a sibling button so it's keyboard-reachable
+              independently of the expand-collapse one — pinning shouldn't
+              also expand, and unpinning shouldn't also collapse.
+            -->
+            <button
+              type="button"
+              data-testid="iteration-pin-toggle"
+              :aria-pressed="iter.pinned ? 'true' : 'false'"
+              :aria-label="iter.pinned ? `Unpin iteration ${iter.iteration}` : `Pin iteration ${iter.iteration}`"
+              :title="iter.pinned ? 'Unpin' : 'Pin'"
+              :disabled="pinTogglingIteration === iter.iteration"
+              class="px-2 shrink-0 self-stretch flex items-center rounded hover:bg-[var(--goa-color-background)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--goa-color-primary)] disabled:opacity-50"
+              @click.stop="togglePin(iter.iteration, iter.pinned)"
+            >
+              <goa-icon
+                :type="iter.pinned ? 'bookmark' : 'bookmark-outline'"
+                size="small"
+                :theme="iter.pinned ? 'filled' : 'outline'"
+                :aria-hidden="true"
+              />
+            </button>
+          </div>
+          <div
+            v-if="expanded.has(iter.iteration)"
+            :id="`iter-${iter.iteration}`"
+            class="px-2 pb-3 pt-1 flex flex-col gap-2"
+          >
           <div v-if="iter.thinking">
             <h4 class="text-xs font-semibold uppercase tracking-wide text-[var(--goa-color-text-secondary)] mb-1">Thinking</h4>
             <p class="text-sm text-[var(--goa-color-text)] whitespace-pre-wrap">{{ iter.thinking }}</p>

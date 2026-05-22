@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref, onActivated } from 'vue'
+import { computed, ref, onActivated } from 'vue'
 import { api, ApiError } from '@/lib/api'
+import { useToast } from '@/composables/useToast'
 import type { AuditEntry } from '@/types/admin'
 
 const entries = ref<AuditEntry[]>([])
@@ -12,6 +13,16 @@ const filterUserId = ref('')
 const filterFrom = ref('')
 const filterTo = ref('')
 const filterLimit = ref(100)
+
+const toast = useToast()
+
+// FOIP s.7 export state. The button is only meaningful when a single user is
+// in the filter — bulk exports are intentionally not exposed from this view.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const exportConfirmOpen = ref(false)
+const exportInFlight = ref(false)
+
+const canExportUser = computed(() => UUID_RE.test(filterUserId.value.trim()))
 
 async function load() {
   loading.value = true
@@ -65,13 +76,49 @@ onActivated(() => {
     load()
   }
 })
+
+function openExportConfirm(): void {
+  if (!canExportUser.value) return
+  exportConfirmOpen.value = true
+}
+
+function cancelExport(): void {
+  exportConfirmOpen.value = false
+}
+
+async function confirmExportUserData(): Promise<void> {
+  if (!canExportUser.value || exportInFlight.value) return
+  exportInFlight.value = true
+  try {
+    const targetUserId = filterUserId.value.trim()
+    const { blob, filename } = await api.admin.exportUserData(targetUserId)
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    exportConfirmOpen.value = false
+    toast.push({
+      kind: 'success',
+      message: `User data exported (${filename}).`,
+    })
+  } catch (err) {
+    const message = err instanceof ApiError ? err.message : String(err)
+    toast.push({ kind: 'error', message: `Export failed: ${message}` })
+  } finally {
+    exportInFlight.value = false
+  }
+}
 </script>
 
 <template>
   <div class="flex flex-col gap-4">
     <header class="flex items-center justify-between gap-4 flex-wrap">
       <div>
-        <h3 class="text-xl font-semibold text-[var(--goa-color-primary-dark)]">Audit Log</h3>
+        <h3 class="text-xl font-semibold text-[var(--goa-color-text-default)]">Audit Log</h3>
         <p
           v-if="!loading"
           class="text-xs text-[var(--goa-color-text-secondary)] mt-1"
@@ -81,7 +128,7 @@ onActivated(() => {
           <span v-if="entries.length === filterLimit"> (limit reached — increase to see more)</span>
         </p>
       </div>
-      <div class="flex gap-2">
+      <div class="flex gap-2 flex-wrap">
         <goa-button type="primary" size="compact" leadingicon="search" @_click="load">
           {{ entries.length === 0 ? 'Search' : 'Apply filters' }}
         </goa-button>
@@ -94,11 +141,25 @@ onActivated(() => {
         >
           Export CSV
         </goa-button>
+        <goa-button
+          type="secondary"
+          size="compact"
+          leadingicon="folder-open"
+          data-testid="export-user-data"
+          :disabled="!canExportUser || undefined"
+          :title="canExportUser
+            ? 'FOIP s.7 right-of-access: download a ZIP of all data attributable to this user.'
+            : 'Enter a valid user UUID above to enable.'"
+          @_click="openExportConfirm"
+        >
+          Export user data
+        </goa-button>
       </div>
     </header>
 
     <!-- Filters -->
-    <div class="grid grid-cols-2 md:grid-cols-5 gap-3 p-4 bg-[var(--goa-color-surface)] border border-[var(--goa-color-border)] rounded">
+    <goa-container type="non-interactive" padding="relaxed">
+    <div class="grid grid-cols-2 md:grid-cols-5 gap-3">
       <goa-form-item label="Action">
         <goa-input
           name="filterAction"
@@ -150,6 +211,7 @@ onActivated(() => {
         ></goa-input>
       </goa-form-item>
     </div>
+    </goa-container>
 
     <goa-callout v-if="error" type="emergency" heading="Audit query failed">
       {{ error }}
@@ -183,5 +245,43 @@ onActivated(() => {
         </tr>
       </tbody>
     </goa-table>
+
+    <!--
+      FOIP s.7 right-of-access export: produces a ZIP of all data attributable
+      to a single user. Gated behind a confirm modal because it's an
+      irreversible disclosure event that itself is audit-logged.
+    -->
+    <goa-modal
+      v-if="exportConfirmOpen"
+      open
+      heading="Export user data (FOIP s.7)"
+      role="alertdialog"
+      data-testid="export-user-data-modal"
+      @_close="exportInFlight ? null : cancelExport()"
+    >
+      <p>
+        This will produce a ZIP of every record attributable to user
+        <code class="font-mono text-xs">{{ filterUserId.trim() }}</code>.
+        The export itself is audit-logged as
+        <code class="font-mono text-xs">user.data.exported</code>.
+      </p>
+      <div slot="actions" class="flex justify-end gap-2">
+        <goa-button
+          type="secondary"
+          :disabled="exportInFlight || undefined"
+          @_click="cancelExport"
+        >
+          Cancel
+        </goa-button>
+        <goa-button
+          type="primary"
+          data-testid="export-user-data-confirm"
+          :disabled="exportInFlight || undefined"
+          @_click="confirmExportUserData"
+        >
+          {{ exportInFlight ? 'Exporting…' : 'Export user data' }}
+        </goa-button>
+      </div>
+    </goa-modal>
   </div>
 </template>

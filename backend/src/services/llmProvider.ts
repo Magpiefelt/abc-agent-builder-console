@@ -19,6 +19,7 @@
 import { query } from "../config/database.js";
 import { env } from "../config/env.js";
 import { logger } from "./logger.js";
+import { M } from "./metrics.js";
 
 // ============================================================================
 // TYPES
@@ -993,6 +994,62 @@ function isTestMockModel(model: ModelRegistryEntry): boolean {
 }
 
 // ============================================================================
+// PER-PROVIDER CONCURRENCY ISOLATION (B8)
+// ============================================================================
+//
+// `withRetry` backs off transient 429/5xx errors with exponential delays of
+// up to ~30s per attempt and up to 4 attempts. While that retry loop is
+// running it holds the caller's slot — so without isolation a Vertex AI
+// throttle could block in-flight Gemini work that depends on the same
+// orchestrator promise chain. We wrap each provider in its own bounded
+// queue so a stall in one provider's throttle path doesn't drag the others
+// down with it.
+
+const DEFAULT_PROVIDER_CONCURRENCY = 8;
+
+class ProviderSemaphore {
+  private active = 0;
+  private readonly waiters: Array<() => void> = [];
+
+  constructor(public readonly limit: number) {}
+
+  async run<T>(fn: () => Promise<T>): Promise<T> {
+    if (this.active >= this.limit) {
+      await new Promise<void>((resolve) => this.waiters.push(resolve));
+    }
+    this.active += 1;
+    try {
+      return await fn();
+    } finally {
+      this.active -= 1;
+      const next = this.waiters.shift();
+      if (next) next();
+    }
+  }
+
+  /** Current in-flight count. Used by the metrics gauge. */
+  get inflight(): number {
+    return this.active;
+  }
+}
+
+const providerSemaphores: Map<string, ProviderSemaphore> = new Map();
+
+function getSemaphore(providerName: string): ProviderSemaphore {
+  let sem = providerSemaphores.get(providerName);
+  if (!sem) {
+    sem = new ProviderSemaphore(DEFAULT_PROVIDER_CONCURRENCY);
+    providerSemaphores.set(providerName, sem);
+  }
+  return sem;
+}
+
+/** Test seam — reset the semaphore map (used by concurrency isolation tests). */
+export function _resetProviderSemaphores(): void {
+  providerSemaphores.clear();
+}
+
+// ============================================================================
 // PROVIDER FACTORY
 // ============================================================================
 
@@ -1064,6 +1121,7 @@ export async function callLLM(
 
   const provider = getProviderInstance(model);
   const maxTokens = request.maxTokens || model.max_output_tokens;
+  const sem = getSemaphore(model.provider);
 
   logger.debug("LLM call initiated", {
     modelId,
@@ -1074,26 +1132,47 @@ export async function callLLM(
     toolCount: request.tools?.length || 0,
   });
 
-  const response = await withRetry(
-    () => provider.call({ ...request, maxTokens }, model.api_model_name),
-    DEFAULT_RETRY_CONFIG,
-    `LLM call (${modelId})`
-  );
+  const labels = { provider: model.provider, model: modelId };
+  M.llmInflight.inc({ provider: model.provider });
+  const startedAt = Date.now();
+  try {
+    const response = await sem.run(() =>
+      withRetry(
+        () => provider.call({ ...request, maxTokens }, model.api_model_name),
+        DEFAULT_RETRY_CONFIG,
+        `LLM call (${modelId})`,
+      ),
+    );
 
-  // Track usage
-  recordTokenUsage(modelId, response.usage);
+    // Track usage
+    recordTokenUsage(modelId, response.usage);
+    M.llmRequests.inc({ ...labels, outcome: "success" });
+    M.llmDuration.observe((Date.now() - startedAt) / 1000, labels);
+    M.llmTokens.inc({ ...labels, type: "prompt" }, response.usage.promptTokens);
+    M.llmTokens.inc({ ...labels, type: "completion" }, response.usage.completionTokens);
 
-  logger.info("LLM call completed", {
-    modelId,
-    provider: model.provider,
-    latencyMs: response.latencyMs,
-    promptTokens: response.usage.promptTokens,
-    completionTokens: response.usage.completionTokens,
-    finishReason: response.finishReason,
-    toolCalls: response.toolCalls.length,
-  });
+    logger.info("LLM call completed", {
+      modelId,
+      provider: model.provider,
+      latencyMs: response.latencyMs,
+      promptTokens: response.usage.promptTokens,
+      completionTokens: response.usage.completionTokens,
+      finishReason: response.finishReason,
+      toolCalls: response.toolCalls.length,
+    });
 
-  return response;
+    return response;
+  } catch (err) {
+    const status = (err as Error).message.match(/\((\d{3})\)/)?.[1];
+    M.llmRequests.inc({
+      ...labels,
+      outcome: status === "429" ? "throttled" : "error",
+    });
+    M.llmDuration.observe((Date.now() - startedAt) / 1000, labels);
+    throw err;
+  } finally {
+    M.llmInflight.dec({ provider: model.provider });
+  }
 }
 
 /**
@@ -1121,24 +1200,46 @@ export async function streamLLM(
 
   const provider = getProviderInstance(model);
   const maxTokens = request.maxTokens || model.max_output_tokens;
+  const sem = getSemaphore(model.provider);
 
-  const response = await withRetry(
-    () => provider.stream({ ...request, maxTokens }, model.api_model_name, onEvent),
-    { ...DEFAULT_RETRY_CONFIG, maxRetries: 1 }, // Fewer retries for streaming
-    `LLM stream (${modelId})`
-  );
+  const labels = { provider: model.provider, model: modelId };
+  M.llmInflight.inc({ provider: model.provider });
+  const startedAt = Date.now();
+  try {
+    const response = await sem.run(() =>
+      withRetry(
+        () => provider.stream({ ...request, maxTokens }, model.api_model_name, onEvent),
+        { ...DEFAULT_RETRY_CONFIG, maxRetries: 1 }, // Fewer retries for streaming
+        `LLM stream (${modelId})`,
+      ),
+    );
 
-  recordTokenUsage(modelId, response.usage);
+    recordTokenUsage(modelId, response.usage);
+    M.llmRequests.inc({ ...labels, outcome: "success" });
+    M.llmDuration.observe((Date.now() - startedAt) / 1000, labels);
+    M.llmTokens.inc({ ...labels, type: "prompt" }, response.usage.promptTokens);
+    M.llmTokens.inc({ ...labels, type: "completion" }, response.usage.completionTokens);
 
-  logger.info("LLM stream completed", {
-    modelId,
-    provider: model.provider,
-    latencyMs: response.latencyMs,
-    totalTokens: response.usage.totalTokens,
-    finishReason: response.finishReason,
-  });
+    logger.info("LLM stream completed", {
+      modelId,
+      provider: model.provider,
+      latencyMs: response.latencyMs,
+      totalTokens: response.usage.totalTokens,
+      finishReason: response.finishReason,
+    });
 
-  return response;
+    return response;
+  } catch (err) {
+    const status = (err as Error).message.match(/\((\d{3})\)/)?.[1];
+    M.llmRequests.inc({
+      ...labels,
+      outcome: status === "429" ? "throttled" : "error",
+    });
+    M.llmDuration.observe((Date.now() - startedAt) / 1000, labels);
+    throw err;
+  } finally {
+    M.llmInflight.dec({ provider: model.provider });
+  }
 }
 
 /**

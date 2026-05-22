@@ -1,0 +1,55 @@
+{
+  "name": "08 — Attribute updates accumulate across iterations",
+  "description": "Agent uses the attribute_updates channel as a small state machine: iteration 1 writes confidence=0.4 + phase='gathering', iteration 2 promotes confidence=0.85 + phase='drafting', and iteration 3 finalizes phase='done' and signals completion. The orchestrator must emit an attributes_update SSE event each time the patch is applied, merge each patch into session.attributes (later iterations overwrite, not replace), and persist the final merged object. This pins the merge semantics in agentOrchestrator.executeIteration step 8.",
+  "prompt": "Plan a three-stage drafting workflow and track your progress in attributes.",
+  "modelId": "mock-llm",
+  "classification": "unclassified",
+  "maxIterations": 5,
+  "llmResponses": [
+    {
+      "thinking": "Stage 1 — gathering inputs.",
+      "attributeUpdates": { "phase": "gathering", "confidence": 0.4, "iterations_done": 1 },
+      "status": "running",
+      "userMessage": "Phase set to gathering."
+    },
+    {
+      "thinking": "Stage 2 — drafting.",
+      "attributeUpdates": { "phase": "drafting", "confidence": 0.85, "iterations_done": 2 },
+      "blackboardUpdates": [
+        { "category": "draft", "title": "outline", "content": "Three sections with two bullets each." }
+      ],
+      "status": "running",
+      "userMessage": "Phase set to drafting."
+    },
+    {
+      "thinking": "Stage 3 — done.",
+      "attributeUpdates": { "phase": "done", "confidence": 1.0, "iterations_done": 3 },
+      "status": "completed",
+      "userMessage": "All three phases complete."
+    }
+  ],
+  "expectations": {
+    "createStatus": 201,
+    "startStatus": 200,
+    "sseSubsequence": [
+      "session_start",
+      "iteration_start",
+      "attributes_update",
+      "iteration_complete",
+      "iteration_start",
+      "attributes_update",
+      "iteration_complete",
+      "iteration_start",
+      "attributes_update",
+      "iteration_complete",
+      "session_complete"
+    ],
+    "finalStatus": "completed",
+    "blackboardCategories": ["draft"],
+    "attributesContain": {
+      "phase": "done",
+      "confidence": 1.0,
+      "iterations_done": 3
+    }
+  }
+}

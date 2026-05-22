@@ -43,3 +43,38 @@ describe("GET /api/health", () => {
     expect(res.body.services).toHaveProperty("llm");
   });
 });
+
+describe("GET /api/health/live", () => {
+  it("always returns 200 + alive, even when the DB is down", async () => {
+    checkConnectionMock.mockResolvedValueOnce(false);
+    const res = await request(makeApp()).get("/api/health/live");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("alive");
+    expect(res.body).toHaveProperty("uptimeSeconds");
+    expect(typeof res.body.uptimeSeconds).toBe("number");
+    expect(res.body).toHaveProperty("version");
+  });
+
+  it("does not call the DB at all (liveness probes must not depend on downstream)", async () => {
+    await request(makeApp()).get("/api/health/live");
+    expect(checkConnectionMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("GET /api/health/ready", () => {
+  it("returns 200 + ready when the DB is reachable", async () => {
+    checkConnectionMock.mockResolvedValueOnce(true);
+    const res = await request(makeApp()).get("/api/health/ready");
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe("ready");
+    expect(res.body).toHaveProperty("timestamp");
+  });
+
+  it("returns 503 + not_ready with a database_disconnected reason when the DB is down", async () => {
+    checkConnectionMock.mockResolvedValueOnce(false);
+    const res = await request(makeApp()).get("/api/health/ready");
+    expect(res.status).toBe(503);
+    expect(res.body.status).toBe("not_ready");
+    expect(res.body.reason).toBe("database_disconnected");
+  });
+});
